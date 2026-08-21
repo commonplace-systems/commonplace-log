@@ -148,7 +148,7 @@ Vector corpus rules: `input.json` is authoritative **as bytes** (big-int and non
 
 ### Task 2: Seed vector corpus
 
-- [ ] Write `conformance/README.md` defining the corpus format above
+- [ ] Write `conformance/README.md` defining the corpus format above, **including a SELECTOR statement**: an explicit list of the input classes the corpus covers and the classes it deliberately does not — so a future green reads as "green over these classes," never as "green." Keep the statement updated in every task that adds vectors
 - [ ] Author ~15 initial `canonical-json/` cases by hand: RFC 8785 appendix examples, key-sort cases (incl. astral), escaping cases, number boundary cases from both sides (`1e20`, `1e21`, `1e-6`, `0.000001`, `1e-7`, `-0`, `9007199254740991`), plus one case `999-deliberate-mismatch/` whose `expected.hex` is intentionally wrong, marked in README as the red-demonstration case
 - [ ] Commit: `test(conformance): seed canonical JSON vector corpus`
 
