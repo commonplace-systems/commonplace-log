@@ -59,6 +59,11 @@ Input classes currently **covered**:
 - Literals `null` / `true` / `false`; whitespace-laden input producing
   whitespace-free output; top-level non-object values (bare strings, bare
   numbers); empty object and empty array (nested inside case 005).
+- One complete, valid spec §7 log entry (case 016): all eight entry fields
+  through the full pipeline (key sort incl. the `writer_id`/`writer_seq`
+  shared-prefix pair, nested `body` object, UUID and RFC 3339 strings,
+  integer fields). This is also the valid-entry anchor for the entry
+  validator (see `invalid-entries/` below).
 
 Input classes deliberately **not covered** (yet):
 
@@ -141,6 +146,7 @@ RFC-stated key order reproduced those bytes exactly
 | `013-num-1e-7` | First exponential-form small number → `1e-7` | node output pasted above |
 | `014-num-minus-zero` | `-0` → `0` | node output pasted above; matches Appendix B row `8000000000000000` |
 | `015-num-max-safe-int` | `9007199254740991` (2^53−1) round-trips unchanged | node output pasted above |
+| `016-spec-example-entry` | Full valid spec §7 example entry: eight-field key sort (`body` < `created_at` < `entry_id` < `log_id` < `prev_entry_id` < `version` < `writer_id` < `writer_seq`; the last pair decided at `'i'` 0x69 < `'s'` 0x73 after the shared `writer_` prefix), nested `body` key sort (`type` < `value`), whitespace removal | Input is the spec §7 example verbatim. Expected bytes derived 2026-08-21 (node v24.13.1) by the same discipline as the seeding: key order hand-derived per RFC 8785 §3.2.3 as shown, single strings/numbers serialized via node `JSON.stringify`, concatenated by hand — `worker/src/jcs.ts` deliberately not consulted (it is under test by this vector). Canonical form is 327 bytes; the derivation script asserted the canonical text parses deep-equal to `input.json` (`VALUE-EQ OK`) |
 | `999-deliberate-mismatch` | **Intentionally wrong expected bytes** (unsorted `{"b":2,"a":1}` instead of correct `{"a":1,"b":2}`) — the red-demonstration case, see above | Wrongness constructed and verified at derivation time: stored bytes differ from the hand-derived correct canonical form |
 
 ### Sanity checks run at seeding (2026-08-21, node v24.13.1)
@@ -162,3 +168,140 @@ RFC-stated key order reproduced those bytes exactly
 Tasks adding vectors must re-run equivalent checks, update the SELECTOR
 statement above, and add a row to the "Case list and per-case provenance"
 table.
+
+### Checks re-run when adding case 016 and `invalid-entries/` (2026-08-21, node v24.13.1)
+
+1. Byte-rule checker over both families — BOM, CR, single trailing LF, UTF-8
+   validity, `expected.hex` format, `error.txt` format, input parseability:
+   `checked 84 files, 0 failures` (17 canonical-json cases × 2 files + 25
+   invalid-entries cases × 2 files). The checker was first demonstrated to
+   fire on a known-bad corpus (missing trailing LF; uppercase `error.txt`):
+   2/2 failures reported, exit 1.
+2. 016 value equality: the derived canonical text parses deep-equal to
+   `input.json` (asserted inside the derivation script, `VALUE-EQ OK`).
+
+## `invalid-entries/` — version-1 entry rejection vectors
+
+Vectors for the spec §7 / §7.1 entry validator: inputs that every runtime's
+`validate_entry` must **reject**, each with the exact error code and a shared
+reason slug both runtimes must emit identically. The valid-entry anchor is
+`canonical-json/016-spec-example-entry`, which validators must **accept**,
+producing exactly its `expected.hex` canonical bytes.
+
+Each case is one directory: `invalid-entries/NNN-short-name/` containing
+exactly:
+
+- **`input.json`** — the would-be entry, authoritative **as raw bytes**.
+  Harnesses read the bytes and feed them to their validator unmodified.
+- **`error.txt`** — exactly two lines, each followed by one LF:
+  - line 1: the expected spec §11.6 error code (`invalid_entry` or
+    `entry_too_large` in the current corpus);
+  - line 2: a shared reason slug (`^[a-z0-9-]+$`), e.g.
+    `missing-field-writer-id`. Reason slugs are cross-runtime contract: both
+    the TypeScript and Elixir validators must emit the same slug for the same
+    violation, byte-for-byte.
+
+File byte rules are the same as `canonical-json/` (UTF-8, no BOM, LF-only,
+exactly one trailing LF). Every current `input.json` is syntactically valid
+JSON — these cases exercise entry validation, not JSON parsing. The numbering
+policy is the same (next unused number; `9xx` reserved for deliberately-wrong
+cases — none exist in this family yet).
+
+**Determinism rule:** every case contains exactly one violation, and
+validators must check fields in the spec §7 table order (`version`, `log_id`,
+`entry_id`, `writer_id`, `writer_seq`, `prev_entry_id`, `created_at`, `body`),
+required-key presence before value checks, so multi-violation inputs (not in
+this corpus) would still get deterministic slugs.
+
+Notes on individual behaviors:
+
+- **`023-non-finite-number` (`1e999`)**: runtimes may detect this at parse
+  time or post-parse (JavaScript's `JSON.parse` yields `Infinity`; other
+  parsers may overflow or reject at decode). Either detection point is
+  conforming, but the emitted code+reason must be identical:
+  `invalid_entry` / `non-finite-number`.
+- **`022-unsafe-integer-in-body` (`9007199254740993`)**: the violation lives
+  in the raw token, not the parsed value — ECMAScript `JSON.parse` silently
+  rounds it to the safe `9007199254740992`, so a post-parse safe-integer
+  check can never fire. JS validators must inspect the raw literal (e.g. the
+  `JSON.parse` reviver `context.source` argument, node >= 21). Only plain
+  integer literals (no fraction or exponent) are checked against
+  ±(2^53−1); exponent spellings such as `1e30` denote doubles and remain
+  valid (case `001-rfc-worked-example` depends on that).
+- **`created_at`**: the spec requires a "UTC RFC 3339 timestamp". This corpus
+  pins the strict reading: only the `Z` suffix form is valid. A numeric
+  offset — even `+00:00` — is rejected as `created-at-not-utc`, so both
+  runtimes accept exactly one spelling of each instant.
+- **`025-entry-too-large`**: its `input.json` is ~1.0 MiB of deterministic
+  padding (`"pad"` = 1,048,576 repeated `a` characters) and is committed
+  as-is; the canonical form is 1,048,867 bytes, over the spec §7.1 cap of
+  1,048,576.
+
+### SELECTOR statement — what a green run over `invalid-entries/` means
+
+Violation classes currently **covered** (one case each unless noted): every
+required top-level field missing (8 cases, incl. the `prev_entry_id` key
+absent entirely); wrong `version`; extra top-level field; non-lowercase UUID;
+malformed UUID; `writer_seq` zero / negative (2 cases, same slug) and
+non-integer; `prev_entry_id` non-null at `writer_seq` 1 and null at
+`writer_seq` > 1; `created_at` with a non-UTC offset and non-RFC 3339;
+`body` array and string (2 cases, same slug); integer literal beyond
++(2^53−1) in `body`; non-finite number literal; lone surrogate escape in a
+`body` string; canonical form over 1 MiB.
+
+Violation classes deliberately **not covered** (yet):
+
+- **`log_id` differing from the target log**: excluded by design. Log-match
+  (spec invariant 8) is a store-level check requiring context — the target
+  log's identity — that a standalone entry validator does not have. It is
+  owned by the store/merge conformance layer, not this family.
+- Syntactically invalid JSON and ill-formed UTF-8 input bytes
+  (`invalid_json`): every current input parses; parse-failure vectors would
+  need per-runtime parse-error tolerance decisions not yet made.
+- Duplicate object keys (I-JSON violation; most parsers silently keep one).
+- Lone surrogates in object *keys* (covered only in string values).
+- Negative integer literals below −(2^53−1) (only the positive side is
+  pinned); unsafe integers outside `body` (e.g. in `writer_seq`).
+- Wrong top-level *types* beyond those listed (e.g. `version` as string
+  `"1"` — rejected by the version check, but no vector pins its slug);
+  non-object top-level entries (bare array/string).
+- UUID version/variant bits: any `8-4-4-4-12` lowercase hex string is
+  accepted; UUIDv7-ness is not checked (the spec only recommends v7).
+- Semantic calendar validation of `created_at` beyond shape (e.g. month 13
+  with valid shape).
+
+### Case list
+
+| Case | Code | Reason slug |
+|---|---|---|
+| `001-missing-version` | `invalid_entry` | `missing-field-version` |
+| `002-missing-log-id` | `invalid_entry` | `missing-field-log-id` |
+| `003-missing-entry-id` | `invalid_entry` | `missing-field-entry-id` |
+| `004-missing-writer-id` | `invalid_entry` | `missing-field-writer-id` |
+| `005-missing-writer-seq` | `invalid_entry` | `missing-field-writer-seq` |
+| `006-missing-created-at` | `invalid_entry` | `missing-field-created-at` |
+| `007-missing-body` | `invalid_entry` | `missing-field-body` |
+| `008-missing-prev-entry-id` | `invalid_entry` | `missing-field-prev-entry-id` |
+| `009-version-2` | `invalid_entry` | `wrong-version` |
+| `010-extra-top-level-field` | `invalid_entry` | `extra-top-level-field` |
+| `011-uppercase-log-id` | `invalid_entry` | `uuid-not-lowercase` |
+| `012-malformed-entry-id` | `invalid_entry` | `uuid-malformed` |
+| `013-writer-seq-zero` | `invalid_entry` | `writer-seq-not-positive` |
+| `014-writer-seq-negative` | `invalid_entry` | `writer-seq-not-positive` |
+| `015-writer-seq-non-integer` | `invalid_entry` | `writer-seq-not-integer` |
+| `016-prev-not-null-at-seq-1` | `invalid_entry` | `prev-entry-id-not-null-at-seq-1` |
+| `017-prev-null-after-seq-1` | `invalid_entry` | `prev-entry-id-null-after-seq-1` |
+| `018-created-at-non-utc-offset` | `invalid_entry` | `created-at-not-utc` |
+| `019-created-at-not-rfc3339` | `invalid_entry` | `created-at-not-rfc3339` |
+| `020-body-array` | `invalid_entry` | `body-not-object` |
+| `021-body-string` | `invalid_entry` | `body-not-object` |
+| `022-unsafe-integer-in-body` | `invalid_entry` | `unsafe-integer` |
+| `023-non-finite-number` | `invalid_entry` | `non-finite-number` |
+| `024-lone-surrogate` | `invalid_entry` | `ill-formed-unicode` |
+| `025-entry-too-large` | `entry_too_large` | `canonical-bytes-over-1mib` |
+
+Provenance: every input is the spec §7 example entry with exactly one
+scripted, deterministic mutation applied as raw text (never re-serialized
+through a JSON encoder, so lexical details like `1.5`, `1e999`, `\ud800`, and
+`9007199254740993` are byte-exact). `error.txt` contents were assigned by
+hand from spec §7/§7.1/§11.6.

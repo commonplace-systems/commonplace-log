@@ -1,0 +1,2 @@
+invalid_entry
+prev-entry-id-null-after-seq-1
