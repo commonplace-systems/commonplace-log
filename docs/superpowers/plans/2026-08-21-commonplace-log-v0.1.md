@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript + Wrangler + `@cloudflare/vitest-pool-workers` (Durable Object with SQLite storage, tested locally); Elixir + `exqlite` (no Ecto) + `req` (HTTP adapter) + `stream_data` (property tests); RFC 8785 JCS implemented in **both** runtimes and proven byte-identical by shared fixtures.
 
-**Status: PROPOSAL.** jes owns build order for this repo. Sections 1–7 are the decisions I am asking him to ratify (including one reordering of the spec's §19 phases). Section 8 is an execution-ready task list for Sub-project 1 only; later sub-projects get their own task-level plans once direction is approved.
+**Status: APPROVED.** jes approved this plan and all §7 defaults 2026-08-21 23:10Z, and answered the one non-default question (Q3, immutability triggers: yes) at 23:13Z. The decision ledger is in §7. Section 8 is the execution-ready task list for Sub-project 1; later sub-projects get their own task-level plans as they start.
 
 **Scope discipline:** The spec's §2 exclusions are decisions, not gaps. This plan adds no Merkle trees, no content-addressed IDs, no CRDT semantics, no total order, no consensus, no deletion/compaction, no signatures/capabilities. Where I think an internal-only addition is useful (e.g. immutability triggers, an audit query), it is flagged below as a proposal for jes — never silently built.
 
@@ -42,7 +42,7 @@ Each sub-project produces working, independently testable software and gets its 
 2. The Cloudflare adapter is a thin HTTP client; it is better written against an HTTP protocol already exercised end-to-end by SP2's tests and SP3's sync engine, so bridge bugs can't hide inside protocol bugs.
 3. SP4 needs account/wrangler/Container logistics from jes; SP3 does not. The swap removes him from the critical path for longer.
 
-**Deferred by default (jes to confirm):** the `Commonplace.LogStore.CubDB` migration adapter (§13.2 says "temporarily", §14 "recommended"). It only matters at SP5 integration time; building it earlier is speculative. Flagged, not dropped.
+**Deferred (confirmed by jes):** the `Commonplace.LogStore.CubDB` migration adapter (§13.2 says "temporarily", §14 "recommended"). It only matters at SP5 integration time; building it earlier is speculative. Flagged, not dropped.
 
 ## 3. §8 invariants: checkable by test vs. held by construction
 
@@ -50,7 +50,7 @@ Each sub-project produces working, independently testable software and gets its 
 
 | Inv | Statement | How held | How checked |
 |---|---|---|---|
-| 1 | Committed entries never updated/deleted | Construction: no UPDATE/DELETE statement targets `entries` anywhere | Test: after rejected fork/collision attempts (8, 9), re-read and byte-compare the original entry. **Proposal to jes:** belt-and-braces SQLite `BEFORE UPDATE/DELETE ... RAISE` triggers on `entries` — an addition to the §12 DDL, so not built without a yes |
+| 1 | Committed entries never updated/deleted | Construction: no UPDATE/DELETE statement targets `entries` anywhere | Test: after rejected fork/collision attempts (8, 9), re-read and byte-compare the original entry. **Approved by jes (§7 Q3):** belt-and-braces SQLite `BEFORE UPDATE/DELETE ... RAISE` triggers on `entries` — built in SP2 as an ADDITION on top of the verbatim §12 DDL (if implementing them would require altering anything the spec pins, stop and re-ask), with the trigger's refusal demonstrated by red-path tests: attempt the UPDATE and the DELETE, assert the raised error, record the error text |
 | 2 | Ack only after durable commit | Construction: reply is sequenced after transaction commit; DO uses `transactionSync`; local SQLite `synchronous=FULL` | Fault-injection test: crash between commit and reply, restart, entry present (2, 14). Partially testable; ordering itself is by construction |
 | 3 | `(writer_id, writer_seq)` names ≤ 1 entry | Schema: `UNIQUE (writer_id, writer_seq)` | Red-path test (8): conflicting coordinate → `writer_fork`, no mutation |
 | 4 | `entry_id` names ≤ 1 canonical entry | Schema: `UNIQUE (entry_id)` + byte-compare on duplicate | Red-path test (9): same UUID, different bytes → `entry_id_collision` |
@@ -98,13 +98,13 @@ Called out so nobody discovers it in week three. JCS requires ECMAScript semanti
 
 This is why SP1 exists and comes first, and why both canonicalizers are hand-rolled small modules verified by the shared corpus rather than trusted dependencies (RFC appendix vectors + the boundary cases above + generated differential corpus).
 
-## 7. Questions for jes (only what's genuinely his)
+## 7. Decision ledger (all questions answered by jes, 2026-08-21)
 
-1. **Ordering:** approve the SP3↔SP4 swap of §19's Phases 2 and 3? (Rationale in §2.)
-2. **CubDB adapter:** defer to SP5-time unless you want it earlier?
-3. **Immutability triggers** on `entries` (an addition to the §12 DDL, internal-only): yes or no?
-4. **Elixir code home:** this repo as a standalone library (my assumption), or inside the existing Commonplace app?
-5. **SP4 logistics (not needed yet):** Cloudflare account/wrangler credentials and Container plan when we get there.
+1. **Ordering** — SP3↔SP4 swap of §19's Phases 2 and 3: **YES** (23:10Z).
+2. **CubDB adapter** — **DEFER to SP5-time** (23:10Z).
+3. **Immutability triggers on `entries`** — **YES** (23:13Z, explicit answer, not blanket approval). Scope: an ADDITION to the verbatim §12 DDL; if they'd require altering a pinned column/constraint/index, that's a new question — stop and ask. The trigger's red path is built as a test (attempted UPDATE/DELETE must raise; error text recorded), which upgrades §3 invariant 1 from construction-only to test-checkable.
+4. **Elixir code home** — **this repo, standalone library** (23:10Z).
+5. **SP4 logistics** — **deferred** until SP4 (23:10Z).
 
 ---
 
