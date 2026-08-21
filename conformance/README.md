@@ -26,8 +26,12 @@ Each case is one directory: `canonical-json/NNN-short-name/` containing exactly:
 - `expected.hex`: a single line of lowercase hex (`^[0-9a-f]+\n$`) — no
   whitespace, no separators, no uppercase — followed by exactly one LF.
 
-A compliance check over all 32 current files (see "Sanity checks run at
-seeding" below) passes; any task adding vectors must keep new files compliant.
+A compliance check over the full corpus passed at seeding (see "Sanity checks
+run at seeding" below); any task adding vectors must keep new files compliant.
+
+Numbering policy: new cases take the next unused number in sequence; the `9xx`
+range is reserved for deliberately-wrong cases (harnesses may exclude `9xx-*`
+from their pass gate but must assert each one mismatches).
 
 ### SELECTOR statement — what a green run does and does not mean
 
@@ -155,5 +159,6 @@ RFC-stated key order reproduced those bytes exactly
    fire on a known-bad file (missing trailing LF) before its green was
    trusted.
 
-Tasks adding vectors must re-run equivalent checks and update the SELECTOR
-statement above.
+Tasks adding vectors must re-run equivalent checks, update the SELECTOR
+statement above, and add a row to the "Case list and per-case provenance"
+table.
