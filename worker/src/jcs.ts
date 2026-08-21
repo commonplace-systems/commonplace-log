@@ -31,7 +31,7 @@ function serialize(value: unknown): string {
       return JSON.stringify(value);
     case "object":
       if (Array.isArray(value)) {
-        return `[${value.map(serialize).join(",")}]`;
+        return `[${value.map((element) => serialize(element)).join(",")}]`;
       }
       return serializeObject(value as Record<string, unknown>);
     default:
