@@ -39,6 +39,7 @@ const REASONS = {
   createdAtNotString: "created-at-not-string",
   createdAtNotRfc3339: "created-at-not-rfc3339",
   createdAtNotUtc: "created-at-not-utc",
+  createdAtLeapSecond: "created-at-leap-second",
   bodyNotObject: "body-not-object",
   unsafeInteger: "unsafe-integer",
   nonFiniteNumber: "non-finite-number",
@@ -66,7 +67,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // uses; any numeric offset — including +00:00 — is rejected as not-utc so both
 // runtimes accept exactly one spelling of each instant.
 const RFC3339_UTC_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
 const RFC3339_OFFSET_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:\d{2}$/;
 
@@ -179,15 +180,9 @@ export function validateEntry(raw: Uint8Array): ValidateEntryResult {
   if (typeof createdAt !== "string") {
     return invalid(REASONS.createdAtNotString);
   }
-  if (!RFC3339_UTC_RE.test(createdAt)) {
-    return invalid(
-      RFC3339_OFFSET_RE.test(createdAt)
-        ? REASONS.createdAtNotUtc
-        : REASONS.createdAtNotRfc3339,
-    );
-  }
-  if (Number.isNaN(Date.parse(createdAt))) {
-    return invalid(REASONS.createdAtNotRfc3339);
+  const createdAtProblem = timestampProblem(createdAt);
+  if (createdAtProblem !== null) {
+    return invalid(createdAtProblem);
   }
 
   const body = entry["body"];
@@ -208,6 +203,57 @@ export function validateEntry(raw: Uint8Array): ValidateEntryResult {
     };
   }
   return { ok: true, canonicalBytes };
+}
+
+/**
+ * Validates a `created_at` value against the corpus-pinned rules: RFC 3339
+ * date-time restricted to the Z form, with real calendar arithmetic —
+ * deliberately NOT Date.parse, whose ECMAScript semantics roll invalid days
+ * over (2026-02-30 -> Mar 2) instead of rejecting them. Leap seconds (:60),
+ * which RFC 3339 itself permits, are rejected by corpus policy with their own
+ * slug: date libraries disagree wildly on them across runtimes, and the
+ * corpus wants one spelling per instant.
+ */
+function timestampProblem(value: string): string | null {
+  const match = RFC3339_UTC_RE.exec(value);
+  if (match === null) {
+    return RFC3339_OFFSET_RE.test(value)
+      ? REASONS.createdAtNotUtc
+      : REASONS.createdAtNotRfc3339;
+  }
+  const [, year, month, day, hour, minute, second] = match as unknown as [
+    string, string, string, string, string, string, string,
+  ];
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) {
+    return REASONS.createdAtNotRfc3339;
+  }
+  if (Number(hour) > 23 || Number(minute) > 59) {
+    return REASONS.createdAtNotRfc3339;
+  }
+  const s = Number(second);
+  if (s === 60) {
+    return REASONS.createdAtLeapSecond;
+  }
+  if (s > 60) {
+    return REASONS.createdAtNotRfc3339;
+  }
+  return null;
+}
+
+function daysInMonth(year: number, month: number): number {
+  // month is 1-based and already range-checked by the caller.
+  const lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+  if (month === 2 && isLeapYear(year)) {
+    return 29;
+  }
+  return lengths[month - 1] as number;
+}
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

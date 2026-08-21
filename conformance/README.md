@@ -64,6 +64,11 @@ Input classes currently **covered**:
   shared-prefix pair, nested `body` object, UUID and RFC 3339 strings,
   integer fields). This is also the valid-entry anchor for the entry
   validator (see `invalid-entries/` below).
+- Whitespace collapse at scale (case 017): the same entry padded with >1 MiB
+  of inter-token whitespace, so raw input exceeds 1,048,576 bytes while the
+  canonical form is 016's 327 bytes. Together with `invalid-entries/025` this
+  pins that the spec §7.1 cap is measured on **canonical** bytes, not raw
+  input bytes — entry validators must accept 017.
 
 Input classes deliberately **not covered** (yet):
 
@@ -147,6 +152,7 @@ RFC-stated key order reproduced those bytes exactly
 | `014-num-minus-zero` | `-0` → `0` | node output pasted above; matches Appendix B row `8000000000000000` |
 | `015-num-max-safe-int` | `9007199254740991` (2^53−1) round-trips unchanged | node output pasted above |
 | `016-spec-example-entry` | Full valid spec §7 example entry: eight-field key sort (`body` < `created_at` < `entry_id` < `log_id` < `prev_entry_id` < `version` < `writer_id` < `writer_seq`; the last pair decided at `'i'` 0x69 < `'s'` 0x73 after the shared `writer_` prefix), nested `body` key sort (`type` < `value`), whitespace removal | Input is the spec §7 example verbatim. Expected bytes derived 2026-08-21 (node v24.13.1) by the same discipline as the seeding: key order hand-derived per RFC 8785 §3.2.3 as shown, single strings/numbers serialized via node `JSON.stringify`, concatenated by hand — `worker/src/jcs.ts` deliberately not consulted (it is under test by this vector). Canonical form is 327 bytes; the derivation script asserted the canonical text parses deep-equal to `input.json` (`VALUE-EQ OK`) |
+| `017-whitespace-padded-entry` | Raw input > 1 MiB of inter-token whitespace collapsing to the 327-byte canonical form of 016 — cap-side discrimination: the entry-size cap measures canonical bytes | Input is 016's `input.json` with 1,048,600 spaces injected after the opening brace (raw size 1,048,977 bytes); `expected.hex` is a **deliberate byte-for-byte copy of 016's** (same canonical form, same reasoning as the 011/012 duplication), verified byte-identical with `cmp`; generation script asserted the padded input parses deep-equal to 016's (`VALUE-EQ OK`) |
 | `999-deliberate-mismatch` | **Intentionally wrong expected bytes** (unsorted `{"b":2,"a":1}` instead of correct `{"a":1,"b":2}`) — the red-demonstration case, see above | Wrongness constructed and verified at derivation time: stored bytes differ from the hand-derived correct canonical form |
 
 ### Sanity checks run at seeding (2026-08-21, node v24.13.1)
@@ -180,6 +186,15 @@ table.
 2. 016 value equality: the derived canonical text parses deep-equal to
    `input.json` (asserted inside the derivation script, `VALUE-EQ OK`).
 
+### Checks re-run for the spec-review fixups (cases 017, 026-029; 2026-08-21)
+
+Byte-rule checker over both families after adding the five fixup cases:
+`checked 94 files, 0 failures` (18 canonical-json cases × 2 files + 29
+invalid-entries cases × 2 files); the checker was again shown red on the
+known-bad corpus first (2/2 failures, exit 1). `017/expected.hex` confirmed
+byte-identical to `016/expected.hex` with `cmp`; the padded input asserted
+deep-equal to 016's on parse (`VALUE-EQ OK`).
+
 ## `invalid-entries/` — version-1 entry rejection vectors
 
 Vectors for the spec §7 / §7.1 entry validator: inputs that every runtime's
@@ -207,11 +222,15 @@ JSON — these cases exercise entry validation, not JSON parsing. The numbering
 policy is the same (next unused number; `9xx` reserved for deliberately-wrong
 cases — none exist in this family yet).
 
-**Determinism rule:** every case contains exactly one violation, and
-validators must check fields in the spec §7 table order (`version`, `log_id`,
-`entry_id`, `writer_id`, `writer_seq`, `prev_entry_id`, `created_at`, `body`),
-required-key presence before value checks, so multi-violation inputs (not in
-this corpus) would still get deterministic slugs.
+**Determinism rule:** each case targets one violation, and validators must
+check fields in the spec §7 table order (`version`, `log_id`, `entry_id`,
+`writer_id`, `writer_seq`, `prev_entry_id`, `created_at`, `body`),
+required-key presence before value checks, so any input gets a deterministic
+slug. "One violation" is not always literally achievable: in `013`/`014` the
+invalid `writer_seq` unavoidably interacts with the `prev_entry_id` rule
+(when `writer_seq` is itself invalid, *any* `prev_entry_id` value is
+arguable; those cases carry `null`). The declared table order resolves this
+deterministically: `writer_seq` is checked first, so its slug is the answer.
 
 Notes on individual behaviors:
 
@@ -232,6 +251,21 @@ Notes on individual behaviors:
   pins the strict reading: only the `Z` suffix form is valid. A numeric
   offset — even `+00:00` — is rejected as `created-at-not-utc`, so both
   runtimes accept exactly one spelling of each instant.
+- **`028-created-at-calendar-invalid` (`2026-02-30`)**: RFC 3339's
+  `date-mday` grammar is constrained by month and year, so a
+  calendar-invalid day IS not-RFC 3339 — slug `created-at-not-rfc3339`.
+  Validators must use real calendar arithmetic (days-in-month plus leap-year
+  rules); ECMAScript's `Date.parse` is disqualified as a backstop because it
+  rolls invalid days over (2026-02-30 parses as March 2) instead of
+  rejecting them.
+- **`029-created-at-leap-second` (`23:59:60`)**: RFC 3339 itself *permits*
+  second value 60, but this corpus rejects it **by policy**, with the
+  dedicated slug `created-at-leap-second`: the one-spelling-per-instant
+  discipline above, plus the fact that date libraries across runtimes
+  disagree wildly on leap-second handling, make accepting `:60` a
+  cross-runtime divergence hazard. The distinct slug (rather than
+  `created-at-not-rfc3339`) records that this is a policy rejection of a
+  grammatically valid timestamp.
 - **`025-entry-too-large`**: its `input.json` is ~1.0 MiB of deterministic
   padding (`"pad"` = 1,048,576 repeated `a` characters) and is committed
   as-is; the canonical form is 1,048,867 bytes, over the spec §7.1 cap of
@@ -242,12 +276,16 @@ Notes on individual behaviors:
 Violation classes currently **covered** (one case each unless noted): every
 required top-level field missing (8 cases, incl. the `prev_entry_id` key
 absent entirely); wrong `version`; extra top-level field; non-lowercase UUID;
-malformed UUID; `writer_seq` zero / negative (2 cases, same slug) and
+malformed UUID in `entry_id`, `writer_id`, and a non-null `prev_entry_id`
+(3 cases, same slug); `writer_seq` zero / negative (2 cases, same slug) and
 non-integer; `prev_entry_id` non-null at `writer_seq` 1 and null at
-`writer_seq` > 1; `created_at` with a non-UTC offset and non-RFC 3339;
-`body` array and string (2 cases, same slug); integer literal beyond
-+(2^53−1) in `body`; non-finite number literal; lone surrogate escape in a
-`body` string; canonical form over 1 MiB.
+`writer_seq` > 1; `created_at` with a non-UTC offset, non-RFC 3339,
+calendar-invalid day (real days-in-month/leap-year validation), and a leap
+second (rejected by policy, own slug); `body` array and string (2 cases,
+same slug); integer literal beyond +(2^53−1) in `body`; non-finite number
+literal; lone surrogate escape in a `body` string; canonical form over
+1 MiB (whose complement — over-1 MiB *raw* input with a small canonical
+form — is pinned valid by `canonical-json/017`).
 
 Violation classes deliberately **not covered** (yet):
 
@@ -267,8 +305,10 @@ Violation classes deliberately **not covered** (yet):
   non-object top-level entries (bare array/string).
 - UUID version/variant bits: any `8-4-4-4-12` lowercase hex string is
   accepted; UUIDv7-ness is not checked (the spec only recommends v7).
-- Semantic calendar validation of `created_at` beyond shape (e.g. month 13
-  with valid shape).
+- Fractional-second precision limits in `created_at`: **unpinned**. No
+  vector constrains how many fractional digits are accepted (or whether an
+  empty fraction like `12:00:00.Z` is tolerated by a lenient parser), and
+  implementations may currently differ there.
 
 ### Case list
 
@@ -299,6 +339,10 @@ Violation classes deliberately **not covered** (yet):
 | `023-non-finite-number` | `invalid_entry` | `non-finite-number` |
 | `024-lone-surrogate` | `invalid_entry` | `ill-formed-unicode` |
 | `025-entry-too-large` | `entry_too_large` | `canonical-bytes-over-1mib` |
+| `026-writer-id-malformed` | `invalid_entry` | `uuid-malformed` |
+| `027-prev-entry-id-malformed` | `invalid_entry` | `uuid-malformed` |
+| `028-created-at-calendar-invalid` | `invalid_entry` | `created-at-not-rfc3339` |
+| `029-created-at-leap-second` | `invalid_entry` | `created-at-leap-second` |
 
 Provenance: every input is the spec §7 example entry with exactly one
 scripted, deterministic mutation applied as raw text (never re-serialized

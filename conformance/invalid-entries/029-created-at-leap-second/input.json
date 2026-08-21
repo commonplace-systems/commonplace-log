@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "log_id": "0198cc6e-47ac-7d72-93db-b6fbd92bfca2",
+  "entry_id": "0198cc70-3800-75bd-b56a-5f913fbdeed3",
+  "writer_id": "fab4e8a5-ce9e-48d0-8f78-1d312b978207",
+  "writer_seq": 27,
+  "prev_entry_id": "0198cc6f-f11c-7803-aa25-401bc5f781c0",
+  "created_at": "2026-12-31T23:59:60.000Z",
+  "body": {"type": "commonplace.example", "value": "hello"}
+}

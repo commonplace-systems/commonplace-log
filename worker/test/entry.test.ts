@@ -14,21 +14,43 @@ function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("hex");
 }
 
-// --- Valid entry: canonical-json/016-spec-example-entry -------------------
+// --- Valid entries: canonical-json anchor cases ---------------------------
+// 016: the spec §7 example entry. 017: the same entry padded with >1 MiB of
+// inter-token whitespace — raw input exceeds 1,048,576 bytes but its
+// canonical form is 016's 327 bytes, pinning that the spec §7.1 cap is
+// measured on CANONICAL bytes, not raw input bytes.
 
-const validEntryCase = "016-spec-example-entry";
+const validEntryCases = [
+  "016-spec-example-entry",
+  "017-whitespace-padded-entry",
+];
 
-describe("validateEntry accepts the spec example entry", () => {
-  it(`${validEntryCase} validates ok with exactly the expected canonical bytes`, () => {
-    const dir = join(canonicalJsonDir, validEntryCase);
-    const raw = readFileSync(join(dir, "input.json"));
-    const expectedHex = readFileSync(join(dir, "expected.hex"), "utf-8").trim();
-    expect(expectedHex).toMatch(/^[0-9a-f]+$/);
+describe("validateEntry accepts the valid-entry anchor cases", () => {
+  it.for(validEntryCases)(
+    "%s validates ok with exactly the expected canonical bytes",
+    (name) => {
+      const dir = join(canonicalJsonDir, name);
+      const raw = readFileSync(join(dir, "input.json"));
+      const expectedHex = readFileSync(
+        join(dir, "expected.hex"),
+        "utf-8",
+      ).trim();
+      expect(expectedHex).toMatch(/^[0-9a-f]+$/);
 
-    const result = validateEntry(new Uint8Array(raw));
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
-    expect(toHex(result.canonicalBytes)).toBe(expectedHex);
+      const result = validateEntry(new Uint8Array(raw));
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(toHex(result.canonicalBytes)).toBe(expectedHex);
+    },
+  );
+});
+
+describe("cap-side discrimination", () => {
+  it("017's raw input is itself over the 1 MiB cap (whitespace collapses)", () => {
+    const raw = readFileSync(
+      join(canonicalJsonDir, "017-whitespace-padded-entry", "input.json"),
+    );
+    expect(raw.byteLength).toBeGreaterThan(1_048_576);
   });
 });
 
