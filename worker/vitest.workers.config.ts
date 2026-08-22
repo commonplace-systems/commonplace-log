@@ -1,0 +1,13 @@
+import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
+
+export default defineWorkersProject({
+  test: {
+    name: "do",
+    include: ["test/do/**/*.test.ts"],
+    poolOptions: {
+      workers: {
+        wrangler: { configPath: "./wrangler.jsonc" },
+      },
+    },
+  },
+});

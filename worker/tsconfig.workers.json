@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Workers runtime globals + the `cloudflare:test` module types.
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
+  },
+  "include": ["src", "test/do", "vitest.workers.config.ts"],
+  "exclude": []
+}

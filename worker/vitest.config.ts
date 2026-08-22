@@ -1,8 +1,19 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    globals: true,
-    include: ["test/**/*.test.ts"],
+    projects: [
+      // Plain-node unit suite (SP1): everything under test/ except test/do/**.
+      {
+        test: {
+          name: "unit",
+          globals: true,
+          include: ["test/**/*.test.ts"],
+          exclude: [...configDefaults.exclude, "test/do/**"],
+        },
+      },
+      // Durable Object suite: runs inside workerd via @cloudflare/vitest-pool-workers.
+      "./vitest.workers.config.ts",
+    ],
   },
 });

@@ -107,7 +107,7 @@ function invalid(reason: string): ValidateEntryResult {
 export function validateEntry(raw: Uint8Array): ValidateEntryResult {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(raw);
   } catch {
     return { ok: false, code: "invalid_json", reason: REASONS.notUtf8 };
   }

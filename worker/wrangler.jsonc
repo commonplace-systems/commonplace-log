@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commonplace-log",
+  "main": "src/index.ts",
+  // Newest date supported by the workerd pinned by @cloudflare/vitest-pool-workers 0.12.21
+  // (workerd 1.20260310.1).
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "COMMONPLACE_LOG", "class_name": "CommonplaceLog" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["CommonplaceLog"] }
+  ]
+}
