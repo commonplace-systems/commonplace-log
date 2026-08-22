@@ -12,6 +12,15 @@ defmodule Commonplace.Log.DependencyTest do
     end
   end
 
+  test "Sync has no storage-client dependencies, with a positive control" do
+    source = File.read!(Path.join(@lib, "commonplace/log/sync.ex"))
+    assert source =~ "Sync"
+
+    for forbidden <- ["Exqlite", "LocalSQLite", ":httpc", "Req", "Finch", "Tesla"] do
+      refute source =~ forbidden
+    end
+  end
+
   test "persistence contract modules contain no domain-semantic dependencies, with a positive control" do
     paths =
       Path.wildcard(Path.join(@lib, "commonplace/log/persistence*.ex")) ++
