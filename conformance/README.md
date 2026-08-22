@@ -334,6 +334,16 @@ Violation classes deliberately **not covered** (yet):
   need per-runtime parse-error tolerance decisions not yet made.
 - Duplicate object keys (I-JSON violation; most parsers silently keep one).
 - Lone surrogates in object *keys* (covered only in string values).
+- Lone surrogates in **non-body** string values (e.g. inside `created_at`):
+  both runtimes reject the entry, but the slug differs by detection stage
+  (TypeScript reaches the field check → `created-at-not-rfc3339`; Jason
+  rejects at decode → `ill-formed-unicode`). Unpinned; only body strings
+  (024) are pinned.
+- Relative ordering **among** multiple parse-time number violations in one
+  document (e.g. an unsafe integer literal *and* a non-finite literal):
+  which of the two slugs wins is detection-order-dependent and differs
+  across runtimes and across key order. Only their joint precedence over
+  all field checks is pinned (ordering rule above).
 - Negative integer literals below −(2^53−1) (only the positive side is
   pinned). Unsafe *values* in `writer_seq` are pinned by 030, but a plain
   unsafe integer literal there (e.g. `9007199254740993` as `writer_seq`)
