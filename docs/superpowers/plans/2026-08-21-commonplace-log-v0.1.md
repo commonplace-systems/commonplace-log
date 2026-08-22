@@ -214,6 +214,8 @@ Vector corpus rules: `input.json` is authoritative **as bytes** (big-int and non
 | 8 byte-diff harness | done, adversarially reviewed (7 sabotage demos total across implementer+reviewer, all red-named-case) | `c076b18` |
 | 9 differential fuzz | done, reviewed (recorded seeds reproduce; 2,500 cases, 0 divergences) | `03104e0` |
 
+**SP2 (Durable Object) complete 2026-08-22 — see `2026-08-22-sp2-durable-object.md` ledger; §18 conformance 1–12 green on real DO SQLite; 218 worker tests. Next: SP3 (Elixir SQLite store + sync engine).**
+
 **SP1 exit criteria: MET (2026-08-22).** `conformance/check.sh` green over both runtimes (19 cases, TS≡Elixir≡expected, 999 mismatching as required); red paths demonstrated and recorded in `conformance/README.md`; fuzz (seeds 1166098830/500, 1074251894/2000) found no divergences, so no frozen vectors were needed. Suites: Elixir 1 doctest + 59 tests, TS 56 tests, all green.
 
 **SP1 exit criteria:** `conformance/check.sh` green over both runtimes on the full committed corpus; the red path demonstrated and recorded; fuzz divergences (if any) frozen as vectors. Then SP2 (Durable Object) gets its detailed task plan.

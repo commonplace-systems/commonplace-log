@@ -90,7 +90,22 @@ worker/
 - [ ] Commit: `test(do): §18 conformance 1–12 against real DO storage`
 
 ### Task 9: SP2 close-out
-- [ ] `tsc --noEmit` clean; full vitest (both projects) green; `conformance/check.sh` + `mix test` regressions green; parent-plan ledger row updated
-- [ ] Commit: `plan: SP2 complete`
+- [x] `tsc --noEmit` clean; full vitest (both projects) green (218 tests); `conformance/check.sh` GREEN (19 cases) + `mix test` (1 doctest, 59 tests, 0 failures) + `mix format --check-formatted` regressions green; parent-plan ledger row updated
+- [x] Commit: `plan: SP2 complete`
+
+## SP2 ledger (all tasks done, each implementer + adversarial review + fix rounds where found)
+
+| Task | Commits | Review notes |
+|---|---|---|
+| 1 tooling | `1a5e579` | approved; entry.ts ignoreBOM touch verified behavior-neutral |
+| 2 schema+triggers | `9fda481`, `fca4bc2` | DDL byte-identical to spec (912=912, independent extraction); triggers pure addition; whole-block equality gate added on advisory |
+| 3 merge classifier | `34a6963`, `1b2ab2d` | 12 adversarial probes clean; surviving mutant found and killed (same-id same-coord different-bytes row); invalid_batch→422 invalid_entry wire mapping decided+recorded |
+| 4 createLog+append | `75ccc68`, `4480a4f` | uuidv7 verified vs RFC 9562; both review mutants initially survived → fault-injection rollback test added, transaction now falsifiable |
+| 5 merge transaction | `870b4ce`, `24bc327` | ❌→✅: reviewer's getter-spoof probe persisted a columns-vs-bytes desync through the public API; fixed by deriving all fields from canonical bytes (raw read exactly once); store-wide invariant test added |
+| 6 reads | `7dfbd64` | off-by-one and burn-gap probes clean; exclusive-after mutation killed 6 tests |
+| 7 HTTP surface | `35c4a8b`, `022185b` | §11.6 row-by-row parity exact; 4 MiB boundary exact (4,194,304 ok / +1 rejected); harness finding: ctx.id.name always undefined under pool 0.12.x — end-to-end named addressing deferred to SP4 wrangler-dev (recorded) |
+| 8 conformance | `5c4485c`, `f0e387f` | all §18.1–12 faithful per item-by-item review; audit independent of store API, demonstrated red by rule name; store mutation flips §18.3 red (suite not decoration); no real bug found — stated, not decorated |
+
+**SP2 exit criteria: MET (2026-08-22).** §18 tests 1–12 green under workers pool against real DO SQLite; trigger red paths recorded ("entries are immutable: SQLITE_CONSTRAINT"); audit green after every scenario and demonstrated able to fail; SP1 suites + harness still green; no §2 exclusion added; DDL verbatim with triggers as pure addition. Known deferral: real idFromName end-to-end name verification → SP4.
 
 **SP2 exit criteria:** §18 tests 1–12 green under workers pool against real DO SQLite; trigger red paths recorded; audit query green after every scenario and demonstrated able to fail; both SP1 suites and the harness still green; no §2 exclusion added; DDL verbatim with triggers as pure addition.
