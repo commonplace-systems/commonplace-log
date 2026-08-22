@@ -57,8 +57,11 @@ defmodule Commonplace.Log.Jcs do
       map
       |> Map.to_list()
       |> Enum.map(fn
-        {key, value} when is_binary(key) -> {utf16_sort_key(key), key, value}
-        {key, _value} -> raise ArgumentError, "cannot canonicalize non-binary map key: #{inspect(key)}"
+        {key, value} when is_binary(key) ->
+          {utf16_sort_key(key), key, value}
+
+        {key, _value} ->
+          raise ArgumentError, "cannot canonicalize non-binary map key: #{inspect(key)}"
       end)
       |> List.keysort(0)
       |> Enum.map_intersperse(",", fn {_sort_key, key, value} ->
