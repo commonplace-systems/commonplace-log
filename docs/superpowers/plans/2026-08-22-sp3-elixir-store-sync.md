@@ -90,6 +90,9 @@ surprise.
 - [ ] Tests: two local replicas, §18.3 both orders VIA THE ENGINE; page-size sweep (1, 2, 7); deadline returns progress; fork reported with both tips; writers advancing during sync converge on repeat
 - [ ] Commit: `feat(elixir): frontier/range sync engine per §10`
 
+### Task 6 status: DONE — `318bea3` (+ `a846416` formatting correction)
+Storage-agnostic sync over a replica reference; fork isolation stops only the forked writer while others converge in the same pass, both tips reported, no winner chosen (§15.4). Mutation-verified: making a fork `:halt` the pass instead of `:cont` turns exactly the fork-isolation test red. Page sizes 1/2/7 produce genuinely different page counts (independently measured 7/4/1 on a 7-entry chain before trusting the suite's 11/6/2).
+
 ### Task 7: Merge-law property tests (§18 SHOULD; unchanged)
 - [ ] StreamData: random writer sets/chains/partitions/batch boundaries/duplicate deliveries/sync orders → §5 laws over real replicas; seeds printed; ≥200 cases/property, runtime modest; counterexamples frozen before fixing. PLUS the proposal-§14 property: engine retry under randomly injected stale revisions never loses, duplicates, or reorders entries
 - [ ] Commit: `test(elixir): §5 merge-law and stale-retry properties`
