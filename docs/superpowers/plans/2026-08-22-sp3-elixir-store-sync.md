@@ -81,6 +81,10 @@ surprise.
 - [ ] §18 conformance 1–12 ported from SP2's suite shape over THIS composition (spec-numbered names, exactly-12 registry gate, audit helper — SQL-only, extended to check `persistence_meta.revision` consistency: revision ≥ count of committed plans is not derivable, so check revision monotonicity across scenario steps instead — audit demonstrated red via trigger-legal direct INSERT), restart analog (kill Server, reopen from disk), both-orders convergence on independent replica pairs (two data_dirs)
 - [ ] Commit: `test(elixir): §18 conformance 1–12 over Engine+LocalSQLite`
 
+### Task 5 status: DONE
+- **5a** public `LogStore.SQLite` + error normalization — `d4ca96c`. Protocol failures normalize to `{:error, {code, details}}`; everything else falls through to `{:error, {:storage, ...}}` so a storage fault can never masquerade as a claim about log contents.
+- **5b** §18 conformance 1–12 + SQL-only audit — `1200660`. Audit shares no code path with the writer (a check that cannot disagree cannot corroborate) and was mutation-verified: blinding it turns exactly the audit-can-fail test red. No §18 scenario uncovered a library defect — stated plainly, with the mutation as evidence the suite is not decoration.
+
 ### Task 6: Sync engine (design unchanged by revision — proposal §5.1)
 - [ ] `sync.ex` red-first per §10 pseudocode over the `Commonplace.LogStore` behavior: snapshot frontiers, per-writer compare (equal seq ⇒ entry_id MUST match else fork), page-wise pull, idempotent merge, repeat until equal or `deadline_ms`; fork stops ONLY that writer (others continue — tested)
 - [ ] Tests: two local replicas, §18.3 both orders VIA THE ENGINE; page-size sweep (1, 2, 7); deadline returns progress; fork reported with both tips; writers advancing during sync converge on repeat
