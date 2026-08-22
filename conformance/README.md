@@ -309,6 +309,167 @@ RESULT: RED — at least one check above failed
 all 18 non-9xx cases and `TS MISMATCH / EX MISMATCH ... (deliberate 9xx case
 — required)` on `999-deliberate-mismatch`; `RESULT: GREEN`, exit 0.
 
+## Differential fuzz — `conformance/fuzz.sh`
+
+Where the corpus pins known input classes with fixed vectors, the fuzz
+harness searches for **new** divergences across randomly generated I-JSON
+values — same philosophy as `check.sh`: files as the exchange medium,
+`cmp`/`diff` over those files as the verdict, per-case verdicts on failure
+(never truncated), anti-vacuity gates on the case count and file sets.
+
+```sh
+conformance/fuzz.sh [n] [seed]        # default n: 500; anti-vacuity floor: 100
+```
+
+Pipeline:
+
+1. **Generator** — `commonplace_log/scripts/fuzz_differential.exs`
+   (StreamData; deterministic via `check_all`'s `initial_seed`):
+
+   ```sh
+   cd commonplace_log && mix run scripts/fuzz_differential.exs <outdir> <n> [seed]
+   ```
+
+   emits N pseudo-random I-JSON values, writing per case `fuzz-NNNN`:
+
+   - `fuzz-NNNN.json` — the input, as the **Elixir canonicalizer's own
+     bytes** for the generated value, so every input file is canonical by
+     construction and every case doubles as a fixpoint test. Unlike corpus
+     `input.json` files, these ephemeral files have **no trailing newline**:
+     the file IS the canonical bytes, exactly.
+   - `fuzz-NNNN.bin` — Elixir's canonical bytes for the value **re-parsed**
+     from that `.json` (`canonicalize(Jason.decode(canonicalize(v)))`).
+
+2. **TypeScript side** — `worker/scripts/fuzz-check.ts` (plain node, no
+   dependencies) reads each `.json` raw, `JSON.parse`s, canonicalizes via
+   `worker/src/jcs.ts`, and writes its own `fuzz-NNNN.bin`.
+
+3. **Verdicts** (per case, from the files):
+
+   - **A**: TS `.bin` byte-identical to Elixir `.bin` (cross-runtime);
+   - **B-ts / B-ex**: each runtime's `.bin` byte-identical to the `.json`
+     bytes themselves — the inputs are canonical by construction, so any
+     inequality is a broken `canonicalize ∘ parse` fixpoint.
+
+   Anti-vacuity: generated case count must equal N with a floor of 100
+   (the floor gate was demonstrated red: `conformance/fuzz.sh 50` fails
+   immediately with `FAIL: N=50 is below the anti-vacuity floor`), and the
+   three file sets (`.json`, Elixir `.bin`, TS `.bin`) are diffed against
+   each other in both directions. Exit is non-zero on any violation.
+
+### Seed reproduction
+
+The seed is **always** printed, given or generated — by the generator
+(`fuzz_differential.exs: N=<n> SEED=<s>`) and again in the summary
+(`SEED: <s> (reproduce: conformance/fuzz.sh <n> <s>)`). The same `<n>` and
+seed reproduce the identical file set: verified by running the generator
+twice with seed 12345 (`diff -r` clean over both trees) and by re-running
+the full harness with the recorded 500-case seed (identical 500/500 green,
+same summary).
+
+### Domain SELECTOR — what a green fuzz run does and does not mean
+
+Generated (matching the corpus SELECTOR's covered classes):
+`null`/`true`/`false`; integers only within ±(2^53−1) (small and
+full-range); finite doubles from uniformly random 64-bit patterns — NaN and
+Infinity bit patterns fail Erlang's `::float` match and are filtered, so
+subnormals, extremes and round-to-even cases arise naturally (the corpus
+only pins the boundary values, so any divergence found here is new
+information); strings of well-formed Unicode including controls, quotes,
+backslashes and astral characters; object keys mixing BMP ≥ U+E000 with
+astral characters to stress UTF-16-vs-code-point key ordering; arrays and
+objects nested to depth ~6.
+
+Deliberately **not** generated — the recorded-unpinned classes from the
+`canonical-json/` SELECTOR's "not covered" list, which a fuzz hit would
+otherwise misreport as a new divergence:
+
+- **integers beyond ±(2^53−1)** (bignum divergence class: Elixir preserves
+  arbitrary precision, ECMAScript rounds at parse);
+- **lone surrogates** (string codepoints are drawn from scalar-value ranges
+  that exclude U+D800..U+DFFF; only `invalid-entries/024` pins any lone
+  surrogate behavior, and only for body strings);
+- **duplicate keys** (values are Elixir maps, so duplicates are impossible
+  by construction).
+
+One subtlety worth recording: an integer *literal* beyond 2^53 CAN appear in
+generated files (e.g. `70849200683163720`) when a random double happens to
+be integral — every double with unbiased exponent ≥ 52 is — because its
+shortest representation is then a plain integer literal. That is not bignum
+generation, and it cannot diverge: the digits are the double's shortest
+round-trip representation, so TypeScript reparses them to exactly the same
+double and re-emits the same digits, while Elixir reparses them as an exact
+bignum whose decimal rendering is those same digits.
+
+### Recorded red demonstrations (2026-08-22, node v24.13.1, Elixir 1.18.4-otp-27)
+
+Per the red-before-green contract, both failure modes were demonstrated on
+sabotaged *scratchpad copies* of `fuzz.sh` (committed sources untouched),
+each at the marked insertion point, both with `n=100 seed=777`; both exited 1.
+
+**(a) one Elixir `.bin` corrupted** (a byte appended after generation) —
+verdict A fails naming the case, with the byte diff as evidence:
+
+```
+fuzz-0042: verdict A FAIL — TS and Elixir canonical bytes differ
+-- TS vs EX (xxd diff):
+23c23
+< 00000160: 347d 7d                                  4}}
+---
+> 00000160: 347d 7d58                                4}}X
+...
+verdict A pass (TS bin == EX bin):      99/100
+RESULT: RED — at least one check above failed
+```
+
+**(b) one `.json` made non-canonical** (a space prepended — still valid
+JSON, so both runtimes still parse and agree with each other; verdict A
+stays 100/100 while BOTH fixpoint verdicts fail naming the case):
+
+```
+fuzz-0017: verdict B-ts FAIL — TS canonicalize(parse(.json)) != the .json bytes (fixpoint broken)
+-- TS bin vs .json (xxd diff):
+1,28c1,28
+< 00000000: 7b22 2c7d f3a8 b6a0 5623 eeb6 885c 7530  {",}....V#...\u0
+---
+> 00000000: 207b 222c 7df3 a8b6 a056 23ee b688 5c75   {",}....V#...\u
+...
+fuzz-0017: verdict B-ex FAIL — Elixir canonicalize(decode(.json)) != the .json bytes (fixpoint broken)
+...
+verdict A pass (TS bin == EX bin):      100/100
+verdict B-ts pass (TS bin == .json):    99/100
+verdict B-ex pass (EX bin == .json):    99/100
+RESULT: RED — at least one check above failed
+```
+
+### Recorded green runs (2026-08-22, immediately after the reds)
+
+| N | Seed | Result |
+|---|---|---|
+| 500 (default) | `1166098830` | A 500/500, B-ts 500/500, B-ex 500/500 — `RESULT: GREEN`, exit 0 (~5 s) |
+| 2000 | `1074251894` | A 2000/2000, B-ts 2000/2000, B-ex 2000/2000 — `RESULT: GREEN`, exit 0 (~14 s) |
+| 500 (repro) | `1166098830` | identical green re-run from the recorded seed — reproduction verified |
+
+Reproduce with `conformance/fuzz.sh 500 1166098830` and
+`conformance/fuzz.sh 2000 1074251894`. **No divergence has been found by
+any recorded run.**
+
+### Divergence protocol
+
+If a fuzz run ever reports a mismatch (any verdict, any case):
+
+1. Minimize the failing input **by hand** to the smallest value that still
+   diverges (the failing `.json` is printed in full by the harness).
+2. **Freeze it first**: add it as a permanent `canonical-json/` vector at
+   the next unused number — expected bytes derived per this README's
+   provenance discipline (never from either implementation under test) —
+   and update the SELECTOR statement and provenance table.
+3. Only **after** the vector is committed may either implementation be
+   fixed. The corpus is the single source of truth; a fuzz finding that is
+   fixed without being frozen is a finding lost.
+
+The harness prints this protocol whenever it goes red.
+
 ## `invalid-entries/` — version-1 entry rejection vectors
 
 Vectors for the spec §7 / §7.1 entry validator: inputs that every runtime's
