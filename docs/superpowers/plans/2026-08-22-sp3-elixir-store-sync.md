@@ -98,6 +98,24 @@ Storage-agnostic sync over a replica reference; fork isolation stops only the fo
 - [ ] Commit: `test(elixir): §5 merge-law and stale-retry properties`
 
 ### Task 8: SP3 close-out
+
+**DEFECT FOUND 2026-08-22 by the very test this task exists to add — the underspecified read contract.**
+All three read callbacks are typed `{:ok, map()}` in `Commonplace.Log.Persistence`, which is far too
+loose to pin a shape, and two implementations duly drifted apart with nothing to catch it. Measured
+across the same operations:
+
+| callback | LocalSQLite | InMemoryPersistence |
+|---|---|---|
+| `frontier/2` | `%{writers: [%{writer_id:, seq:, entry_id:}]}` (sorted list, the §9.4 shape) | `%{tips: %{writer_id => %{seq:, entry_id:}}}` |
+| `read_writer/4` | `%{entries: [...], next_after_seq: _}` | `%{entries: [...]}` — **no continuation cursor** |
+| `tail_local/3` | `%{entries: [...], next_after_arrival: _}` | `%{entries: [...]}` — **no continuation cursor** |
+
+⇒ A caller CAN tell which adapter it is talking to, which is exactly what acceptance criterion 5
+forbids. The missing cursors are the sharper half: §9.5 requires a continuation cursor, and
+`Commonplace.Log.Sync` pages through *any* persistence module, so a cursorless adapter would silently
+break paging rather than fail loudly. LocalSQLite matches the spec; the in-memory adapter is the one
+that must conform. **The lesson is the contract, not the adapter:** `{:ok, map()}` cannot constrain
+anything, and the drift was invisible until two implementations were compared directly.
 - [ ] **GAP FOUND 2026-08-22 while auditing the exit criteria, filed so it is not rediscovered at the last minute:** the criteria require that the Engine produce *identical domain errors* over LocalSQLite and the in-memory adapter (proposal acceptance criterion 5, local half). Today the only cross-adapter test compares **ReadSets**, not errors — `local_sqlite_test.exs` "LocalSQLite and InMemoryPersistence produce the same ReadSet". So the criterion is UNVERIFIED. Close it with a test that drives the same provoking inputs (gap, fork, entry-id collision, invalid entry, wrong log_id) through the Engine over BOTH adapters and asserts the returned error terms are equal — not merely both-errors, but equal. Without it SP3 cannot honestly claim its own exit criteria.
 - [ ] Full sweep (mix + worker + check.sh + fuzz spot-run); parent ledger updated INCLUDING: SP3 artifact row amended (DO↔Elixir demo → SP4, where its client dependency lives), SP4 row replaced per proposal §9 (`Persistence.CloudflareSidecar` + realm Container DO + optional `LogStore.WorkalikeClient`), SP2 row annotated "complete as the Durable Object workalike milestone"; `docs/protocol/0.1-amendment-1-beam-native.md` present; memory updated; NOTE in the ledger: proposal-§12 persistence-conformance's `storage_full` behavior is deferred to SP4's shared persistence suite (not locally simulable), recorded so it isn't silently dropped
 - [ ] Commit: `plan: SP3 complete`
