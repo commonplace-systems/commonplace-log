@@ -106,6 +106,8 @@ worker/
 | 7 HTTP surface | `35c4a8b`, `022185b` | §11.6 row-by-row parity exact; 4 MiB boundary exact (4,194,304 ok / +1 rejected); harness finding: ctx.id.name always undefined under pool 0.12.x — end-to-end named addressing deferred to SP4 wrangler-dev (recorded) |
 | 8 conformance | `5c4485c`, `f0e387f` | all §18.1–12 faithful per item-by-item review; audit independent of store API, demonstrated red by rule name; store mutation flips §18.3 red (suite not decoration); no real bug found — stated, not decorated |
 
+**STATUS per the BEAM-native revision (`docs/proposals/2026-08-22-beam-native-revision.md`, Phase 0.3): SP2 is complete as the Durable Object WORKALIKE milestone.** The implementation is preserved and stays green against protocol conformance; it is a conforming workalike, not the reference — Elixir is normative. This ledger is a historical implementation record (proposal §9).
+
 **SP2 exit criteria: MET (2026-08-22).** §18 tests 1–12 green under workers pool against real DO SQLite; trigger red paths recorded ("entries are immutable: SQLITE_CONSTRAINT"); audit green after every scenario and demonstrated able to fail; SP1 suites + harness still green; no §2 exclusion added; DDL verbatim with triggers as pure addition. Known deferral: real idFromName end-to-end name verification → SP4.
 
 **SP2 exit criteria:** §18 tests 1–12 green under workers pool against real DO SQLite; trigger red paths recorded; audit query green after every scenario and demonstrated able to fail; both SP1 suites and the harness still green; no §2 exclusion added; DDL verbatim with triggers as pure addition.

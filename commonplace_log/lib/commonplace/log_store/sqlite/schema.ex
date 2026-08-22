@@ -1,7 +1,13 @@
 defmodule Commonplace.LogStore.SQLite.Schema do
   @moduledoc """
-  SP3 Task 1: the §12 SQLite storage layout for the local Elixir adapter —
-  the twin of `worker/src/do/schema.ts` (SP2 Task 2).
+  SP3 Task 1: the §12 SQLite storage layout for the LOCAL one-file-per-log
+  persistence adapter. Per the BEAM-native revision
+  (`docs/proposals/2026-08-22-beam-native-revision.md` §7), storage layouts
+  are adapter-specific: this is the reference adapter schema for
+  `Commonplace.Log.Persistence.LocalSQLite`, not the universal
+  representation of a Commonplace log. (`worker/src/do/schema.ts` uses the
+  same layout in the Durable Object workalike; they share provenance, not a
+  lockstep obligation.)
 
   `ddl/0` is copied BYTE-FOR-BYTE from the ```sql block of
   `docs/commonplace-monotonic-log-spec.md` §12 (extracted by script, not

@@ -3,10 +3,17 @@ defmodule Commonplace.Log.MergePlan do
   Pure merge classification per spec §9.3 (rules 1–6 and the three merge
   error codes), §6.3 (entry-ID collision), §8 invariants 3/4/9/10.
 
-  **Lockstep constraint:** this module is a behavior-for-behavior port of
-  `worker/src/do/merge-plan.ts`; the two twins must stay reviewable
-  side-by-side and any behavioral change lands on both or neither. Its test
-  twin is `worker/test/merge-plan.test.ts` ↔ `test/merge_plan_test.exs`.
+  **Authority status (BEAM-native revision, `docs/proposals/2026-08-22-beam-native-revision.md`):
+  this module is the NORMATIVE implementation of merge classification.**
+  `worker/src/do/merge-plan.ts` is an independent conforming workalike
+  verified against it by shared fixtures and black-box equivalence (a
+  200-scenario differential, seed 424242, ran at porting time with 0
+  mismatches), not by source-level lockstep. A behavioral change here is a
+  protocol change: it must be deliberate, spec-grounded, and reflected in
+  the shared conformance material the workalike is checked against.
+  Historical note: this module began as a behavior-for-behavior port OF the
+  TS side (test table row names still match), and the direction of
+  authority reversed with the revision.
 
   This module is a pure function over already-validated, canonicalized
   entries: no database, no I/O. The store executes the returned plan inside
@@ -22,7 +29,7 @@ defmodule Commonplace.Log.MergePlan do
   is malformed as submitted, unlike gap/fork which are receiver-state
   conflicts).
 
-  ## The eight reviewed interpretation decisions (mirrored from the TS twin)
+  ## The eight reviewed interpretation decisions (shared with the TS workalike)
 
   1. An error outcome refuses the whole batch and carries no per-writer
      plan, so no partial write can be derived from it (§8 invariant 10).
