@@ -215,6 +215,7 @@ defmodule Commonplace.Log.Engine do
       writer_id: parsed["writer_id"],
       writer_seq: parsed["writer_seq"],
       prev_entry_id: parsed["prev_entry_id"],
+      created_at: parsed["created_at"],
       canonical_bytes: canonical_bytes
     }
   end
@@ -225,6 +226,8 @@ defmodule Commonplace.Log.Engine do
       entry_id: entry.entry_id,
       writer_id: entry.writer_id,
       writer_seq: entry.writer_seq,
+      prev_entry_id: entry.prev_entry_id,
+      created_at: entry.created_at,
       canonical_bytes: entry.canonical_bytes
     }
   end

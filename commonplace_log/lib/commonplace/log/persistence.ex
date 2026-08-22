@@ -9,7 +9,9 @@ defmodule Commonplace.Log.Persistence do
   canonical bytes itself. Parsing and domain classification never move to
   the adapter side.
 
-  Commit-plan insertion rows contain canonical bytes and identity columns.
+  Commit-plan insertion rows supply the `entry_id`, `writer_id`, `writer_seq`,
+  `prev_entry_id`, and `created_at` columns, plus `canonical_bytes` for the
+  `canonical_json` column.
   Replica-local arrival metadata such as `received_at_ms` and `arrival_seq`
   is assigned by the adapter and must never be carried in a `CommitPlan`.
   That metadata is outside entry identity and merge semantics.
@@ -40,6 +42,8 @@ defmodule Commonplace.Log.Persistence do
             entry_id: String.t(),
             writer_id: String.t(),
             writer_seq: pos_integer(),
+            prev_entry_id: String.t() | nil,
+            created_at: String.t(),
             canonical_bytes: binary()
           }
 

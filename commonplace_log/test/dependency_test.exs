@@ -13,7 +13,10 @@ defmodule Commonplace.Log.DependencyTest do
   end
 
   test "persistence contract modules contain no domain-semantic dependencies, with a positive control" do
-    paths = Path.wildcard(Path.join(@lib, "commonplace/log/persistence*.ex"))
+    paths =
+      Path.wildcard(Path.join(@lib, "commonplace/log/persistence*.ex")) ++
+        Path.wildcard(Path.join(@lib, "commonplace/log/persistence/**/*.ex"))
+
     assert paths != []
     source = Enum.map_join(paths, "\n", &File.read!/1)
     assert source =~ "Persistence"
