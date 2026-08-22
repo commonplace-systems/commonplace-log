@@ -69,7 +69,7 @@ worker/
 
 ### Task 5: Store — transactional merge
 - [ ] Red-first: mergeBatch happy paths (fresh writer, extension, duplicates reported as `present`); §18 test 6 (gap → no partial insertion — poison in the MIDDLE of a multi-writer batch, assert ZERO rows and unchanged tips for ALL writers, test 10); fork rejection leaves original bytes intact (re-read + byte-compare, invariant 1); collision rejection; returns post-merge frontier
-- [ ] Implement (execute merge-plan inside one `transactionSync`); green; audit query passes after every scenario
+- [ ] Implement (execute merge-plan inside one `transactionSync`); green; audit query passes after every scenario. The store must also verify each entry's `log_id` (parsed upstream, inside the canonical bytes) against `log_meta` per §8 invariant 8, with a test — the pure classifier deliberately has no log identity (Task 3 deferral: `BatchEntry` carries no `logId`)
 - [ ] Commit: `feat(do): transactional batch merge per §12.1`
 
 ### Task 6: Store — frontier, readWriter, tailLocal
@@ -78,7 +78,7 @@ worker/
 - [ ] Commit: `feat(do): frontier, writer-range, and arrival-tail reads`
 
 ### Task 7: HTTP surface
-- [ ] `http.test.ts` red-first against the DO via `runInDurableObject`/SELF fetch: all five §11 routes; success shapes (§11.2 response with inserted/present/frontier); every §11.6 error mapped (status + envelope, incl. 404 pre-create, 409 triplet with details, 413 both codes, 422 with SP1 reason slug in details, batch >100 entries and >4 MiB rejected BEFORE parse — content-length gate observable); name↔log_id mismatch → log_mismatch; **`ctx.id.name === undefined`** (object reached via `idFromString()`/`newUniqueId()` — name is only populated via `idFromName()`/`getByName()`) → explicit rejection: 409 `log_mismatch` with a details message naming the unverifiable object name, its own test row — never an accidental `undefined !== log_id` fall-through; malformed JSON → 400. `errors.ts` carries the full §11.6 code→status table INCLUDING `507 storage_full` (not simulable in local workerd; a unit test on the table alone pins its spelling; 401/403 are gateway-side, SP4)
+- [ ] `http.test.ts` red-first against the DO via `runInDurableObject`/SELF fetch: all five §11 routes; success shapes (§11.2 response with inserted/present/frontier); every §11.6 error mapped (status + envelope, incl. 404 pre-create, 409 triplet with details, 413 both codes, 422 with SP1 reason slug in details, batch >100 entries and >4 MiB rejected BEFORE parse — content-length gate observable); name↔log_id mismatch → log_mismatch; **`ctx.id.name === undefined`** (object reached via `idFromString()`/`newUniqueId()` — name is only populated via `idFromName()`/`getByName()`) → explicit rejection: 409 `log_mismatch` with a details message naming the unverifiable object name, its own test row — never an accidental `undefined !== log_id` fall-through; malformed JSON → 400. `errors.ts` carries the full §11.6 code→status table INCLUDING `507 storage_full` (not simulable in local workerd; a unit test on the table alone pins its spelling; 401/403 are gateway-side, SP4). DECIDED (Task 3 review): merge-plan's internal `invalid_batch` maps to **422 `invalid_entry`** on the wire — an intra-batch prev-linkage violation breaks §7's relational requirement, so the batch is malformed as submitted, unlike gap/fork receiver-state conflicts
 - [ ] Implement `do/http.ts` + `commonplace-log-do.ts` + `index.ts`; green; `stats()` debug route
 - [ ] Commit: `feat(do): §11 HTTP protocol`
 

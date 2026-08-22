@@ -59,6 +59,11 @@ export type MergeOutcome =
       details: { entryId: string };
     }
   | {
+      // Internal-only code — §11.6 has no "invalid_batch". Wire mapping:
+      // 422 invalid_entry (an intra-batch prev-linkage violation breaks §7's
+      // relational requirement between consecutive entries; the batch is
+      // malformed as submitted, unlike gap/fork which are receiver-state
+      // conflicts) — see plan Task 7.
       ok: false;
       code: "invalid_batch";
       details: { reason: string };

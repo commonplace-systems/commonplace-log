@@ -195,6 +195,19 @@ const rows: Row[] = [
     },
   },
   {
+    name: "same entry_id at the SAME coordinate with different bytes → entry_id_collision, not fork (§6.3 MUST)",
+    present: [w1, w2],
+    // Same id, same (writer, seq) as the stored w2, but tampered bytes.
+    // Kills the mutant that drops the byte-equality clause from the
+    // stored-id check: without it this row degrades to writer_fork.
+    batch: [mk(W, 2, "id-w2", "id-w1", "tampered")],
+    expected: {
+      ok: false,
+      code: "entry_id_collision",
+      details: { entryId: "id-w2" },
+    },
+  },
+  {
     name: "same entry_id, same bytes, same coordinate → duplicate, present, NOT a collision (§9.3 rule 2)",
     present: [w1, w2],
     batch: [mk(W, 2, "id-w2", "id-w1")],
