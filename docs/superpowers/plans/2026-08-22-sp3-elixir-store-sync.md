@@ -65,6 +65,15 @@ commonplace_log/
 - **4a** LocalSQLite adapter — `2ef0abd`. Landed with a contract widening: `insert_entry` gained `prev_entry_id` and `created_at` because without them the adapter wrote NULL and a fabricated epoch into pinned columns, so a row's projection columns contradicted its own canonical bytes — and Task 5's audit re-derives the chain from those columns precisely to check integrity independently of the bytes. Pinned now by a columns-agree-with-bytes test, demonstrated red first.
 - **4b** Server, cross-process lock, writer identity — `bb532c2`. §6.2's MUST satisfied by SQLite's own file locking; cross-process test spawns a genuine second OS process and now runs its probe twice through that same path (refused while held, `:ok` after release). Mutation-verified: replacing `BEGIN EXCLUSIVE` with `SELECT 1` turns exactly that test red.
 
+**Design note recorded 2026-08-22 (from reviewing 5a):** `Commonplace.LogStore.SQLite`
+resolves `data_dir` from a single global Application env key, so the public six-callback
+surface addresses exactly one replica per BEAM node. That is fine for SP3's purpose and for
+a single realm, but it means multi-replica scenarios cannot be driven through the public API
+— Task 5b drives them one level down, through `Engine` + two explicit `LocalSQLite` stores.
+**SP4 must revisit this:** a realm holds many logs and the sidecar deployment will need the
+store handle to be addressable rather than ambient. Recorded so it is a decision then, not a
+surprise.
+
 ### Task 5: Public composition + §18 conformance
 **SPLIT into 5a and 5b (my call, recorded 2026-08-22),** same reasoning as the Task 4 split: 5a is the `LogStore` composition plus the criterion-2 dependency test; 5b is the §18 conformance suite and its audit. Each is independently reviewable and 5a gates 5b.
 - [ ] `log_store/sqlite.ex`: implements the §14 `Commonplace.LogStore` behavior by composing Engine + LocalSQLite via the Server; error terms per the recorded atom convention (`:writer_gap` etc. with wire-shaped details)
