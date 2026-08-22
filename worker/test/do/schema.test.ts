@@ -85,6 +85,17 @@ describe("§12 schema DDL fidelity gate (copy, don't retype)", () => {
     }
   });
 
+  it("SCHEMA_DDL equals the whole §12 block — no fifth statement can hide", () => {
+    const heading = specText.indexOf("## 12. SQLite storage layout");
+    const fenceOpen = specText.indexOf("```sql", heading);
+    const bodyStart = specText.indexOf("\n", fenceOpen) + 1;
+    const fenceClose = specText.indexOf("```", bodyStart);
+    const block = specText.slice(bodyStart, fenceClose);
+    // Whole-block equality: containment alone would let SCHEMA_DDL grow
+    // statements the spec does not pin.
+    expect(norm(SCHEMA_DDL).trim()).toBe(norm(block).trim());
+  });
+
   it("control: a deliberately perturbed statement does NOT match (the gate can fire)", () => {
     const statements = extractSection12Statements(specText);
     expect(statements).toHaveLength(4);
