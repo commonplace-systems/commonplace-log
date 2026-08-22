@@ -69,6 +69,11 @@ Input classes currently **covered**:
   canonical form is 016's 327 bytes. Together with `invalid-entries/025` this
   pins that the spec §7.1 cap is measured on **canonical** bytes, not raw
   input bytes — entry validators must accept 017.
+- Float-spelled integer fields (case 018): the same entry with
+  `"writer_seq": 27.0` and `"version": 1.0` — the same doubles, canonical
+  form again 016's exact bytes. Pins that integer-field semantics are
+  VALUE-based (see the `invalid-entries/` integer-field rule below) — entry
+  validators must accept 018.
 
 Input classes deliberately **not covered** (yet):
 
@@ -153,6 +158,7 @@ RFC-stated key order reproduced those bytes exactly
 | `015-num-max-safe-int` | `9007199254740991` (2^53−1) round-trips unchanged | node output pasted above |
 | `016-spec-example-entry` | Full valid spec §7 example entry: eight-field key sort (`body` < `created_at` < `entry_id` < `log_id` < `prev_entry_id` < `version` < `writer_id` < `writer_seq`; the last pair decided at `'i'` 0x69 < `'s'` 0x73 after the shared `writer_` prefix), nested `body` key sort (`type` < `value`), whitespace removal | Input is the spec §7 example verbatim. Expected bytes derived 2026-08-21 (node v24.13.1) by the same discipline as the seeding: key order hand-derived per RFC 8785 §3.2.3 as shown, single strings/numbers serialized via node `JSON.stringify`, concatenated by hand — `worker/src/jcs.ts` deliberately not consulted (it is under test by this vector). Canonical form is 327 bytes; the derivation script asserted the canonical text parses deep-equal to `input.json` (`VALUE-EQ OK`) |
 | `017-whitespace-padded-entry` | Raw input > 1 MiB of inter-token whitespace collapsing to the 327-byte canonical form of 016 — cap-side discrimination: the entry-size cap measures canonical bytes | Input is 016's `input.json` with 1,048,600 spaces injected after the opening brace (raw size 1,048,977 bytes); `expected.hex` is a **deliberate byte-for-byte copy of 016's** (same canonical form, same reasoning as the 011/012 duplication), verified byte-identical with `cmp`; generation script asserted the padded input parses deep-equal to 016's (`VALUE-EQ OK`) |
+| `018-float-spelled-integers` | Float-spelled integer fields (`27.0`, `1.0`) parse to the same doubles as `27`, `1` and canonicalize to 016's exact 327 bytes — input spelling is irrelevant (same philosophy as 011/012); doubles as the value-based integer-field acceptance pin for entry validators | Input is 016's `input.json` with the two literal spellings substituted as raw text (generation script asserted both substitutions applied and the result parses deep-equal to 016's, `VALUE-EQ OK`); `expected.hex` is a **deliberate byte-for-byte copy of 016's**, verified with `cmp` |
 | `999-deliberate-mismatch` | **Intentionally wrong expected bytes** (unsorted `{"b":2,"a":1}` instead of correct `{"a":1,"b":2}`) — the red-demonstration case, see above | Wrongness constructed and verified at derivation time: stored bytes differ from the hand-derived correct canonical form |
 
 ### Sanity checks run at seeding (2026-08-21, node v24.13.1)
@@ -195,6 +201,14 @@ known-bad corpus first (2/2 failures, exit 1). `017/expected.hex` confirmed
 byte-identical to `016/expected.hex` with `cmp`; the padded input asserted
 deep-equal to 016's on parse (`VALUE-EQ OK`).
 
+### Checks re-run for the quality-review fixups (cases 018, 030; 2026-08-22)
+
+Byte-rule checker over both families: `checked 98 files, 0 failures`
+(19 canonical-json cases × 2 files + 30 invalid-entries cases × 2 files);
+red-demonstrated on the known-bad corpus first (2/2 failures, exit 1).
+`018/expected.hex` confirmed byte-identical to `016/expected.hex` with
+`cmp`; 018's input asserted deep-equal to 016's on parse (`VALUE-EQ OK`).
+
 ## `invalid-entries/` — version-1 entry rejection vectors
 
 Vectors for the spec §7 / §7.1 entry validator: inputs that every runtime's
@@ -231,6 +245,26 @@ invalid `writer_seq` unavoidably interacts with the `prev_entry_id` rule
 (when `writer_seq` is itself invalid, *any* `prev_entry_id` value is
 arguable; those cases carry `null`). The declared table order resolves this
 deterministically: `writer_seq` is checked first, so its slug is the answer.
+Additionally, parse-time number-lexical violations (`invalid_json`,
+`unsafe-integer`, `non-finite-number`) are detected before all field checks,
+so a multi-violation input containing one of those yields the number slug
+first — ports must match that ordering.
+
+**Integer-field rule (value-based):** for `writer_seq` and `version`, the
+JSON spelling is irrelevant — exactly the philosophy cases 011/012 pin for
+canonicalization, and `canonicalize()` emits identical bytes for `27.0` and
+`27` anyway, so accepted entries are byte-identical either way. What matters
+is the VALUE: it must be a safe integer (integral, |v| ≤ 2^53−1), then
+`writer_seq ≥ 1` / `version = 1`. In TypeScript this is
+`Number.isSafeInteger`; the Elixir mirror is
+`is_integer(v) or (is_float(v) and v == trunc(v))` plus the safe-range
+bound — no tokenizer needed. So `27.0` is a valid `writer_seq`
+(`canonical-json/018`) while `1e30` — an integral double beyond the safe
+range — is rejected as `writer-seq-not-integer` (case 030). This is
+deliberately different from the **body big-int rule (case 022), which is
+lexical**: a plain integer literal that would lose precision at parse is a
+different hazard from a float-spelled field, and is detected from the raw
+token, not the parsed value.
 
 Notes on individual behaviors:
 
@@ -277,8 +311,10 @@ Violation classes currently **covered** (one case each unless noted): every
 required top-level field missing (8 cases, incl. the `prev_entry_id` key
 absent entirely); wrong `version`; extra top-level field; non-lowercase UUID;
 malformed UUID in `entry_id`, `writer_id`, and a non-null `prev_entry_id`
-(3 cases, same slug); `writer_seq` zero / negative (2 cases, same slug) and
-non-integer; `prev_entry_id` non-null at `writer_seq` 1 and null at
+(3 cases, same slug); `writer_seq` zero / negative (2 cases, same slug),
+non-integer (1.5), and integral-but-unsafe (`1e30`, same slug as 1.5 —
+the value-based integer-field rule above, whose acceptance side is
+`canonical-json/018`); `prev_entry_id` non-null at `writer_seq` 1 and null at
 `writer_seq` > 1; `created_at` with a non-UTC offset, non-RFC 3339,
 calendar-invalid day (real days-in-month/leap-year validation), and a leap
 second (rejected by policy, own slug); `body` array and string (2 cases,
@@ -299,7 +335,10 @@ Violation classes deliberately **not covered** (yet):
 - Duplicate object keys (I-JSON violation; most parsers silently keep one).
 - Lone surrogates in object *keys* (covered only in string values).
 - Negative integer literals below −(2^53−1) (only the positive side is
-  pinned); unsafe integers outside `body` (e.g. in `writer_seq`).
+  pinned). Unsafe *values* in `writer_seq` are pinned by 030, but a plain
+  unsafe integer literal there (e.g. `9007199254740993` as `writer_seq`)
+  has no vector — the parse-time lexical check fires first, making the
+  expected slug `unsafe-integer`, per the ordering rule above.
 - Wrong top-level *types* beyond those listed (e.g. `version` as string
   `"1"` — rejected by the version check, but no vector pins its slug);
   non-object top-level entries (bare array/string).
@@ -343,6 +382,7 @@ Violation classes deliberately **not covered** (yet):
 | `027-prev-entry-id-malformed` | `invalid_entry` | `uuid-malformed` |
 | `028-created-at-calendar-invalid` | `invalid_entry` | `created-at-not-rfc3339` |
 | `029-created-at-leap-second` | `invalid_entry` | `created-at-leap-second` |
+| `030-writer-seq-1e30` | `invalid_entry` | `writer-seq-not-integer` |
 
 Provenance: every input is the spec §7 example entry with exactly one
 scripted, deterministic mutation applied as raw text (never re-serialized

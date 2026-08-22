@@ -1,0 +1,2 @@
+invalid_entry
+writer-seq-not-integer

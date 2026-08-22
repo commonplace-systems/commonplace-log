@@ -49,6 +49,35 @@ const REASONS = {
 
 const MAX_CANONICAL_BYTES = 1_048_576; // 1 MiB, spec §7.1
 
+// HARD CONSTRAINT: unsafe-integer detection (conformance case
+// 022-unsafe-integer-in-body) requires JSON.parse to pass the reviver's
+// third source-context argument (node >= 21 / modern V8). On a runtime that
+// does not, the check silently never fires — and the deployed Durable Object
+// never runs the test suite, so silent weakening must instead be a loud
+// startup failure. Probe at module load and refuse to load without it.
+{
+  let sourceSeen = false;
+  JSON.parse(
+    "0",
+    ((_key: string, value: unknown, context?: { source?: string }) => {
+      if (context?.source === "0") {
+        sourceSeen = true;
+      }
+      return value;
+    }) as (this: unknown, key: string, value: unknown) => unknown,
+  );
+  if (!sourceSeen) {
+    throw new Error(
+      "entry validation unavailable: this JavaScript runtime's JSON.parse " +
+        "does not pass the reviver source context (context.source), so raw " +
+        "integer-literal validation (I-JSON safe-integer rule, conformance " +
+        "case 022) cannot run. Refusing to load with silently weakened " +
+        "validation; a runtime with JSON.parse source access (node >= 21 " +
+        "or an equivalent V8) is required.",
+    );
+  }
+}
+
 /** Spec §7 field table order; checks run in this order, deterministically. */
 const REQUIRED_FIELDS = [
   "version",
@@ -139,6 +168,8 @@ export function validateEntry(raw: Uint8Array): ValidateEntryResult {
     }
   }
 
+  // Value-based like writer_seq (case 018): 1.0 === 1 passes; anything else
+  // — 2, "1", non-numbers — is wrong-version.
   if (entry["version"] !== 1) {
     return invalid(REASONS.wrongVersion);
   }
@@ -150,11 +181,19 @@ export function validateEntry(raw: Uint8Array): ValidateEntryResult {
     }
   }
 
+  // Integer-field semantics are VALUE-based (conformance cases 018 and 030):
+  // the JSON spelling is irrelevant — 27.0 and 27 are the same double, and
+  // canonicalize() emits identical bytes for either — but the VALUE must be
+  // a safe integer (integral, |v| <= 2^53-1). Number.isSafeInteger rejects
+  // both fractional values (1.5) and integral doubles beyond the safe range
+  // (1e30), which plain Number.isInteger would accept. This is deliberately
+  // different from the body big-int rule (case 022), which is lexical: a
+  // plain integer literal losing precision at parse is a different hazard.
   const writerSeq = entry["writer_seq"];
   if (typeof writerSeq !== "number") {
     return invalid(REASONS.writerSeqNotNumber);
   }
-  if (!Number.isInteger(writerSeq)) {
+  if (!Number.isSafeInteger(writerSeq)) {
     return invalid(REASONS.writerSeqNotInteger);
   }
   if (writerSeq < 1) {

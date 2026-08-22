@@ -18,11 +18,15 @@ function toHex(bytes: Uint8Array): string {
 // 016: the spec §7 example entry. 017: the same entry padded with >1 MiB of
 // inter-token whitespace — raw input exceeds 1,048,576 bytes but its
 // canonical form is 016's 327 bytes, pinning that the spec §7.1 cap is
-// measured on CANONICAL bytes, not raw input bytes.
+// measured on CANONICAL bytes, not raw input bytes. 018: the same entry with
+// float-spelled integer fields (27.0, 1.0) — integer-field semantics are
+// VALUE-based, spelling is irrelevant, and the canonical bytes are again
+// exactly 016's.
 
 const validEntryCases = [
   "016-spec-example-entry",
   "017-whitespace-padded-entry",
+  "018-float-spelled-integers",
 ];
 
 describe("validateEntry accepts the valid-entry anchor cases", () => {
