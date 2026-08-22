@@ -1,6 +1,7 @@
 /**
- * SP2 Task 4: the store's createLog (§9.1) and append (§9.2) over the §12
- * SQLite layout.
+ * The store: createLog (§9.1), append (§9.2), mergeEntries (§9.3/§12.1),
+ * and the reads — frontier (§9.4), readWriter (§9.5), tailLocal (§9.6) —
+ * over the §12 SQLite layout.
  *
  * Correctness state lives ONLY in SQLite (§15.2): this class keeps no
  * in-memory tips cache, so every operation reads current truth from the
@@ -53,12 +54,36 @@ export interface AppendResult {
   arrivalSeq: number;
 }
 
+/** One writer's tip in the frontier (§9.4). */
+export interface FrontierEntry {
+  writerId: string;
+  seq: number;
+  entryId: string;
+}
+
 /** §11.2 merge response arithmetic: inserted + present covers the batch. */
 export interface MergeResult {
   inserted: number;
   present: number;
   /** ALL known writers' tips post-merge, sorted by writerId (§9.4). */
-  frontier: Array<{ writerId: string; seq: number; entryId: string }>;
+  frontier: FrontierEntry[];
+}
+
+/** §9.5 read_writer page: ascending contiguous writer_seq range. */
+export interface ReadWriterResult {
+  entries: Array<{ canonicalBytes: Uint8Array; writerSeq: number }>;
+  /**
+   * Continuation cursor: the last returned writer_seq when more entries
+   * remain inside the requested (clamped) range, else null.
+   */
+  nextAfterSeq: number | null;
+}
+
+/** §9.6 tail_local page: replica-local arrival order. */
+export interface TailResult {
+  entries: Array<{ canonicalBytes: Uint8Array; arrivalSeq: number }>;
+  /** The last returned arrival_seq when more entries remain, else null. */
+  nextAfterArrival: number | null;
 }
 
 /**
@@ -380,20 +405,152 @@ export class LogStore {
       }
 
       // §11.2 response: the post-merge frontier over ALL known writers,
-      // sorted by writer_id (§9.4), read back from SQLite truth.
-      const frontier = this.sql
-        .exec(
-          "SELECT writer_id, last_seq, last_entry_id FROM writer_tips ORDER BY writer_id",
-        )
-        .toArray()
-        .map((row) => ({
-          writerId: String(row.writer_id),
-          seq: Number(row.last_seq),
-          entryId: String(row.last_entry_id),
-        }));
-
-      return { inserted, present: outcome.presentCount, frontier };
+      // sorted by writer_id (§9.4), read back from SQLite truth via the
+      // SINGLE frontier query (readFrontier — shared with frontier()).
+      return { inserted, present: outcome.presentCount, frontier: this.readFrontier() };
     });
+  }
+
+  /**
+   * §9.4: one tip per known writer, sorted by writer_id; writers with no
+   * entries are omitted (they have no writer_tips row). Reads committed
+   * SQLite state directly — no cache, no transaction needed (single
+   * statement, atomic in the DO). Throws log_not_found before createLog.
+   */
+  frontier(): FrontierEntry[] {
+    if (this.readLogId() === null) {
+      throw new StoreError("log_not_found", {});
+    }
+    return this.readFrontier();
+  }
+
+  /**
+   * §9.5: one writer's canonical entries in ascending writer_seq, EXCLUSIVE
+   * of afterSeq, INCLUSIVE of throughSeq (null = through the writer's tip;
+   * beyond-tip values clamp to the tip). The store's merge/append invariants
+   * guarantee the returned page is a complete contiguous range; nextAfterSeq
+   * is the last returned seq when more of the (clamped) range remains, else
+   * null.
+   *
+   * An unknown writerId yields empty entries and a null cursor, NOT an
+   * error: §10 sync legitimately probes writers this replica has never seen.
+   *
+   * Caller-contract violations (negative/non-integer afterSeq or throughSeq,
+   * limit < 1) throw a plain RangeError — the HTTP layer owns 4xx mapping
+   * for malformed protocol input; StoreError codes are reserved for §11.6
+   * log/entry semantics.
+   */
+  readWriter(
+    writerId: string,
+    afterSeq: number,
+    throughSeq: number | null,
+    limit: number,
+  ): ReadWriterResult {
+    if (!Number.isInteger(afterSeq) || afterSeq < 0) {
+      throw new RangeError(`afterSeq must be a non-negative integer, got ${afterSeq}`);
+    }
+    if (throughSeq !== null && (!Number.isInteger(throughSeq) || throughSeq < 0)) {
+      throw new RangeError(`throughSeq must be null or a non-negative integer, got ${throughSeq}`);
+    }
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new RangeError(`limit must be a positive integer, got ${limit}`);
+    }
+    if (this.readLogId() === null) {
+      throw new StoreError("log_not_found", {});
+    }
+
+    const tipRows = this.sql
+      .exec("SELECT last_seq FROM writer_tips WHERE writer_id = ?", writerId)
+      .toArray();
+    const tipRow = tipRows[0];
+    if (tipRow === undefined) {
+      return { entries: [], nextAfterSeq: null };
+    }
+    const tip = Number(tipRow.last_seq);
+    const through = throughSeq === null ? tip : Math.min(throughSeq, tip);
+    if (through <= afterSeq) {
+      return { entries: [], nextAfterSeq: null };
+    }
+
+    const entries = this.sql
+      .exec(
+        `SELECT canonical_json, writer_seq FROM entries
+         WHERE writer_id = ? AND writer_seq > ? AND writer_seq <= ?
+         ORDER BY writer_seq ASC LIMIT ?`,
+        writerId,
+        afterSeq,
+        through,
+        limit,
+      )
+      .toArray()
+      .map((row) => ({
+        canonicalBytes: new Uint8Array(row.canonical_json as ArrayBuffer),
+        writerSeq: Number(row.writer_seq),
+      }));
+
+    const last = entries.length === 0 ? null : entries[entries.length - 1]!.writerSeq;
+    return {
+      entries,
+      nextAfterSeq: last !== null && last < through ? last : null,
+    };
+  }
+
+  /**
+   * §9.6: entries in THIS replica's arrival order (§4). The cursor and order
+   * are replica-local — for projectors, subscribers, and debugging only —
+   * and MUST NOT be used for synchronization or equality (§9.6); sync uses
+   * frontier() + readWriter(). Caller-contract violations throw RangeError
+   * (see readWriter).
+   */
+  tailLocal(afterArrival: number, limit: number): TailResult {
+    if (!Number.isInteger(afterArrival) || afterArrival < 0) {
+      throw new RangeError(`afterArrival must be a non-negative integer, got ${afterArrival}`);
+    }
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new RangeError(`limit must be a positive integer, got ${limit}`);
+    }
+    if (this.readLogId() === null) {
+      throw new StoreError("log_not_found", {});
+    }
+
+    // Fetch limit+1 rows: the extra row (if any) only proves more remain —
+    // arrival_seq contiguity is never assumed (rollbacks may burn ids).
+    const rows = this.sql
+      .exec(
+        `SELECT canonical_json, arrival_seq FROM entries
+         WHERE arrival_seq > ? ORDER BY arrival_seq ASC LIMIT ?`,
+        afterArrival,
+        limit + 1,
+      )
+      .toArray()
+      .map((row) => ({
+        canonicalBytes: new Uint8Array(row.canonical_json as ArrayBuffer),
+        arrivalSeq: Number(row.arrival_seq),
+      }));
+
+    const more = rows.length > limit;
+    const entries = more ? rows.slice(0, limit) : rows;
+    return {
+      entries,
+      nextAfterArrival: more ? entries[entries.length - 1]!.arrivalSeq : null,
+    };
+  }
+
+  /**
+   * The ONE place the frontier SQL lives: ALL known writers' tips, sorted by
+   * writer_id (§9.4). Used by both frontier() and mergeEntries().
+   */
+  private readFrontier(): FrontierEntry[] {
+    return this.sql
+      .exec(
+        "SELECT writer_id, last_seq, last_entry_id FROM writer_tips ORDER BY writer_id",
+      )
+      .toArray()
+      .map((row) => ({
+        writerId: String(row.writer_id),
+        seq: Number(row.last_seq),
+        entryId: String(row.last_entry_id),
+      }));
   }
 
   /** The log's identity from log_meta, or null when the store is uncreated. */
