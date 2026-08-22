@@ -22,6 +22,7 @@ defmodule CommonplaceLog.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
+      {:exqlite, "~> 0.27"},
       {:stream_data, "~> 1.1", only: [:test, :dev]}
     ]
   end
