@@ -21,6 +21,16 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   @type server :: GenServer.server()
 
+  @doc false
+  def child_spec(opts) do
+    %{
+      id: {__MODULE__, Keyword.fetch!(opts, :log_id)},
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :transient,
+      type: :worker
+    }
+  end
+
   @doc "Start the owner process for `log_id` in `data_dir`."
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -45,6 +55,22 @@ defmodule Commonplace.LogStore.SQLite.Server do
   def append(server, body, created_at \\ DateTime.utc_now()) do
     GenServer.call(server, {:append, body, created_at})
   end
+
+  @doc false
+  def create_log(server), do: GenServer.call(server, :create_log)
+
+  @doc false
+  def merge(server, entries), do: GenServer.call(server, {:merge, entries})
+
+  @doc false
+  def frontier(server), do: GenServer.call(server, :frontier)
+
+  @doc false
+  def read_writer(server, writer_id, opts),
+    do: GenServer.call(server, {:read_writer, writer_id, opts})
+
+  @doc false
+  def tail_local(server, opts), do: GenServer.call(server, {:tail_local, opts})
 
   @impl true
   def init(opts) do
@@ -89,6 +115,28 @@ defmodule Commonplace.LogStore.SQLite.Server do
       )
 
     {:reply, result, state}
+  end
+
+  def handle_call(:create_log, _from, state) do
+    result = LocalSQLite.create_log(state.store, state.log_id, %{format_version: 1})
+    {:reply, result, state}
+  end
+
+  def handle_call({:merge, entries}, _from, state) do
+    result = Engine.merge(LocalSQLite, state.store, state.log_id, entries)
+    {:reply, result, state}
+  end
+
+  def handle_call(:frontier, _from, state) do
+    {:reply, LocalSQLite.frontier(state.store, state.log_id), state}
+  end
+
+  def handle_call({:read_writer, writer_id, opts}, _from, state) do
+    {:reply, LocalSQLite.read_writer(state.store, state.log_id, writer_id, opts), state}
+  end
+
+  def handle_call({:tail_local, opts}, _from, state) do
+    {:reply, LocalSQLite.tail_local(state.store, state.log_id, opts), state}
   end
 
   @impl true
