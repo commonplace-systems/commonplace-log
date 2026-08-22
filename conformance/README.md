@@ -209,6 +209,106 @@ red-demonstrated on the known-bad corpus first (2/2 failures, exit 1).
 `018/expected.hex` confirmed byte-identical to `016/expected.hex` with
 `cmp`; 018's input asserted deep-equal to 016's on parse (`VALUE-EQ OK`).
 
+## Cross-runtime byte-diff harness — `conformance/check.sh`
+
+The headline artifact for the cross-runtime byte-equality claim: it makes the
+claim checkable from **files**, with `diff` output over emitted byte files as
+the verdict — never an exit code alone, never a test runner's summary.
+
+### Running the harness
+
+```sh
+conformance/check.sh
+```
+
+Prerequisites: node v24+ (native type-stripping runs the `.ts` emitter
+directly), `mix` with the project's deps fetched (versions per the repo-root
+`.tool-versions`), and `xxd`. The harness:
+
+1. runs `worker/scripts/emit-vectors.ts` (via plain `node`) and
+   `commonplace_log/scripts/emit_vectors.exs` (via `mix run`), each writing
+   one `<case-name>.bin` of canonical bytes per corpus case — **including
+   9xx** — into its own fresh temp dir (cleaned up on exit). Either emitter
+   can also be run standalone:
+
+   ```sh
+   node worker/scripts/emit-vectors.ts <outdir>
+   cd commonplace_log && mix run scripts/emit_vectors.exs <outdir>
+   ```
+
+2. **anti-vacuity**: diffs each emitter's file *list* against the corpus case
+   list (both directions) and fails if fewer than 19 cases were found;
+3. **verdict A**: `diff -r` over the two emitted trees — TypeScript and
+   Elixir must be byte-identical on every case including 9xx (both produce
+   the *correct* bytes for 999; they must agree with each other even where
+   they disagree with the stored expectation);
+4. **verdict B**: decodes every `expected.hex` with `xxd -r -p` to a third
+   tree and compares per case, printing one verdict line per case for both
+   runtimes: every non-9xx case must MATCH, every 9xx case must MISMATCH
+   (a 9xx MATCH is reported as harness-or-corpus breakage and fails the run).
+
+Exit is non-zero on any violation. The final summary includes the SELECTOR
+line: green means TS==Elixir==expected over the canonical-json corpus,
+19 cases; **invalid-entries classification is covered by the unit suites,
+not this harness**.
+
+### Recorded red demonstrations (2026-08-22, node v24.13.1, Elixir 1.18.4-otp-27)
+
+Per this README's red-demonstration contract, the harness was shown to go red
+three ways before its green was trusted. Each demonstration ran a sabotaged
+*scratchpad copy* of `check.sh` (committed sources untouched); all three
+exited 1.
+
+**(a) 9xx exclusion disabled** (999 judged as a normal case) — fails naming
+the case, with the byte diff as evidence:
+
+```
+999-deliberate-mismatch: TS MISMATCH / EX MISMATCH vs expected — FAIL
+-- TS vs expected (xxd diff):
+1c1
+< 00000000: 7b22 6122 3a31 2c22 6222 3a32 7d         {"a":1,"b":2}
+---
+> 00000000: 7b22 6222 3a32 2c22 6122 3a31 7d         {"b":2,"a":1}
+...
+RESULT: RED — at least one check above failed
+```
+
+**(b) one emitted file corrupted** (a byte appended to the TypeScript
+emitter's `005-sort-nested-recursive.bin` after emission) — verdict A fails
+naming the case:
+
+```
+== verdict A: cross-runtime diff -r (TS tree vs Elixir tree) ==
+diff -r /tmp/tmp.LqHuqDlvXf/005-sort-nested-recursive.bin /tmp/tmp.Hs6HVJC8aY/005-sort-nested-recursive.bin
+1c1
+< {"a":{"aa":{},"b":[3,2,1],"c":true},"z":[{"a":2,"b":1},"keep-position",{"y":null},[]]}X
+---
+> {"a":{"aa":{},"b":[3,2,1],"c":true},"z":[{"a":2,"b":1},"keep-position",{"y":null},[]]}
+FAIL: TypeScript and Elixir emitted different bytes (see diff above)
+...
+005-sort-nested-recursive: TS MISMATCH / EX MATCH vs expected — FAIL
+RESULT: RED — at least one check above failed
+```
+
+**(c) one emitted file deleted** (`003-sort-basic-ascii.bin` removed from the
+TypeScript tree) — the file-list anti-vacuity check fails:
+
+```
+== anti-vacuity: emitted file sets vs corpus case list ==
+3d2
+< 003-sort-basic-ascii
+FAIL: TypeScript emitter produced a different file set than the corpus (see diff above)
+...
+003-sort-basic-ascii: TS MISMATCH / EX MATCH vs expected — FAIL
+-- TS emitted file 003-sort-basic-ascii.bin is missing
+RESULT: RED — at least one check above failed
+```
+
+**Green run** (2026-08-22, immediately after the three reds): 19 cases;
+`diff -r: no differences` on verdict A; verdict B `TS MATCH / EX MATCH` on
+all 18 non-9xx cases and `TS MISMATCH / EX MISMATCH ... (deliberate 9xx case
+— required)` on `999-deliberate-mismatch`; `RESULT: GREEN`, exit 0.
+
 ## `invalid-entries/` — version-1 entry rejection vectors
 
 Vectors for the spec §7 / §7.1 entry validator: inputs that every runtime's
