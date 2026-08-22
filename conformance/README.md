@@ -344,6 +344,14 @@ Violation classes deliberately **not covered** (yet):
   which of the two slugs wins is detection-order-dependent and differs
   across runtimes and across key order. Only their joint precedence over
   all field checks is pinned (ordering rule above).
+- Multi-violation inputs pairing a runtime-fatal-but-elsewhere-tolerable
+  token with a later grammar error (e.g. `{"a":1e999,"b":}`): the
+  divergence here is **code-level**, not just the slug — Jason halts at the
+  number token, so Elixir returns `invalid_entry` / `non-finite-number`,
+  while V8 tolerates `1e999` (parsing it to `Infinity`) and throws at the
+  grammar error, so TypeScript returns `invalid_json` / `not-json`. Both
+  runtimes reject the entry; pinning one answer would force a runtime to
+  restructure its parser for no interop gain, so this class stays unpinned.
 - Negative integer literals below −(2^53−1) (only the positive side is
   pinned). Unsafe *values* in `writer_seq` are pinned by 030, but a plain
   unsafe integer literal there (e.g. `9007199254740993` as `writer_seq`)

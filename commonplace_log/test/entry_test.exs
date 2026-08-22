@@ -19,6 +19,10 @@ defmodule Commonplace.Log.EntryTest do
     @invalid_dir
     |> File.ls!()
     |> Enum.filter(&File.dir?(Path.join(@invalid_dir, &1)))
+    # 9xx cases are reserved for deliberately-wrong vectors (the Task 8
+    # harness red-demonstration); none exist in invalid-entries yet, but
+    # exclude them from the pass gate now so adding one cannot silently
+    # join it.
     |> Enum.reject(&Regex.match?(~r/^9\d\d-/, &1))
     |> Enum.sort()
 
@@ -82,6 +86,48 @@ defmodule Commonplace.Log.EntryTest do
       expected = read_expected_bytes("018-float-spelled-integers")
       assert expected == read_expected_bytes("016-spec-example-entry")
       assert Entry.validate_entry(raw) == {:ok, expected}
+    end
+  end
+
+  describe "LOCAL regression gates (non-corpus): Jason DecodeError classifier branches" do
+    # These pin the classifier branches in Commonplace.Log.Entry that the
+    # corpus does not reach (024 covers only the lone HIGH surrogate at
+    # string end). They are local to this runtime — NOT cross-runtime
+    # contract — and exist so each classifier branch has been seen to fire.
+    # A Jason upgrade that changes DecodeError shapes (token/position) turns
+    # these red together with corpus cases 023/024; that means the
+    # classifier needs re-probing, not that the corpus is wrong.
+
+    defp entry_with_body_string(escaped) do
+      ~s({"version": 1,) <>
+        ~s( "log_id": "0198cc6e-47ac-7d72-93db-b6fbd92bfca2",) <>
+        ~s( "entry_id": "0198cc70-3800-75bd-b56a-5f913fbdeed3",) <>
+        ~s( "writer_id": "fab4e8a5-ce9e-48d0-8f78-1d312b978207",) <>
+        ~s( "writer_seq": 27,) <>
+        ~s( "prev_entry_id": "0198cc6f-f11c-7803-aa25-401bc5f781c0",) <>
+        ~s( "created_at": "2026-08-21T20:14:03.291Z",) <>
+        ~s( "body": {"s": "#{escaped}"}})
+    end
+
+    test ~S(lone LOW surrogate "\udc00" — token branch, single-escape shape) do
+      # Jason fails with token: "\\udc00" (the escape itself), unlike the
+      # lone high surrogate, which fails with token: nil.
+      raw = entry_with_body_string(~S(\udc00))
+      assert Entry.validate_entry(raw) == {:error, "invalid_entry", "ill-formed-unicode"}
+    end
+
+    test ~S(double high surrogate "\ud800\ud800" — token branch, escape-run shape) do
+      # Jason fails with the full escape run as the token.
+      raw = entry_with_body_string(~S(\ud800\ud800))
+      assert Entry.validate_entry(raw) == {:error, "invalid_entry", "ill-formed-unicode"}
+    end
+
+    test ~S(high surrogate before non-escape "\ud800x" — position-lookback branch) do
+      # Jason fails with token: nil and position one byte past the 6-byte
+      # escape; the classifier looks back at raw[position-6, 6]. Probed:
+      # this input hits the lookback branch, not the token branch.
+      raw = entry_with_body_string(~S(\ud800x))
+      assert Entry.validate_entry(raw) == {:error, "invalid_entry", "ill-formed-unicode"}
     end
   end
 end

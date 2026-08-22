@@ -1,7 +1,8 @@
 defmodule Commonplace.Log.Entry do
   @moduledoc """
   Version-1 entry validation (spec §7 shape, §7.1 I-JSON constraints, 1 MiB
-  canonical-size cap), mirroring `worker/src/entry.ts` behavior-for-behavior.
+  canonical-size cap), mirroring `worker/src/entry.ts` behavior-for-behavior
+  on all corpus-pinned classes; known unpinned classes are listed below.
   The shared conformance corpora in `conformance/canonical-json/` and
   `conformance/invalid-entries/` are the arbiters of correctness; error codes
   and reason slugs are cross-runtime contract and must match every
@@ -30,6 +31,18 @@ defmodule Commonplace.Log.Entry do
   Jason yields exact bignums, so this module finds the same CLASS of
   violation with a post-decode walk. Per the corpus determinism rule, these
   number checks all run before any field check.
+
+  ## Known unpinned class: multi-violation code-level divergence
+
+  An input containing both a Jason-fatal-but-V8-tolerable token AND a later
+  grammar error — e.g. `{"a":1e999,"b":}` — diverges at the CODE level, not
+  just the slug: Jason halts at the number token, so this module returns
+  `invalid_entry` / `non-finite-number`, while V8 tolerates `1e999` (parsing
+  it to `Infinity`) and throws at the grammar error, so TypeScript returns
+  `invalid_json` / `not-json`. This class is known and deliberately
+  UNPINNED: both runtimes reject the entry, and pinning it would force one
+  twin to restructure its parser for no interop gain. It is recorded in the
+  `conformance/README.md` invalid-entries not-covered list.
 
   ## Reason slugs
 
@@ -146,6 +159,10 @@ defmodule Commonplace.Log.Entry do
   #     with token nil, position just past the 6-byte escape
   #     -> ill-formed-unicode;
   #   * anything else is genuinely malformed JSON -> invalid_json/not-json.
+  # A Jason upgrade that changes DecodeError shapes (token/position) turns
+  # corpus cases 023/024 and the local classifier-branch regression tests in
+  # entry_test.exs red — treat those failures as this classifier needing
+  # re-probing, not as corpus problems.
   defp classify_decode_error(%Jason.DecodeError{token: token, position: position}, raw) do
     cond do
       is_binary(token) and Regex.match?(@json_number_re, token) ->
