@@ -620,6 +620,12 @@ describe("restart durability (§15.2 / §8 invariant 2)", () => {
 
     // Phase 2: kill the object. abort() breaks the in-flight call — the
     // rejection IS the restart happening, so it is asserted, not swallowed.
+    // Positive control first: the marker survives an un-aborted call boundary,
+    // so phase 3's undefined-marker check demonstrates a fresh instance rather
+    // than passing vacuously.
+    await runInDurableObject(env.COMMONPLACE_LOG.get(id), (instance) => {
+      expect((instance as { __liveMarker?: string }).__liveMarker).toBe("pre-restart");
+    });
     await expect(
       runInDurableObject(env.COMMONPLACE_LOG.get(id), (_instance, state) => {
         state.abort("simulated restart");
