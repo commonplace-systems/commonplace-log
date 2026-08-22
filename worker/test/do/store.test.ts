@@ -11,7 +11,7 @@ import { uuidv7 } from "../../src/do/uuid";
  * canonical bytes are compared against SP1's validateEntry/canonicalize — the
  * store's own encoding is never trusted as its own oracle.
  *
- * Anti-vacuity: this file registers 17 tests (>= the 12-test floor).
+ * Anti-vacuity: this file registers 20 tests (>= the 12-test floor).
  */
 
 const LOG_ID = "0198cc6e-47ac-7d72-93db-b6fbd92bfca2";
@@ -28,14 +28,17 @@ interface StoreCtx {
   store: LogStore;
   /** Fresh LogStore instance over the SAME sql handle (durability tests). */
   makeStore: () => LogStore;
+  /** LogStore over a WRAPPED sql handle but the real transactionSync (fault injection). */
+  makeStoreWith: (sql: SqlStorage) => LogStore;
 }
 
 /** Run `fn` with a LogStore over a fresh Durable Object's real SQLite storage. */
 async function withStore<T>(fn: (ctx: StoreCtx) => T): Promise<T> {
   const stub = env.COMMONPLACE_LOG.get(env.COMMONPLACE_LOG.idFromName("store-test"));
   return await runInDurableObject(stub, (_instance, state) => {
-    const makeStore = () => new LogStore(state.storage.sql, state.storage);
-    return fn({ sql: state.storage.sql, store: makeStore(), makeStore });
+    const makeStoreWith = (sql: SqlStorage) => new LogStore(sql, state.storage);
+    const makeStore = () => makeStoreWith(state.storage.sql);
+    return fn({ sql: state.storage.sql, store: makeStore(), makeStore, makeStoreWith });
   });
 }
 
@@ -309,6 +312,52 @@ describe("append (§9.2)", () => {
       expect((error as StoreError).details).toMatchObject({ reason: "unsafe-integer" });
       expect(count(sql, "entries")).toBe(0);
       expect(count(sql, "writer_tips")).toBe(0);
+    });
+  });
+
+  it("fault between the entries INSERT and the tip upsert rolls back the completed INSERT", async () => {
+    await withStore(({ sql, store, makeStore, makeStoreWith }) => {
+      store.createLog(LOG_ID);
+
+      // Fault injection INSIDE the real transactionSync: the entries INSERT
+      // succeeds, then the writer_tips upsert throws. Both review mutants
+      // (tip-read hoisted out of the txn; transactor replaced with a
+      // pass-through) survived the previous suite because every committed
+      // error path threw BEFORE the first INSERT — this test is what makes
+      // the transaction falsifiable: only a real rollback can erase a row
+      // that was already inserted.
+      const faultedSql = new Proxy(sql, {
+        get(target, prop) {
+          if (prop === "exec") {
+            return (query: string, ...bindings: unknown[]) => {
+              if (query.includes("INSERT INTO writer_tips")) {
+                throw new Error("injected fault: writer_tips upsert");
+              }
+              return target.exec(query, ...bindings);
+            };
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as SqlStorage;
+
+      const faulted = makeStoreWith(faultedSql);
+      const error = catchError(() => faulted.append(WRITER_A, { i: 1 }, CREATED_AT));
+
+      // Positive control: the failure IS the injected fault — proof the
+      // append got past validation and the entries INSERT before dying.
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("injected fault: writer_tips upsert");
+
+      // The completed entries INSERT genuinely rolled back; no tip either.
+      expect(count(sql, "entries")).toBe(0);
+      expect(count(sql, "writer_tips")).toBe(0);
+
+      // A subsequent clean append on an unwrapped store starts at seq 1.
+      const clean = makeStore().append(WRITER_A, { i: 1 }, CREATED_AT);
+      expect(clean.entry.writerSeq).toBe(1);
+      expect(clean.entry.prevEntryId).toBeNull();
+      expect(count(sql, "entries")).toBe(1);
     });
   });
 
