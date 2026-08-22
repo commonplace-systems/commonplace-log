@@ -71,14 +71,10 @@ defmodule Commonplace.Log.SyncTest do
     merge!(stores.right_2, ctx.log_id, entries_b)
 
     assert {:ok, %{outcome: :converged}} =
-             Sync.sync(replica(stores.left_1), replica(stores.right_1), ctx.log_id,
-               page_size: 2
-             )
+             Sync.sync(replica(stores.left_1), replica(stores.right_1), ctx.log_id, page_size: 2)
 
     assert {:ok, %{outcome: :converged}} =
-             Sync.sync(replica(stores.right_2), replica(stores.left_2), ctx.log_id,
-               page_size: 2
-             )
+             Sync.sync(replica(stores.right_2), replica(stores.left_2), ctx.log_id, page_size: 2)
 
     reference = byte_set(stores.left_1, ctx.log_id)
     assert length(reference) == 7

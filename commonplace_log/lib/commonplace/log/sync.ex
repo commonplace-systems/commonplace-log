@@ -193,6 +193,7 @@ defmodule Commonplace.Log.Sync do
 
             equal_seq_fork?(local_tip, remote_tip) ->
               fork = fork(writer_id, local_tip, remote_tip)
+
               {:cont,
                {:ok,
                 %{
@@ -202,7 +203,15 @@ defmodule Commonplace.Log.Sync do
                 }}}
 
             local_tip.seq < remote_tip.seq ->
-              case transfer_writer(local, remote, log_id, local_tip, remote_tip, config, state.acc) do
+              case transfer_writer(
+                     local,
+                     remote,
+                     log_id,
+                     local_tip,
+                     remote_tip,
+                     config,
+                     state.acc
+                   ) do
                 {:ok, next_acc, deadline?} ->
                   {:cont, {:ok, %{state | acc: next_acc, deadline?: deadline?}}}
 
