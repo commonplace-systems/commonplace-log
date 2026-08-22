@@ -101,43 +101,73 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
 
   @impl true
   def frontier(store, log_id) do
-    with_log(store, log_id, fn log -> {:ok, %{tips: log.tips}} end)
+    with_log(store, log_id, fn log ->
+      writers =
+        log.tips
+        |> Enum.map(fn {writer_id, tip} -> Map.put(tip, :writer_id, writer_id) end)
+        |> Enum.sort_by(& &1.writer_id)
+
+      {:ok, %{writers: writers}}
+    end)
   end
 
   @impl true
   def read_writer(store, log_id, writer_id, opts) do
     with_log(store, log_id, fn log ->
-      after_seq = Keyword.get(opts, :after, 0)
-      through = Keyword.get(opts, :through, :infinity)
-      limit = Keyword.get(opts, :limit, 100)
+      after_seq = Keyword.fetch!(opts, :after_seq)
+      through_seq = Keyword.get(opts, :through_seq)
+      limit = Keyword.fetch!(opts, :limit)
 
-      entries =
+      rows =
         log.entries
         |> Enum.filter(fn {{candidate, seq}, _row} ->
-          candidate == writer_id and seq > after_seq and (through == :infinity or seq <= through)
+          candidate == writer_id and seq > after_seq and
+            (is_nil(through_seq) or seq <= through_seq)
         end)
         |> Enum.sort_by(fn {{_writer, seq}, _row} -> seq end)
-        |> Enum.take(limit)
-        |> Enum.map(fn {_coordinate, row} -> row end)
+        |> Enum.take(limit + 1)
 
-      {:ok, %{entries: entries}}
+      {page, more} = Enum.split(rows, limit)
+
+      entries =
+        Enum.map(page, fn {{_writer, writer_seq}, row} ->
+          %{canonical_bytes: row.canonical_bytes, writer_seq: writer_seq}
+        end)
+
+      {:ok,
+       %{
+         entries: entries,
+         next_after_seq: if(more == [], do: nil, else: page |> List.last() |> elem(0) |> elem(1))
+       }}
     end)
   end
 
   @impl true
   def tail_local(store, log_id, opts) do
     with_log(store, log_id, fn log ->
-      after_seq = Keyword.get(opts, :after, 0)
-      limit = Keyword.get(opts, :limit, 100)
+      after_arrival = Keyword.fetch!(opts, :after_arrival)
+      limit = Keyword.fetch!(opts, :limit)
 
-      entries =
+      rows =
         log.entries
         |> Map.values()
-        |> Enum.filter(&(&1.arrival_seq > after_seq))
+        |> Enum.filter(&(&1.arrival_seq > after_arrival))
         |> Enum.sort_by(& &1.arrival_seq)
-        |> Enum.take(limit)
+        |> Enum.take(limit + 1)
 
-      {:ok, %{entries: entries}}
+      {page, more} = Enum.split(rows, limit)
+
+      entries =
+        Enum.map(page, fn row ->
+          %{canonical_bytes: row.canonical_bytes, arrival_seq: row.arrival_seq}
+        end)
+
+      {:ok,
+       %{
+         entries: entries,
+         next_after_arrival:
+           if(more == [], do: nil, else: page |> List.last() |> Map.fetch!(:arrival_seq))
+       }}
     end)
   end
 

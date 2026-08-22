@@ -15,6 +15,22 @@ defmodule Commonplace.Log.Persistence do
   Replica-local arrival metadata such as `received_at_ms` and `arrival_seq`
   is assigned by the adapter and must never be carried in a `CommitPlan`.
   That metadata is outside entry identity and merge semantics.
+
+  The caller-visible read shapes are deliberately pinned here. A former
+  `map()` return type allowed two adapters to diverge, while the sync engine
+  depends on the continuation cursors to consume complete ranges.
+
+    * `frontier/2` returns `%{writers: writers}`, where every writer is a
+      `%{writer_id: ..., seq: ..., entry_id: ...}` map and `writers` is sorted
+      by `writer_id`.
+    * `read_writer/4` returns `%{entries: entries, next_after_seq: cursor}`.
+      The cursor key is mandatory; its value is the last returned sequence
+      when another page exists, and `nil` when the requested range is
+      exhausted.
+    * `tail_local/3` returns
+      `%{entries: entries, next_after_arrival: cursor}`. The cursor key is
+      mandatory; its value is the last returned arrival sequence when
+      another page exists, and `nil` when the requested range is exhausted.
   """
 
   defmodule ReadSet do
@@ -70,6 +86,34 @@ defmodule Commonplace.Log.Persistence do
           required(:entry_ids) => [String.t()]
         }
 
+  @typedoc "One writer tip in the writer-id-sorted frontier."
+  @type frontier_writer :: %{
+          writer_id: String.t(),
+          seq: pos_integer(),
+          entry_id: String.t()
+        }
+
+  @typedoc "The complete frontier, whose writers are sorted by writer_id."
+  @type frontier :: %{writers: [frontier_writer()]}
+
+  @typedoc "One canonical entry in a writer-range page."
+  @type writer_entry :: %{canonical_bytes: binary(), writer_seq: pos_integer()}
+
+  @typedoc "A writer-range page. The continuation key is always present."
+  @type writer_page :: %{
+          entries: [writer_entry()],
+          next_after_seq: pos_integer() | nil
+        }
+
+  @typedoc "One canonical entry in replica-local arrival order."
+  @type local_entry :: %{canonical_bytes: binary(), arrival_seq: pos_integer()}
+
+  @typedoc "A local-tail page. The continuation key is always present."
+  @type local_page :: %{
+          entries: [local_entry()],
+          next_after_arrival: pos_integer() | nil
+        }
+
   @callback create_log(store(), log_id :: String.t(), metadata :: map()) ::
               :ok | {:error, term()}
 
@@ -80,11 +124,11 @@ defmodule Commonplace.Log.Persistence do
               {:ok, new_revision :: non_neg_integer()}
               | {:error, :stale_revision | term()}
 
-  @callback frontier(store(), log_id :: String.t()) :: {:ok, map()} | {:error, term()}
+  @callback frontier(store(), log_id :: String.t()) :: {:ok, frontier()} | {:error, term()}
 
   @callback read_writer(store(), log_id :: String.t(), writer_id :: String.t(), keyword()) ::
-              {:ok, map()} | {:error, term()}
+              {:ok, writer_page()} | {:error, term()}
 
   @callback tail_local(store(), log_id :: String.t(), keyword()) ::
-              {:ok, map()} | {:error, term()}
+              {:ok, local_page()} | {:error, term()}
 end
