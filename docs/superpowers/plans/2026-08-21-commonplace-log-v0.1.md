@@ -209,8 +209,8 @@ Vector corpus rules: `input.json` is authoritative **as bytes** (big-int and non
 | 2 corpus seed | done, spec+quality reviewed | `5b35b71`, `a60a1d3` |
 | 3 TS canonicalizer | done, spec (incl. mutation probe + empty-corpus red) + quality reviewed | `8313a8f` |
 | 4 TS entry validator | done, two review fix-rounds (calendar validation red-first; `context.source` load probe; value-based integer fields pinned by 018/030) | `825878d`, `b31bec7`, `f4ee6d4`, `5f33301` |
-| 6 Elixir canonicalizer | — | |
-| 7 Elixir entry validator | — | |
+| 6 Elixir canonicalizer | done, spec (39-value differential vs node, 0 mismatches) + quality reviewed | `ac110b2`, `9e75a4b` |
+| 7 Elixir entry validator | done, spec (slug lockstep audit; 13 side-by-side probes) + quality reviewed; unpinned classifier classes recorded in corpus README | `d659218`, `1c7bc90`, `0f49edb` |
 | 8 byte-diff harness | — | |
 | 9 differential fuzz | — | |
 
