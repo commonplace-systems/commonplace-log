@@ -251,9 +251,17 @@ export class LogStore {
             { reason: validated.reason },
           );
         }
-        // validateEntry guarantees the shape: raw is an object whose fields
-        // have the §7 types.
-        const entry = raw as Record<string, unknown>;
+        // The canonical bytes are the SINGLE source of truth for every
+        // stored field AND the log_id check below. The raw caller object is
+        // never re-read after canonicalize's one pass: an adversarial getter
+        // can return different values per read, which previously let column
+        // entry_id disagree with the id inside the row's own bytes
+        // (regression-tested in merge.test.ts). Re-parsing the bytes
+        // validateEntry blessed makes columns and bytes agree by
+        // construction; validateEntry guarantees the §7 shape and types.
+        const entry = JSON.parse(
+          new TextDecoder().decode(validated.canonicalBytes),
+        ) as Record<string, unknown>;
         if (entry["log_id"] !== logId) {
           throw new StoreError("log_mismatch", {
             entryId: entry["entry_id"],

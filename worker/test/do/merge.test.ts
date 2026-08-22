@@ -12,7 +12,7 @@ import { uuidv7 } from "../../src/do/uuid";
  * bytes are compared against SP1's validateEntry canonical bytes — the store
  * is never its own byte oracle.
  *
- * Anti-vacuity: this file registers 22 tests (>= the 14-test floor).
+ * Anti-vacuity: this file registers 23 tests (>= the 14-test floor).
  */
 
 const LOG_ID = "0198cc6e-47ac-7d72-93db-b6fbd92bfca2";
@@ -564,6 +564,78 @@ describe("mergeEntries (§12.1 / §9.3)", () => {
         { writerId: W_LOW, seq: 2, entryId: chain[1]!.entry_id },
       ]);
       expect(count(sql, "entries")).toBe(2);
+    });
+  });
+
+  it("adversarial getter flipping entry_id between reads cannot desync columns from canonical bytes", async () => {
+    await withStore(({ sql, store }) => {
+      store.createLog(LOG_ID);
+      const idA = uuidv7();
+      const idB = uuidv7();
+
+      // Reviewer's b1 shape: entry_id reads as A the FIRST time (the read
+      // canonicalize consumes into the canonical bytes) and B on every
+      // later read. The canonical bytes — what validateEntry blessed and
+      // what gets stored — must be the single source of truth for the
+      // columns too, so the store must record entry_id = A everywhere.
+      let reads = 0;
+      const shifty = {
+        version: 1,
+        log_id: LOG_ID,
+        get entry_id() {
+          reads++;
+          return reads === 1 ? idA : idB;
+        },
+        writer_id: W_LOW,
+        writer_seq: 1,
+        prev_entry_id: null,
+        created_at: CREATED_AT,
+        body: { shifty: true },
+      };
+      const result = store.mergeEntries([shifty]);
+      expect(reads).toBeGreaterThanOrEqual(1); // positive control: getter live
+      expect(result.inserted).toBe(1);
+      expect(result.frontier).toEqual([{ writerId: W_LOW, seq: 1, entryId: idA }]);
+
+      // The row's column matches the id INSIDE its own stored bytes.
+      const row = sql
+        .exec("SELECT entry_id, canonical_json FROM entries WHERE writer_id = ?", W_LOW)
+        .one();
+      expect(row.entry_id).toBe(idA);
+      const inBytes = JSON.parse(
+        new TextDecoder().decode(new Uint8Array(row.canonical_json as ArrayBuffer)),
+      ) as Record<string, unknown>;
+      expect(inBytes.entry_id).toBe(idA);
+      expect(tipsByWriter(sql).get(W_LOW)).toEqual({ seq: 1, entryId: idA });
+
+      // Re-merging the same canonical entry (as an honest plain object) is
+      // idempotent: the store treats it as already present.
+      const honest = {
+        version: 1,
+        log_id: LOG_ID,
+        entry_id: idA,
+        writer_id: W_LOW,
+        writer_seq: 1,
+        prev_entry_id: null,
+        created_at: CREATED_AT,
+        body: { shifty: true },
+      };
+      const again = store.mergeEntries([honest]);
+      expect(again.inserted).toBe(0);
+      expect(again.present).toBe(1);
+
+      // The guarded invariant, store-wide: NO stored row's identity columns
+      // may disagree with the fields inside its own canonical bytes.
+      for (const r of sql
+        .exec("SELECT entry_id, writer_id, writer_seq, canonical_json FROM entries")
+        .toArray()) {
+        const parsed = JSON.parse(
+          new TextDecoder().decode(new Uint8Array(r.canonical_json as ArrayBuffer)),
+        ) as Record<string, unknown>;
+        expect(r.entry_id).toBe(parsed.entry_id);
+        expect(r.writer_id).toBe(parsed.writer_id);
+        expect(Number(r.writer_seq)).toBe(parsed.writer_seq);
+      }
     });
   });
 
