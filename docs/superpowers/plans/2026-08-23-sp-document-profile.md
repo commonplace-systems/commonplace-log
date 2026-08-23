@@ -19,7 +19,26 @@
 Suite: **195 tests + 5 properties, ~78s** (properties dominate). `conformance/check.sh` GREEN,
 worker 218.
 
-**IN FLIGHT:** Task 4 (documentation — name replica sync, authority/topology, README) dispatched
+**SP-DP IS COMPLETE.** All six tasks landed; CI observed green on a real run.
+
+- Task 4 `cc6d707` — replica-sync naming (prohibitions at the merge callback, not only the
+  moduledoc), authority above storage, README topology
+- Task 5 `caa7be8` — CI: five named checks, no failure-swallowing constructs, toolchain pinned
+  strictly to `.tool-versions`
+
+**CI VERIFIED BY OBSERVATION, run 32615109259, conclusion success.** All five checks passed on
+the first real run, which settled the claims Sol correctly refused to assert from the sandbox:
+`setup-beam` resolves the pinned OTP 27.3.4.8 / Elixir 1.18.4-otp-27 pair, the runner handles the
+`workerd` download, and both runtimes coexist in one job well enough for the conformance harness
+and the seeded 500-case fuzz to run.
+
+**NEXT: SP4 — the Cloudflare realm sidecar.** One thing already checked that keeps jes off the
+critical path again: `wrangler dev` has a local mode (`--remote` is opt-in, default false), so
+the `RealmContainer` DO and the `CloudflareSidecar` adapter can very likely be built and tested
+locally under the workers pool exactly as SP2 was. Only actual deployment should need account
+logistics — worth confirming early, because it decides how much of SP4 can proceed unblocked.
+
+**SUPERSEDED —** Task 4 (documentation — name replica sync, authority/topology, README) dispatched
 to Sol detached, log at `scratchpad/sol-dp-task4.log`. Check for the `tokens used` marker.
 
 **NEXT:** Task 5 (CI). ⚠️ **Task 5 cannot be self-verified** — a CI config is only checkable by
