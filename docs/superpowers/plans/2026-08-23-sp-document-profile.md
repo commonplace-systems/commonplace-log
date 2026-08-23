@@ -8,6 +8,36 @@
 
 ---
 
+## 0. CURRENT STATE (updated 2026-08-23 ~03:10 — read this first)
+
+**Landed on main:**
+- Task 1 `9191bfd` — reads never create a log or mint an identity (V1 closed)
+- Task 2′ `7a92cc9` — `DocumentProfile` façade: one lifetime lane, no `writer_id` exposed, no rekey (V2, V3, V4 closed)
+- Task 3′ `f1ae541` — fencing epoch; commit verifies revision AND epoch, kept as distinct failures
+- Task 3.5 `029e7d2` — audit reports `examined:` counts; two helpers, empty must be declared
+
+Suite: **195 tests + 5 properties, ~78s** (properties dominate). `conformance/check.sh` GREEN,
+worker 218.
+
+**IN FLIGHT:** Task 4 (documentation — name replica sync, authority/topology, README) dispatched
+to Sol detached, log at `scratchpad/sol-dp-task4.log`. Check for the `tokens used` marker.
+
+**NEXT:** Task 5 (CI). ⚠️ **Task 5 cannot be self-verified** — a CI config is only checkable by
+watching a real run, which needs a push plus possibly repo settings from jes. Either observe a
+real Actions run or land it explicitly labelled unverified; do not call it done from reading it.
+
+**Operational facts that cost time to learn — do not rediscover:**
+- Implementation goes to **Sol**, not Fable subagents (jes, 2026-08-22). I review and land; Sol's
+  `.git` is read-only.
+- **Dispatch detached** — `setsid nohup env SOL_WORKDIR=… sol-egress-run.sh "$brief" > log 2>&1 &`.
+  Harness-managed background tasks get reaped (~5 min, proven with a plain `sleep` control).
+  Detached rounds are NOT harness-managed, so no completion notification arrives.
+- A **completed** round's log ends with a `tokens used` marker; a killed one has none. A Monitor
+  watching for DONE/KILLED/REFUSED is the way to notice.
+- Cut the worktree **after** any plan commit, or every landing needs a rebase.
+- Briefs must require Sol to write `SOL_REPORT.md` incrementally and to write the deliverable
+  early then refine — kills have destroyed evidence and one whole README otherwise.
+
 ## 1. Measured starting position
 
 I probed the current implementation against the profile's §17.3 list rather than reading it against the code. Four gaps are real and measured; several requirements already hold.
