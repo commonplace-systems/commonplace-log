@@ -41,8 +41,30 @@ positive control.** Without it we have only shown the sidecar is silent, not tha
 **Still unexercised:** `storage_full`. workerd rejects `PRAGMA max_page_count` with `SQLITE_AUTH`,
 so only the 507 mapping and spelling are pinned, in both SP2 and SP4. Not covered — spelled.
 
-**In flight:** Task 3 (`Persistence.CloudflareSidecar`) dispatched to Sol detached,
-`scratchpad/sol-sp4-task3.log`.
+**Task 3 returned BLOCKED and was right to.** It found two real contract gaps rather than coding
+around them. Both are now decided; Task 2.5 is closing them in `worker/`.
+
+**Decision 1 — `/take-lease` was missing.** `take_lease/2` is a required `Persistence` callback and
+`RealmStore.takeLease` exists, but no route reached it, so the epoch could not be advanced over the
+wire at all. In this deployment the epoch CAS is the only exclusivity there is (§4), so a sidecar
+without it cannot fence an obsolete appender. **My Task 2 brief enumerated the routes and omitted
+this one**, and I read "no lease-taking route was added" in the report without catching it.
+
+**Decision 2 — `received_at_ms` must not cross the wire.** `/commit` required it per row;
+`CommitPlan.insert_entry` deliberately excludes it. It is **replica-local arrival metadata**: it
+records when *this* store received the entry and underpins `arrival_seq` ordering, so only the
+receiving store can honestly assign it. A client stamping it would assign a remote replica's
+arrival time from its own clock, and a replica syncing from another would inherit the source's
+arrival order instead of recording its own — the exact thing that column exists to prevent. ⇒ The
+store assigns it; the wire **rejects** it rather than ignoring it, since a silently ignored field
+lets a caller believe it set something it did not.
+
+⭐ **Worth noting for how later briefs are written:** the Engine/Persistence split caught both of
+these. The behaviour is specified tightly enough that an adapter could not be written without the
+gaps surfacing, which is the split doing its job rather than a process failure.
+
+**In flight:** Task 2.5 (both gaps) dispatched to Sol detached, `scratchpad/sol-sp4-task25.log`.
+Task 3 re-dispatches after it lands; its worktree `.worktrees/sp4-task3` is kept for that.
 
 **Operational note — the launch receipt.** Detached rounds survive the harness reaper but there is
 no report if one dies at exec, and a dead round looks exactly like a quiet one. A quiescence
