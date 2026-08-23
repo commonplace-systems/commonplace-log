@@ -1,7 +1,11 @@
 # SP4b deployment readiness — what is needed, and what has not been verified
 
-**Status:** SP4a complete as of 2026-08-23. SP4b (real Cloudflare deployment) is **not started and
-should not be started without a decision from jes.**
+**Status:** SP4a complete as of 2026-08-23. **jes approved SP4b in principle on 2026-08-23**
+("I'll try to set up the cloudflare soon"); it is gated on account credentials and Containers
+access, not on the decision.
+
+**Also ruled 2026-08-23:** §8.3 Container lifecycle supervision is **out of scope for v0.1** — see
+§4, where it is recorded as absent rather than untested.
 
 This document exists to make that decision on real information rather than on a green tick. Its
 most important section is the last one.
@@ -61,6 +65,17 @@ this guarantee lives somewhere SP4a cannot reach.
 realms.** A single-realm deployment cannot distinguish "the handler scopes correctly" from "there
 was only ever one realm to return."
 
+⭐ **But it is deferred by exactly one fact, not by the whole deployment.** The property splits:
+
+| Half | Needs an account? |
+|---|---|
+| The handler ignores any client-supplied realm and derives solely from `containerId` — *"a request naming realm B with a `containerId` for realm A resolves to A"* | **No.** A pure unit test, once the `containerId` shape is known |
+| The platform supplies a `containerId` that cannot be forged, and interception cannot be bypassed | **Yes** |
+
+⇒ The outbound handler is blocked on **the shape of `containerId`** — a single observation from a
+real environment — rather than on the full deployment. ⛔ Do not write it before that observation:
+a function whose argument type is a guess is rework with a head start, not preparation.
+
 ---
 
 ## 4. ⭐ Every claim SP4a could NOT verify
@@ -81,9 +96,19 @@ vitest-pool-workers, deferring real `idFromName` verification to wrangler-dev. T
 test-only entry point forwarding to one named `RealmContainer`; it did **not** verify production
 name-based addressing across many realms.
 
-**Container lifecycle (§8.3).** Cold start, rollout, crash, migration, and pending durable inbox
-redelivery are entirely untested — a fresh BEAM booting, the realm supervisor starting, and log
-processes reconstructing on demand.
+**Container lifecycle (§8.3) — ⛔ NOT UNTESTED. NOT BUILT, AND OUT OF SCOPE.** The revision
+describes a fresh BEAM booting, a realm supervisor starting, and log processes reconstructing on
+demand. ⚠️ **None of that machinery exists.** Measured 2026-08-23: `commonplace_log/lib` has one
+`DynamicSupervisor`, keyed per `log_id`; there is no realm-level supervisor or registry, and the
+word *realm* appears in that tree only in documentation comments. So there is nothing to
+reconstruct log processes on demand, and nothing to reconstruct them *from* at the realm level.
+
+**jes ruled this out of scope for v0.1 on 2026-08-23.** It is therefore not a gap awaiting work; it
+is a described capability that the v0.1 log deliberately does not provide.
+
+⭐ Recorded this way on purpose. "Untested" and "absent" read identically to someone planning a
+deployment, and only one of them means the supervision story is unhandled. A reader would otherwise
+have no way to tell a description of intended machinery from a description of existing machinery.
 
 **Real network failure.** Task 4's lost acknowledgement is injected through the transport seam: the
 double performs a real commit and then drops the reply. This is a faithful *shape*, but no real
