@@ -61,6 +61,11 @@ function array(value: unknown): unknown[] {
   return value;
 }
 
+function onlyKeys(row: JsonRecord, allowed: readonly string[]): void {
+  const allowedKeys = new Set(allowed);
+  if (Object.keys(row).some((key) => !allowedKeys.has(key))) throw new MalformedRequest();
+}
+
 function decodeBase64(value: unknown): Uint8Array {
   const encoded = string(value);
   if (encoded.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
@@ -92,9 +97,18 @@ async function body(request: Request): Promise<JsonRecord> {
   }
 }
 
-function entryRow(value: unknown): EntryRow {
+function entryRow(value: unknown, planLogId: string): EntryRow {
   const row = object(value);
-  if (Object.hasOwn(row, "received_at_ms")) throw new MalformedRequest();
+  onlyKeys(row, [
+    "log_id",
+    "entry_id",
+    "writer_id",
+    "writer_seq",
+    "prev_entry_id",
+    "created_at",
+    "canonical_bytes",
+  ]);
+  if (Object.hasOwn(row, "log_id") && string(row.log_id) !== planLogId) throw new MalformedRequest();
   // Destructure once so no incoming property can produce two different values.
   const {
     entry_id,
@@ -116,6 +130,7 @@ function entryRow(value: unknown): EntryRow {
 
 function tipRow(value: unknown): TipRow {
   const row = object(value);
+  onlyKeys(row, ["writer_id", "last_seq", "last_entry_id"]);
   const { writer_id, last_seq, last_entry_id } = row;
   return {
     writerId: string(writer_id),
@@ -126,11 +141,12 @@ function tipRow(value: unknown): TipRow {
 
 function commitPlan(value: JsonRecord): CommitPlan {
   const { log_id, expected_revision, expected_epoch, insert_entries, put_tips } = value;
+  const logId = string(log_id);
   return {
-    logId: string(log_id),
+    logId,
     expectedRevision: integer(expected_revision),
     expectedEpoch: integer(expected_epoch),
-    insertEntries: array(insert_entries).map(entryRow),
+    insertEntries: array(insert_entries).map((entry) => entryRow(entry, logId)),
     putTips: array(put_tips).map(tipRow),
   };
 }

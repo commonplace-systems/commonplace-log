@@ -15,7 +15,7 @@ defmodule CommonplaceLog.MixProject do
   def application do
     [
       mod: {CommonplaceLog.Application, []},
-      extra_applications: [:logger, :crypto]
+      extra_applications: [:logger, :crypto, :ssl, :inets]
     ]
   end
 

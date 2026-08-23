@@ -182,6 +182,42 @@ describe("RealmContainer HTTP contract", () => {
     expect(await inspect(stub)).toEqual(beforeRejected);
   });
 
+  it("accepts only a matching nested log_id and rejects mismatches without writing", async () => {
+    const stub = realmStub();
+    await createLog(stub, "nested-log");
+
+    const matching = { ...entry("matching", "alice", 1, null), log_id: "nested-log" };
+    expect(await post(stub, "/commit", plan("nested-log", 0, 0, [matching])))
+      .toEqual({ status: 200, json: { ok: true, revision: 1 } });
+    expect((await inspect(stub)).entries.map((row: JsonObject) => row.entry_id)).toEqual(["matching"]);
+
+    const beforeMismatch = await inspect(stub);
+    const mismatched = { ...entry("mismatched", "bob", 1, null), log_id: "other-log" };
+    expect(await post(stub, "/commit", plan("nested-log", 1, 0, [mismatched])))
+      .toEqual({ status: 400, json: { ok: false, error: { code: "malformed_request" } } });
+    const afterMismatch = await inspect(stub);
+    expect(afterMismatch.entries).toEqual(beforeMismatch.entries);
+    expect(afterMismatch.tips).toEqual(beforeMismatch.tips);
+    expect(afterMismatch.logs).toEqual(beforeMismatch.logs);
+  });
+
+  it("rejects unknown insert and put-tip keys without writing", async () => {
+    const stub = realmStub();
+    await createLog(stub, "strict-keys-log");
+    const before = await inspect(stub);
+
+    const unknownInsert = { ...entry("insert-typo", "alice", 1, null), writer_sqe: 1 };
+    expect(await post(stub, "/commit", plan("strict-keys-log", 0, 0, [unknownInsert])))
+      .toEqual({ status: 400, json: { ok: false, error: { code: "malformed_request" } } });
+    expect(await inspect(stub)).toEqual(before);
+
+    const unknownTip = plan("strict-keys-log", 0, 0, [entry("tip-typo", "bob", 1, null)]);
+    unknownTip.put_tips[0] = { ...unknownTip.put_tips[0], last_sqe: 1 } as typeof unknownTip.put_tips[0];
+    expect(await post(stub, "/commit", unknownTip))
+      .toEqual({ status: 400, json: { ok: false, error: { code: "malformed_request" } } });
+    expect(await inspect(stub)).toEqual(before);
+  });
+
   it("serves a realistic append and merge in exactly one read-set plus one commit each", async () => {
     const stub = realmStub();
     await createLog(stub, "append-log");
