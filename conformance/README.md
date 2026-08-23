@@ -29,6 +29,24 @@ Each case is one directory: `canonical-json/NNN-short-name/` containing exactly:
 A compliance check over the full corpus passed at seeding (see "Sanity checks
 run at seeding" below); any task adding vectors must keep new files compliant.
 
+### ⚠️ This corpus is a CROSS-REPO surface — announce byte-rule changes
+
+As of 2026-08-23 `commonplace-log` is not the only consumer. The
+`commonplace-log-reducer` project copies `canonical-json/` in as language-neutral
+fixtures and holds its own canonicalizer to these vectors, including the
+deliberate-mismatch case. It depends on **zero** of this repo's code and on all of
+these bytes — which is the right way to depend on us, and it means the corpus is a
+published contract rather than an internal test aid.
+
+⇒ Changing the file byte rules, the vector numbering policy, or an existing
+`expected.hex` is a change to somebody else's test suite. Announce it to
+`commonplace-log-reducer` (via clod-squad) rather than only committing it. Adding new
+vectors is safe and needs no announcement.
+
+Exact counts, so a downstream anti-vacuity floor can be set correctly:
+**19 case directories = 18 pass-gate cases + 1 deliberately-wrong (`999-`)**. A
+harness should expect 18 matches and exactly 1 required mismatch.
+
 Numbering policy: new cases take the next unused number in sequence; the `9xx`
 range is reserved for deliberately-wrong cases (harnesses may exclude `9xx-*`
 from their pass gate but must assert each one mismatches).
