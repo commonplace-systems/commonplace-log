@@ -4,6 +4,8 @@ defmodule Commonplace.Log.Test.SQLAudit do
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Exqlite.Sqlite3
 
+  import ExUnit.Assertions, only: [assert: 1]
+
   @projection_fields ~w(entry_id writer_id writer_seq prev_entry_id created_at)
 
   @doc "Re-derive the persisted log invariants directly from its SQL rows."
@@ -39,7 +41,29 @@ defmodule Commonplace.Log.Test.SQLAudit do
           [violation("revision-non-negative-integer", :persistence_meta, %{rows: rows})]
       end
 
-    writer_violations ++ revision_violations
+    %{
+      observed: [:entries, :writer_tips, :persistence_meta],
+      examined: %{writers: length(writers), entries: length(entries)},
+      violations: writer_violations ++ revision_violations
+    }
+  end
+
+  @doc "Assert that an audit observed a clean store containing at least one subject."
+  def assert_clean(store) do
+    report = audit(store)
+    assert_observed(report)
+    assert report.violations == []
+    assert report.examined.writers + report.examined.entries > 0
+    report
+  end
+
+  @doc "Assert that an audit observed a clean store containing no subjects."
+  def assert_clean_empty(store) do
+    report = audit(store)
+    assert_observed(report)
+    assert report.violations == []
+    assert report.examined == %{writers: 0, entries: 0}
+    report
   end
 
   defp audit_writer(writer_id, rows, tip) do
@@ -144,6 +168,10 @@ defmodule Commonplace.Log.Test.SQLAudit do
 
   defp add_if(violations, true, rule, subject, details),
     do: violations ++ [violation(rule, subject, details)]
+
+  defp assert_observed(report) do
+    assert report.observed == [:entries, :writer_tips, :persistence_meta]
+  end
 
   defp violation(rule, {writer_id, writer_seq}, details),
     do: %{rule: rule, writer_id: writer_id, coordinate: {writer_id, writer_seq}, details: details}

@@ -298,7 +298,7 @@ defmodule Commonplace.Log.ConformanceTest do
     writer = UUID.uuidv7()
     entries = chain(ctx.log_id, writer, 2)
     merge!(store, ctx.log_id, entries)
-    assert SQLAudit.audit(store) == []
+    SQLAudit.assert_clean(store)
 
     rogue_id = UUID.uuidv7()
 
@@ -316,7 +316,7 @@ defmodule Commonplace.Log.ConformanceTest do
       [rogue_id, writer, UUID.uuidv7(), @created_at, {:blob, lying_bytes}, 0]
     )
 
-    violations = SQLAudit.audit(store)
+    violations = SQLAudit.audit(store).violations
     rules = Enum.map(violations, & &1.rule)
     assert "writer-count-max" in rules
     assert "writer-max-tip" in rules
@@ -442,7 +442,7 @@ defmodule Commonplace.Log.ConformanceTest do
     |> Enum.map(&Jason.decode!(&1)["entry_id"])
   end
 
-  defp assert_clean(store), do: assert(SQLAudit.audit(store) == [])
+  defp assert_clean(store), do: SQLAudit.assert_clean(store)
 
   defp sql_snapshot(store) do
     %{

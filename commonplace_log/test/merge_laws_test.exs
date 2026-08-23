@@ -66,7 +66,7 @@ defmodule Commonplace.Log.MergeLawsTest do
       assert {:ok, %{inserted: 0, present: present}} = merge!(store, batch)
       assert present == length(batch)
       assert stored_state!(store) == before
-      assert_audited!([store])
+      assert_audited!([store], prefix_entries(fixture, :a))
       close_all!([store])
     end
   end
@@ -85,7 +85,11 @@ defmodule Commonplace.Log.MergeLawsTest do
       deliver_state!(right, fixture, :b)
 
       assert stored_bytes!(left) == stored_bytes!(right)
-      assert_audited!([left, right])
+
+      expected =
+        prefix_entries(fixture, :a) ++ prefix_entries(fixture, :b) ++ prefix_entries(fixture, :c)
+
+      assert_audited!([left, right], expected)
       close_all!([left, right])
     end
   end
@@ -112,7 +116,12 @@ defmodule Commonplace.Log.MergeLawsTest do
       merge_chunks!(right, bc_from_storage, fixture)
 
       assert stored_bytes!(left) == stored_bytes!(right)
-      assert_audited!([ab, left, bc, right])
+      entries_a = prefix_entries(fixture, :a)
+      entries_b = prefix_entries(fixture, :b)
+      entries_c = prefix_entries(fixture, :c)
+      assert_audited!([ab], entries_a ++ entries_b)
+      assert_audited!([left, right], entries_a ++ entries_b ++ entries_c)
+      assert_audited!([bc], entries_b ++ entries_c)
       close_all!([ab, left, bc, right])
     end
   end
@@ -135,7 +144,7 @@ defmodule Commonplace.Log.MergeLawsTest do
         assert Map.get(after_tips, writer_id, 0) >= seq
       end)
 
-      assert_audited!([store])
+      assert_audited!([store], prefix_entries(fixture, :a) ++ prefix_entries(fixture, :b))
       close_all!([store])
     end
   end
@@ -156,7 +165,7 @@ defmodule Commonplace.Log.MergeLawsTest do
       assert length(injected_rows) == scenario.expected_entry_count
       assert unique_coordinates?(injected_rows)
       assert gapless_in_order?(injected_rows)
-      assert_audited!([control, injected])
+      Enum.each([control, injected], &SQLAudit.assert_clean/1)
       Agent.stop(injector)
       close_all!([control, injected])
     end
@@ -386,8 +395,13 @@ defmodule Commonplace.Log.MergeLawsTest do
     end)
   end
 
-  defp assert_audited!(stores) do
-    Enum.each(stores, fn store -> assert SQLAudit.audit(store) == [] end)
+  defp assert_audited!(stores, expected_entries) do
+    helper =
+      if expected_entries == [],
+        do: &SQLAudit.assert_clean_empty/1,
+        else: &SQLAudit.assert_clean/1
+
+    Enum.each(stores, helper)
   end
 
   defp close_all!(stores), do: Enum.each(stores, &LocalSQLite.close/1)

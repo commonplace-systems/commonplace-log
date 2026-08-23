@@ -272,5 +272,5 @@ defmodule Commonplace.Log.SyncTest do
     Enum.find(writers, &(&1.writer_id == writer_id))
   end
 
-  defp assert_clean(store), do: assert(SQLAudit.audit(store) == [])
+  defp assert_clean(store), do: SQLAudit.assert_clean(store)
 end
