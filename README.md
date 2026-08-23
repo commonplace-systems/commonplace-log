@@ -10,6 +10,8 @@ The normative protocol is [the Commonplace Monotonic Log specification](docs/com
 
 The Elixir library is the reference implementation for entry validity, canonical JSON, merge classification, and synchronization. The TypeScript Cloudflare Durable Object is a complete, conforming workalike: it implements the protocol independently and is checked against the same language-neutral vectors. That independence helps ensure the protocol is not accidentally defined by Elixir internals.
 
+For an ordinary Document, a Realm hosts the Cell, the Cell authorizes the Document, and the Document has one log, one lifetime append lane, and one fenced appender. Replicas copy that same log; branches and mirrors instead derive new logs with explicit lineage. Storage location does not confer authority: a Realm or sidecar may hold the bytes without owning the Cell or Document.
+
 ## Repository layout
 
 | Path | What is here |
@@ -40,11 +42,11 @@ bash conformance/check.sh
 bash conformance/fuzz.sh
 ```
 
-The Elixir suite includes property tests (200 generated cases each) and so takes appreciably longer than a plain unit suite — roughly 70 seconds, against a couple of seconds for the rest. Measured on 2026-08-22:
+The Elixir suite includes property tests (200 generated cases each) and so takes appreciably longer than a plain unit suite — roughly 80 seconds, against a couple of seconds for the rest. The Elixir row was re-measured on 2026-08-23; the remaining snapshot figures were measured on 2026-08-22:
 
 | Check | Result |
 | --- | --- |
-| `mix test` (Elixir) | 1 doctest, 5 properties, 165 tests, 0 failures — ~68 s |
+| `mix test` (Elixir) | 1 doctest, 5 properties, 195 tests, 0 failures — ~80 s |
 | `npm test` (TypeScript) | 218 tests across 11 files, 0 failures |
 | `conformance/check.sh` | GREEN over 19 canonical-JSON cases |
 | Shared corpus | 19 canonical-JSON vectors, 30 invalid-entry vectors |

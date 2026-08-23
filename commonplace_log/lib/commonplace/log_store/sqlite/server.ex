@@ -4,8 +4,14 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   The unique `Registry` key prevents two servers for the same `log_id` in one
   BEAM node. A separate `<log_id>.lock.sqlite3` connection holds an exclusive
-  SQLite transaction for the server lifetime, preventing ownership by another
-  OS process.
+  SQLite transaction for the server lifetime, preventing another OS process
+  from owning that storage lock.
+
+  This process owns only resources: a connection, a lock, and a local writer
+  identity. It is not the semantic actor or authority over a Document.
+  Authority remains nested Realm → Cell → Document → log handle → persistence;
+  putting persistence behind a process does not move authority down that
+  chain.
   """
 
   use GenServer

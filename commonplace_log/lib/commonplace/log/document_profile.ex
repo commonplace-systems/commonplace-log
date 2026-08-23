@@ -2,6 +2,11 @@ defmodule Commonplace.Log.DocumentProfile do
   @moduledoc """
   Restricted append façade for ordinary, single-lane Documents.
 
+  In the wider authority topology, a Realm hosts a Cell, the Cell authorizes a
+  Document, and the Document holds the log handle that reaches persistence.
+  This façade is at the Document boundary; neither its log handle nor the
+  process and storage behind that handle inherit Cell or Document authority.
+
   `create_log/2` explicitly creates a log and durably establishes its writer
   identity before returning. `open_log/2` only opens existing logs. Both return
   an opaque handle that binds the log identity, durable writer identity,

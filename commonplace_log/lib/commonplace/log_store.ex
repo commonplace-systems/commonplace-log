@@ -4,6 +4,12 @@ defmodule Commonplace.LogStore do
   `docs/commonplace-monotonic-log-spec.md`): the application depends on this
   behavior rather than directly on CubDB, SQLite, or HTTP.
 
+  This is the persistence end of the authority chain Realm → Cell → Document
+  → log handle → persistence. Physical containment is not logical ownership:
+  a storage adapter or sidecar that holds a log's bytes does not own its Cell
+  or Document and must not make their authorization or semantic-admission
+  decisions.
+
   Ported verbatim from the §14 `defmodule` block with ONE recorded delta: the
   spec writes identifier typespecs as `Ecto.UUID.t()`, but this project takes
   no Ecto dependency (SP1 decision, carried through the SP3 plan's tech-stack

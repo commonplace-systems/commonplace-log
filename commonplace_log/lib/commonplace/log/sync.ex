@@ -1,6 +1,19 @@
 defmodule Commonplace.Log.Sync do
   @moduledoc """
-  Frontier/range synchronization from specification section 10.
+  Replica synchronization from specification section 10. It converges physical
+  copies of the same logical log, identified by one `log_id`.
+
+  This is a persistence protocol, not Document or Cell synchronization. It
+  must never decide whether an application edit is authorized; accept or
+  reject offline work; translate CRDT/Yjs updates or cross a Yepoch boundary;
+  merge branches; create lineage; or invoke Document verbs as a side effect of
+  receiving bytes. Those semantic admission operations live in Document/Cell
+  sync verbs. A branch or mirror derives a new log with explicit lineage; its
+  entries must not be fed into this module as though it were another replica.
+
+  Raw replica synchronization belongs on trusted internal storage links.
+  Externally held editor capabilities operate on Document/Cell APIs, not on
+  persistence merge.
 
   A replica reference is the deliberately small map
   `%{module: capability_module, store: adapter_handle}`. The capability
@@ -38,6 +51,14 @@ defmodule Commonplace.Log.Sync do
     @callback read_writer(store(), log_id :: String.t(), writer_id :: String.t(), keyword()) ::
                 {:ok, page()} | {:error, term()}
 
+    @doc """
+    Merge a page received from a physical replica of the same `log_id`.
+
+    Do not pass entries from a branch, mirror, offline edit, or other Document
+    here. This callback performs raw persistence merge: it neither authorizes
+    application edits nor creates lineage. Use Document/Cell sync verbs for
+    semantic admission into a destination Document.
+    """
     @callback merge(store(), log_id :: String.t(), canonical_entries :: [binary()]) ::
                 {:ok, map()} | {:error, term()}
   end
