@@ -113,6 +113,30 @@ mechanism rather than by invariant:
 - [ ] Errors per §16: `writer_lease_unavailable`, `writer_lease_fenced`.
 - [ ] Commit: `feat(elixir): fenced document-profile append surface`
 
+### Task 3.5: the audit must report its denominator (found 2026-08-23, in my own verification)
+
+`test/support/audit.ex` returns **only a violations list**. On a store with no entries and no
+writers it examines nothing and returns `[]` — so **"audit clean" and "audit had no subject" are
+the same observable**, in the very component described as the independent second arm. A check
+that cannot distinguish healthy-and-idle from not-running is not corroborating anything.
+
+⚠️ **The naive fix is wrong and would be worse than the bug.** Several scenarios audit an empty
+store *correctly*: §18.6 rejects a gap and asserts nothing was written, then audits. A blanket
+`examined > 0` requirement would fire on known-good input, and a gate that fires on correct work
+trains people to route around it — after which it protects nothing while still reading as
+installed.
+
+**Shape the fix so neither case is ambiguous and neither fires wrongly:**
+- `audit/1` returns violations **plus what it examined** (writer count, entry count).
+- The default assertion helper requires violations empty **and** a non-zero subject count.
+- A distinct helper covers the legitimately-empty case, asserting violations empty **and**
+  examined == 0 — so an empty audit must be *declared* rather than silently accepted.
+- Update the ~17 existing call sites to the correct one of the two, which is itself a useful
+  audit: any site where it is unclear which applies is a scenario whose expectations are vague.
+
+Verify the red arm first: a scenario that writes nothing while using the default helper must
+fail, and one legitimately empty must stay green under the explicit helper.
+
 ### Task 4: Naming and documentation (§17.2.6, .8, .9)
 - [ ] Rename in documentation — not necessarily in code — so `Commonplace.Log.Sync` is unambiguously **replica** synchronization, and state what it must never do (§8's prohibition list is precise and worth quoting).
 - [ ] Topology docs place Document processes beneath Cell activation; the Realm sidecar is described as physical persistence, never logical authority (§14).
