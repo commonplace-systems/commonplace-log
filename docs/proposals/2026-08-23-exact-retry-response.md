@@ -40,6 +40,14 @@ entry IDs, so the ambiguity is resolved by identity, not by heuristic. The rulin
 ambiguous response never licenses the caller to prepare a replacement operation with new identity"*
 is the caller-side statement of the invariant Task 4 already enforces adapter-side.
 
+⭐ **Worth recording as corroboration, because it is the kind that counts.** These were derived
+independently and from opposite ends of the same wire — Task 4 from the adapter, reasoning about a
+lost acknowledgement; the ruling from the caller, reasoning about a torn write. Neither consulted
+the other, and they produced the same invariant. ⚠️ Contrast the failure mode catalogued elsewhere
+tonight: two parties agreeing because one relayed the other's single measurement, which reads as
+confirmation while licensing trust it has not earned. **Independent derivation from different
+vantage points is evidence; a repeated report is not.**
+
 ## 3. ⚠️ Two design problems the ruling does not settle
 
 ### 3.1 A prepared operation can go stale, and the epoch is why
