@@ -14,5 +14,13 @@
   "include": ["src", "test", "vitest.config.ts"],
   // Workers-runtime code is typechecked by tsconfig.workers.json (workerd globals);
   // keeping it out of this config keeps the plain-node unit project unpolluted.
-  "exclude": ["src/index.ts", "src/commonplace-log-do.ts", "src/do", "test/do"]
+  "exclude": [
+    "src/index.ts",
+    "src/commonplace-log-do.ts",
+    "src/do",
+    "src/realm",
+    "test/do",
+    "test/realm/**/*.workers.test.ts",
+    "test/realm/helpers.ts"
+  ]
 }

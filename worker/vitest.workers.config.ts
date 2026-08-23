@@ -11,11 +11,15 @@ export default defineWorkersProject({
         import.meta.dirname,
         "../docs/commonplace-monotonic-log-spec.md",
       )}?raw`,
+      "beam-native-revision.md?raw": `${path.resolve(
+        import.meta.dirname,
+        "../docs/proposals/2026-08-22-beam-native-revision.md",
+      )}?raw`,
     },
   },
   test: {
     name: "do",
-    include: ["test/do/**/*.test.ts"],
+    include: ["test/do/**/*.test.ts", "test/realm/**/*.workers.test.ts"],
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.jsonc" },
