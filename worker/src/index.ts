@@ -1,4 +1,5 @@
 export { CommonplaceLog } from "./commonplace-log-do";
+export { RealmContainer } from "./realm/container";
 
 export default {
   async fetch(): Promise<Response> {

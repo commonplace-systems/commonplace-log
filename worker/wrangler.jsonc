@@ -8,10 +8,12 @@
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
-      { "name": "COMMONPLACE_LOG", "class_name": "CommonplaceLog" }
+      { "name": "COMMONPLACE_LOG", "class_name": "CommonplaceLog" },
+      { "name": "REALM_CONTAINER", "class_name": "RealmContainer" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["CommonplaceLog"] }
+    { "tag": "v1", "new_sqlite_classes": ["CommonplaceLog"] },
+    { "tag": "v2", "new_sqlite_classes": ["RealmContainer"] }
   ]
 }
