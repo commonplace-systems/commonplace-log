@@ -59,6 +59,28 @@ The next phase is the Cloudflare realm deployment described in the architecture 
 
 After that comes integration with the wider Commonplace system. Per-log Durable Objects remain a supported sharding strategy, but are not the default deployment unit.
 
+The locally verifiable half of that work is complete. What remains needs a real account, and `docs/sp4b-deployment-readiness.md` records what it needs and — more usefully — every claim that could not be verified without one.
+
+## What this repository is waiting on
+
+Nothing here is blocked on work anyone could do locally. It resumes when one of these happens:
+
+- **Cloudflare credentials exist** — an account with Workers, Durable Objects, and Containers access. This is the only thing gating the deployment work.
+- **A decision is made on realm naming and placement policy.** Account-independent, but it is an owner's choice rather than an implementation detail.
+- **A sibling library needs something from the log surface.** `commonplace-doc`, `commonplace-doc-sync` and `commonplace-log-reducer` build on this one; a gap in what the public API can express is a reason to reopen it.
+
+## Do not "tidy" these
+
+Each of these looks like an oversight and is a decision. Changing one without reading its reason would remove a guarantee.
+
+- **The lease epoch is verified inside the commit transaction, never checked beforehand.** An earlier implementation compared the epoch and then merged. The race between those two reads was observed writing a displaced writer's row under the newly current epoch. A check the commit does not consult is not a fence. See the `DocumentProfile` moduledoc.
+- **Entry identity for prepared appends is derived, not minted.** A generated UUID only survives an in-process retry; a caller that crashes and re-prepares would mint a fresh id and fork the log. This is also why `created_at` must be caller-supplied.
+- **`Engine.append/6` still mints its own entry id, and that is fine.** It is the base-protocol path. The exact-retry guarantee lives on the Document surface.
+- **`docs/commonplace-monotonic-log-spec.md` is byte-identical to what its author sent.** Normative changes are recorded as amendments beside it, never as edits to it.
+- **`conformance/` is a cross-repo surface.** Adding vectors is safe; changing byte rules, numbering or `expected.hex` must be announced to `commonplace-log-reducer`.
+- **The `worker/src/do/` tree is a frozen milestone**, and `worker/src/realm/` must never import its canonicalization or merge-classification modules. A test enforces this by walking the transitive import graph.
+- **Some tests exist to be watched failing.** The anti-vacuity suite runs deliberately broken adapters under `PERSISTENCE_CONTRACT_MUTATION`; a cross-adapter suite that cannot fail proves nothing.
+
 ## Deliberate 0.1 limits
 
 Version 0.1 does not include:
