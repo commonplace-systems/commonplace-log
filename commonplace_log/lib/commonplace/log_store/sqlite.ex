@@ -2,13 +2,22 @@ defmodule Commonplace.LogStore.SQLite do
   @moduledoc """
   Durable local implementation of `Commonplace.LogStore`.
 
-  A log is opened on first use. Calls look up `log_id` in
-  `Commonplace.LogStore.SQLite.Registry`; when absent, they start one
-  `Commonplace.LogStore.SQLite.Server` under
-  `Commonplace.LogStore.SQLite.DynamicSupervisor`. The server owns the SQLite
-  connection, lock, and local writer identity, and serializes every operation.
-  The callback's `writer_id` argument is retained for behaviour compatibility;
-  local append deliberately uses the server-owned durable identity.
+  `create_log/1` is the only operation that creates a log. Other operations
+  open an existing log: they first look up `log_id` in
+  `Commonplace.LogStore.SQLite.Registry`, then require its database and durable
+  writer sidecar to exist before starting an open-only
+  `Commonplace.LogStore.SQLite.Server`. The server validates the stored log but
+  does not run creation logic in that mode. This two-stage check keeps a read of
+  an unknown log entirely side-effect free, while registry-first lookup lets a
+  read concurrent with an in-process create join the creating server. If it
+  arrives before that server is registered, it cleanly linearizes before the
+  create and returns `log_not_found` without starting a process or touching the
+  directory.
+
+  The server owns the SQLite connection, lock, and local writer identity, and
+  serializes every operation. The callback's `writer_id` argument is retained
+  for behaviour compatibility; local append deliberately uses the server-owned
+  durable identity.
 
   Configure the shared directory with:
 
@@ -35,54 +44,75 @@ defmodule Commonplace.LogStore.SQLite do
   @protocol_codes ~w(writer_gap writer_fork entry_id_collision invalid_entry entry_too_large log_mismatch log_not_found)a
 
   @impl true
-  def create_log(log_id), do: dispatch(log_id, &Server.create_log/1)
+  def create_log(log_id), do: dispatch(log_id, :create, &Server.create_log/1)
 
   @impl true
   def append(log_id, _writer_id, body, created_at) do
-    dispatch(log_id, &Server.append(&1, body, created_at))
+    dispatch(log_id, :open, &Server.append(&1, body, created_at))
   end
 
   @impl true
   def merge(log_id, entries) do
     with {:ok, raw_entries} <- canonicalize_entries(entries) do
-      dispatch(log_id, &Server.merge(&1, raw_entries))
+      dispatch(log_id, :open, &Server.merge(&1, raw_entries))
     end
     |> normalize()
   end
 
   @impl true
-  def frontier(log_id), do: dispatch(log_id, &Server.frontier/1)
+  def frontier(log_id), do: dispatch(log_id, :open, &Server.frontier/1)
 
   @impl true
   def read_writer(log_id, writer_id, opts) do
-    dispatch(log_id, &Server.read_writer(&1, writer_id, opts))
+    dispatch(log_id, :open, &Server.read_writer(&1, writer_id, opts))
   end
 
   @impl true
-  def tail_local(log_id, opts), do: dispatch(log_id, &Server.tail_local(&1, opts))
+  def tail_local(log_id, opts), do: dispatch(log_id, :open, &Server.tail_local(&1, opts))
 
-  defp dispatch(log_id, operation) do
-    case server_for(log_id) do
+  defp dispatch(log_id, mode, operation) do
+    case server_for(log_id, mode) do
       {:ok, server} -> safe_call(fn -> operation.(server) end)
       {:error, reason} -> {:error, reason}
     end
     |> normalize()
   end
 
-  defp server_for(log_id) do
+  defp server_for(log_id, mode) do
     case Registry.lookup(@registry, log_id) do
       [{server, _value}] ->
-        {:ok, server}
+        if Process.alive?(server), do: {:ok, server}, else: start_server(log_id, mode)
 
       [] ->
-        child = {Server, data_dir: data_dir(), log_id: log_id}
-
-        case DynamicSupervisor.start_child(@supervisor, child) do
-          {:ok, server} -> {:ok, server}
-          {:error, {:already_started, server}} -> {:ok, server}
-          {:error, reason} -> {:error, reason}
-        end
+        start_server(log_id, mode)
     end
+  end
+
+  defp start_server(log_id, :open) do
+    data_dir = data_dir()
+
+    if existing_log_files?(data_dir, log_id) do
+      start_server(log_id, data_dir, :open)
+    else
+      {:error, :not_found}
+    end
+  end
+
+  defp start_server(log_id, :create), do: start_server(log_id, data_dir(), :create)
+
+  defp start_server(log_id, data_dir, mode) do
+    child = {Server, data_dir: data_dir, log_id: log_id, mode: mode}
+
+    case DynamicSupervisor.start_child(@supervisor, child) do
+      {:ok, server} -> {:ok, server}
+      {:error, {:already_started, server}} -> {:ok, server}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp existing_log_files?(data_dir, log_id) do
+    File.regular?(Path.join(data_dir, log_id <> ".sqlite3")) and
+      File.regular?(Path.join(data_dir, log_id <> ".writer"))
   end
 
   defp data_dir do

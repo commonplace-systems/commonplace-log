@@ -76,11 +76,12 @@ defmodule Commonplace.LogStore.SQLite.Server do
   def init(opts) do
     data_dir = Keyword.fetch!(opts, :data_dir)
     log_id = Keyword.fetch!(opts, :log_id)
+    mode = Keyword.get(opts, :mode, :create)
 
     case File.mkdir_p(data_dir) do
       :ok ->
         case acquire_lock(data_dir, log_id) do
-          {:ok, lock_conn} -> initialize_locked(lock_conn, data_dir, log_id)
+          {:ok, lock_conn} -> initialize_locked(lock_conn, data_dir, log_id, mode)
           {:error, reason} -> {:stop, reason}
         end
 
@@ -187,17 +188,17 @@ defmodule Commonplace.LogStore.SQLite.Server do
     end
   end
 
-  defp initialize_locked(lock_conn, data_dir, log_id) do
+  defp initialize_locked(lock_conn, data_dir, log_id, mode) do
     case LocalSQLite.open(data_dir, log_id) do
-      {:ok, store} -> initialize_store(lock_conn, store, data_dir, log_id)
+      {:ok, store} -> initialize_store(lock_conn, store, data_dir, log_id, mode)
       {:error, reason} -> stop_after_lock_error(lock_conn, {:data_open_failed, reason})
     end
   end
 
-  defp initialize_store(lock_conn, store, data_dir, log_id) do
-    with :ok <- LocalSQLite.create_log(store, log_id, %{format_version: 1}),
+  defp initialize_store(lock_conn, store, data_dir, log_id, mode) do
+    with :ok <- initialize_log(store, log_id, mode),
          writer_path = Path.join(data_dir, log_id <> ".writer"),
-         {:ok, writer_id} <- read_or_create_writer(writer_path) do
+         {:ok, writer_id} <- load_writer(writer_path, mode) do
       {:ok,
        %__MODULE__{
          data_dir: data_dir,
@@ -213,6 +214,19 @@ defmodule Commonplace.LogStore.SQLite.Server do
         stop_after_lock_error(lock_conn, {:initialization_failed, reason})
     end
   end
+
+  defp initialize_log(store, log_id, :create),
+    do: LocalSQLite.create_log(store, log_id, %{format_version: 1})
+
+  defp initialize_log(store, log_id, :open) do
+    case LocalSQLite.frontier(store, log_id) do
+      {:ok, _frontier} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp load_writer(writer_path, :create), do: read_or_create_writer(writer_path)
+  defp load_writer(writer_path, :open), do: File.read(writer_path)
 
   defp read_or_create_writer(writer_path) do
     case File.read(writer_path) do

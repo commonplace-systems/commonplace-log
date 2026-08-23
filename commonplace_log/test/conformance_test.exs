@@ -21,6 +21,7 @@ defmodule Commonplace.Log.ConformanceTest do
 
     previous = Application.get_env(:commonplace_log, SQLite)
     Application.put_env(:commonplace_log, SQLite, data_dir: public_dir)
+    :ok = SQLite.create_log(log_id = UUID.uuidv7())
 
     on_exit(fn ->
       stop_all_servers()
@@ -32,7 +33,7 @@ defmodule Commonplace.Log.ConformanceTest do
       File.rm_rf!(root)
     end)
 
-    %{root: root, log_id: UUID.uuidv7()}
+    %{root: root, log_id: log_id}
   end
 
   test "§18.1 repeating one append produces one stored entry", %{log_id: log_id} do
