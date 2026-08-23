@@ -9,6 +9,12 @@ defmodule Commonplace.Log.Persistence do
   canonical bytes itself. Parsing and domain classification never move to
   the adapter side.
 
+  A read set also carries the durable lease epoch observed in that snapshot.
+  `take_lease/2` atomically advances that epoch and returns the new value.
+  Every commit supplies both its expected revision and expected epoch; revision
+  mismatch is retryable `:stale_revision`, while an obsolete writer is rejected
+  distinctly as `:obsolete_epoch`.
+
   Commit-plan insertion rows supply the `entry_id`, `writer_id`, `writer_seq`,
   `prev_entry_id`, and `created_at` columns, plus `canonical_bytes` for the
   `canonical_json` column.
@@ -41,17 +47,23 @@ defmodule Commonplace.Log.Persistence do
     @type t :: %__MODULE__{
             log_id: String.t(),
             revision: non_neg_integer(),
+            lease_epoch: non_neg_integer(),
             tips: %{optional(String.t()) => tip()},
             coordinates: %{{String.t(), pos_integer()} => binary()},
             entry_ids: %{optional(String.t()) => binary()}
           }
 
-    @enforce_keys [:log_id, :revision]
-    defstruct log_id: nil, revision: 0, tips: %{}, coordinates: %{}, entry_ids: %{}
+    @enforce_keys [:log_id, :revision, :lease_epoch]
+    defstruct log_id: nil,
+              revision: 0,
+              lease_epoch: 0,
+              tips: %{},
+              coordinates: %{},
+              entry_ids: %{}
   end
 
   defmodule CommitPlan do
-    @moduledoc "An Engine-authored atomic write plan guarded by a revision."
+    @moduledoc "An Engine-authored atomic write plan guarded by revision and lease epoch."
 
     @type insert_entry :: %{
             log_id: String.t(),
@@ -68,12 +80,17 @@ defmodule Commonplace.Log.Persistence do
     @type t :: %__MODULE__{
             log_id: String.t(),
             expected_revision: non_neg_integer(),
+            expected_epoch: non_neg_integer(),
             insert_entries: [insert_entry()],
             put_tips: [put_tip()]
           }
 
-    @enforce_keys [:log_id, :expected_revision]
-    defstruct log_id: nil, expected_revision: 0, insert_entries: [], put_tips: []
+    @enforce_keys [:log_id, :expected_revision, :expected_epoch]
+    defstruct log_id: nil,
+              expected_revision: 0,
+              expected_epoch: 0,
+              insert_entries: [],
+              put_tips: []
   end
 
   @typedoc "The adapter-specific store handle."
@@ -117,12 +134,16 @@ defmodule Commonplace.Log.Persistence do
   @callback create_log(store(), log_id :: String.t(), metadata :: map()) ::
               :ok | {:error, term()}
 
+  @doc "Atomically advance a log's durable lease epoch and return the new epoch."
+  @callback take_lease(store(), log_id :: String.t()) ::
+              {:ok, new_epoch :: pos_integer()} | {:error, term()}
+
   @callback read_set(store(), log_id :: String.t(), read_query()) ::
               {:ok, ReadSet.t()} | {:error, term()}
 
   @callback commit(store(), CommitPlan.t()) ::
               {:ok, new_revision :: non_neg_integer()}
-              | {:error, :stale_revision | term()}
+              | {:error, :stale_revision | :obsolete_epoch | term()}
 
   @callback frontier(store(), log_id :: String.t()) :: {:ok, frontier()} | {:error, term()}
 

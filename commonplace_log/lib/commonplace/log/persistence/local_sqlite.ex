@@ -18,7 +18,8 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
   @meta_ddl """
   CREATE TABLE IF NOT EXISTS persistence_meta (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    revision  INTEGER NOT NULL
+    revision  INTEGER NOT NULL,
+    lease_epoch INTEGER NOT NULL DEFAULT 0
   ) STRICT;
   """
 
@@ -53,7 +54,8 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
   def create_log(%__MODULE__{} = store, log_id, metadata) do
     with :ok <- handle_matches(store, log_id),
          :ok <- Schema.init_schema(store.conn),
-         :ok <- Sqlite3.execute(store.conn, @meta_ddl) do
+         :ok <- Sqlite3.execute(store.conn, @meta_ddl),
+         :ok <- ensure_lease_epoch_column(store.conn) do
       transaction(store.conn, "BEGIN IMMEDIATE", fn ->
         create_or_check_log(store.conn, log_id, format_version(metadata))
       end)
@@ -61,10 +63,31 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
   end
 
   @impl true
+  def take_lease(%__MODULE__{} = store, log_id) do
+    transaction(store.conn, "BEGIN IMMEDIATE", fn ->
+      with :ok <- stored_log_matches(store, log_id),
+           {:ok, epoch} <- lease_epoch(store.conn),
+           {:ok, [[new_epoch]]} <-
+             query(
+               store.conn,
+               "UPDATE persistence_meta SET lease_epoch = lease_epoch + 1 " <>
+                 "WHERE singleton = 1 AND lease_epoch = ? RETURNING lease_epoch",
+               [epoch]
+             ) do
+        {:ok, new_epoch}
+      else
+        {:ok, []} -> {:error, :stale_epoch}
+        {:error, _reason} = error -> error
+      end
+    end)
+  end
+
+  @impl true
   def read_set(%__MODULE__{} = store, log_id, query_spec) do
     transaction(store.conn, "BEGIN", fn ->
       with :ok <- stored_log_matches(store, log_id),
            {:ok, revision} <- revision(store.conn),
+           {:ok, lease_epoch} <- lease_epoch(store.conn),
            {:ok, tips} <- read_tips(store.conn, Map.get(query_spec, :writers, [])),
            {:ok, coordinates} <-
              read_coordinates(store.conn, Map.get(query_spec, :coordinates, [])),
@@ -73,6 +96,7 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
          %ReadSet{
            log_id: log_id,
            revision: revision,
+           lease_epoch: lease_epoch,
            tips: tips,
            coordinates: coordinates,
            entry_ids: entry_ids
@@ -87,6 +111,8 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
       with :ok <- stored_log_matches(store, plan.log_id),
            {:ok, revision} <- revision(store.conn),
            :ok <- check_revision(revision, plan.expected_revision),
+           {:ok, lease_epoch} <- lease_epoch(store.conn),
+           :ok <- check_epoch(lease_epoch, plan.expected_epoch),
            :ok <- insert_entries(store.conn, plan.insert_entries),
            :ok <- put_tips(store.conn, plan.put_tips),
            :ok <- advance_revision(store.conn, plan.expected_revision) do
@@ -201,7 +227,7 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
                  ) do
             run(
               conn,
-              "INSERT INTO persistence_meta (singleton, revision) VALUES (1, 0) " <>
+              "INSERT INTO persistence_meta (singleton, revision, lease_epoch) VALUES (1, 0, 0) " <>
                 "ON CONFLICT(singleton) DO NOTHING"
             )
           end
@@ -209,7 +235,7 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
         [[^log_id]] ->
           run(
             conn,
-            "INSERT INTO persistence_meta (singleton, revision) VALUES (1, 0) " <>
+            "INSERT INTO persistence_meta (singleton, revision, lease_epoch) VALUES (1, 0, 0) " <>
               "ON CONFLICT(singleton) DO NOTHING"
           )
 
@@ -241,6 +267,27 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
       {:ok, [[revision]]} -> {:ok, revision}
       {:ok, []} -> {:error, :not_found}
       {:error, _reason} = error -> error
+    end
+  end
+
+  defp lease_epoch(conn) do
+    case query(conn, "SELECT lease_epoch FROM persistence_meta WHERE singleton = 1") do
+      {:ok, [[epoch]]} -> {:ok, epoch}
+      {:ok, []} -> {:error, :not_found}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_lease_epoch_column(conn) do
+    with {:ok, rows} <- query(conn, "PRAGMA table_info(persistence_meta)") do
+      if Enum.any?(rows, fn row -> Enum.at(row, 1) == "lease_epoch" end) do
+        :ok
+      else
+        Sqlite3.execute(
+          conn,
+          "ALTER TABLE persistence_meta ADD COLUMN lease_epoch INTEGER NOT NULL DEFAULT 0"
+        )
+      end
     end
   end
 
@@ -347,6 +394,9 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
 
   defp check_revision(revision, revision), do: :ok
   defp check_revision(_revision, _expected), do: {:error, :stale_revision}
+
+  defp check_epoch(epoch, epoch), do: :ok
+  defp check_epoch(_epoch, _expected), do: {:error, :obsolete_epoch}
 
   defp split_page(rows, limit) do
     if length(rows) > limit, do: {Enum.take(rows, limit), true}, else: {rows, false}

@@ -21,6 +21,7 @@ defmodule Commonplace.Log.MergeLawsTest do
     end
 
     def create_log(store, log_id, metadata), do: delegate(store, :create_log, [log_id, metadata])
+    def take_lease(store, log_id), do: delegate(store, :take_lease, [log_id])
     def read_set(store, log_id, query), do: delegate(store, :read_set, [log_id, query])
     def frontier(store, log_id), do: delegate(store, :frontier, [log_id])
 

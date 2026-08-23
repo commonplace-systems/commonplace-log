@@ -45,6 +45,10 @@ defmodule Commonplace.LogStore.SQLite.Server do
   @spec writer_id(server()) :: String.t()
   def writer_id(server), do: GenServer.call(server, :writer_id)
 
+  @doc "Take and return the next durable writer lease epoch."
+  @spec take_lease(server()) :: {:ok, pos_integer()} | {:error, term()}
+  def take_lease(server), do: GenServer.call(server, :take_lease)
+
   @doc "Replace and persist the writer identity used by future appends."
   @spec rekey(server()) :: {:ok, String.t()} | {:error, term()}
   def rekey(server), do: GenServer.call(server, :rekey)
@@ -54,6 +58,13 @@ defmodule Commonplace.LogStore.SQLite.Server do
           {:ok, map()} | {:error, term()} | {:error, String.t(), String.t()}
   def append(server, body, created_at \\ DateTime.utc_now()) do
     GenServer.call(server, {:append, body, created_at})
+  end
+
+  @doc "Append with a lease epoch bound by a Document profile activation."
+  @spec append(server(), map(), DateTime.t() | String.t(), non_neg_integer()) ::
+          {:ok, map()} | {:error, term()} | {:error, String.t(), String.t()}
+  def append(server, body, created_at, expected_epoch) do
+    GenServer.call(server, {:append, body, created_at, expected_epoch})
   end
 
   @doc false
@@ -95,6 +106,10 @@ defmodule Commonplace.LogStore.SQLite.Server do
     {:reply, state.writer_id, state}
   end
 
+  def handle_call(:take_lease, _from, state) do
+    {:reply, LocalSQLite.take_lease(state.store, state.log_id), state}
+  end
+
   def handle_call(:rekey, _from, state) do
     writer_id = UUID.uuidv7()
 
@@ -113,6 +128,21 @@ defmodule Commonplace.LogStore.SQLite.Server do
         state.writer_id,
         body,
         created_at
+      )
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:append, body, created_at, expected_epoch}, _from, state) do
+    result =
+      Engine.append(
+        LocalSQLite,
+        state.store,
+        state.log_id,
+        state.writer_id,
+        body,
+        created_at,
+        expected_epoch
       )
 
     {:reply, result, state}

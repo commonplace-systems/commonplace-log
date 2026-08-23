@@ -163,6 +163,29 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
     assert Enum.flat_map(sqlite_pages, & &1.entries) == sqlite_unpaged.entries
   end
 
+  test "lease epochs, current commits, and obsolete-epoch errors are equal", stores do
+    assert LocalSQLite.take_lease(stores.sqlite, @log_id) ==
+             InMemoryPersistence.take_lease(stores.memory, @log_id)
+
+    assert LocalSQLite.take_lease(stores.sqlite, @log_id) ==
+             InMemoryPersistence.take_lease(stores.memory, @log_id)
+
+    query = %{writers: [], coordinates: [], entry_ids: []}
+    assert {:ok, sqlite_read} = LocalSQLite.read_set(stores.sqlite, @log_id, query)
+    assert {:ok, memory_read} = InMemoryPersistence.read_set(stores.memory, @log_id, query)
+    assert sqlite_read == memory_read
+    assert sqlite_read.lease_epoch == 2
+
+    current = commit_plan(sqlite_read.revision, 2, "current")
+
+    assert LocalSQLite.commit(stores.sqlite, current) ==
+             InMemoryPersistence.commit(stores.memory, current)
+
+    obsolete = commit_plan(1, 1, "obsolete")
+    assert LocalSQLite.commit(stores.sqlite, obsolete) == {:error, :obsolete_epoch}
+    assert InMemoryPersistence.commit(stores.memory, obsolete) == {:error, :obsolete_epoch}
+  end
+
   defp equal_merge(stores, entries) do
     sqlite_result = Engine.merge(LocalSQLite, stores.sqlite, @log_id, entries)
     memory_result = Engine.merge(InMemoryPersistence, stores.memory, @log_id, entries)
@@ -250,5 +273,27 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
 
   defp entry_id(number) do
     "018f0000-0000-7000-8000-" <> String.pad_leading(Integer.to_string(number), 12, "0")
+  end
+
+  defp commit_plan(revision, epoch, suffix) do
+    entry_id = "entry-#{suffix}"
+
+    %Commonplace.Log.Persistence.CommitPlan{
+      log_id: @log_id,
+      expected_revision: revision,
+      expected_epoch: epoch,
+      insert_entries: [
+        %{
+          log_id: @log_id,
+          entry_id: entry_id,
+          writer_id: @writer_id,
+          writer_seq: revision + 1,
+          prev_entry_id: nil,
+          created_at: @created_at,
+          canonical_bytes: suffix
+        }
+      ],
+      put_tips: [%{writer_id: @writer_id, seq: revision + 1, entry_id: entry_id}]
+    }
   end
 end

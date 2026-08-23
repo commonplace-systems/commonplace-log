@@ -5,8 +5,9 @@ defmodule Commonplace.Log.DocumentProfile do
   `create_log/2` explicitly creates a log and durably establishes its writer
   identity before returning. `open_log/2` only opens existing logs. Both return
   an opaque handle that binds the log identity, durable writer identity,
-  adapter, and live store owner. Application callers neither supply nor receive
-  a writer identity.
+  adapter, live store owner, and durable fencing epoch. Taking a later lease
+  fences an earlier handle at commit time. Application callers neither supply
+  nor receive a writer identity or epoch.
 
   Activation refuses histories that cannot continue on the one durable lane.
   The base `Commonplace.LogStore.SQLite` and `Commonplace.Log.Engine` APIs remain
@@ -15,9 +16,8 @@ defmodule Commonplace.Log.DocumentProfile do
   Rekeying is intentionally absent. Recovery that cannot prove exclusive
   continuation must derive a new lineage log instead of adding a lane here.
 
-  The handle reserves its `lease` binding for the fenced lease/epoch introduced
-  by the next profile task. Durable operation-id deduplication is not implemented
-  yet; `append/3` currently accepts only `:created_at` in its options. A correct
+  Durable operation-id deduplication is not implemented yet; `append/3`
+  currently accepts only `:created_at` in its options. A correct
   operation-id implementation must persist both the key and original result so
   retries remain no-ops after process failure.
   """
@@ -39,7 +39,7 @@ defmodule Commonplace.Log.DocumentProfile do
             adapter: module(),
             store: GenServer.server(),
             retry_context: term(),
-            lease: term()
+            lease: non_neg_integer()
           }
   end
 
@@ -65,6 +65,7 @@ defmodule Commonplace.Log.DocumentProfile do
          :ok <- adapter.create_log(log_id) do
       activate(adapter, log_id)
     end
+    |> normalize_profile_error()
   end
 
   @doc "Open an existing single-lane Document log without creating storage."
@@ -74,6 +75,7 @@ defmodule Commonplace.Log.DocumentProfile do
          {:ok, _frontier} <- adapter.frontier(log_id) do
       activate(adapter, log_id)
     end
+    |> normalize_profile_error()
   end
 
   @doc "Append a body on the durable lane bound into `handle`."
@@ -85,16 +87,23 @@ defmodule Commonplace.Log.DocumentProfile do
          :ok <- validate_lane(frontier, handle.writer_id),
          :ok <- validate_bound_writer(writer_id, handle.writer_id),
          {:ok, result} <-
-           handle.adapter.append(handle.log_id, handle.writer_id, body, created_at(opts)) do
+           handle.adapter.append_with_epoch(
+             handle.log_id,
+             body,
+             created_at(opts),
+             handle.lease
+           ) do
       {:ok, Map.delete(result, :writer_id)}
     end
+    |> normalize_profile_error()
   end
 
   defp activate(adapter, log_id) do
     with {:ok, frontier} <- adapter.frontier(log_id),
          {:ok, server} <- registered_server(log_id),
          {:ok, writer_id} <- server_writer_id(server),
-         :ok <- validate_lane(frontier, writer_id) do
+         :ok <- validate_lane(frontier, writer_id),
+         {:ok, lease} <- safe_server_call(fn -> Server.take_lease(server) end) do
       {:ok,
        %Handle{
          log_id: log_id,
@@ -102,7 +111,7 @@ defmodule Commonplace.Log.DocumentProfile do
          adapter: adapter,
          store: server,
          retry_context: nil,
-         lease: nil
+         lease: lease
        }}
     end
   end
@@ -158,4 +167,37 @@ defmodule Commonplace.Log.DocumentProfile do
   end
 
   defp created_at(opts), do: Keyword.get_lazy(opts, :created_at, &DateTime.utc_now/0)
+
+  defp normalize_profile_error({:error, :obsolete_epoch}),
+    do: {:error, {:writer_lease_fenced, %{}}}
+
+  defp normalize_profile_error({:error, {:storage, %{reason: :obsolete_epoch}}}),
+    do: {:error, {:writer_lease_fenced, %{}}}
+
+  defp normalize_profile_error({:error, {:storage, %{reason: reason}}} = error) do
+    if contains_reason?(reason, :lock_unavailable) do
+      {:error, {:writer_lease_unavailable, %{}}}
+    else
+      error
+    end
+  end
+
+  defp normalize_profile_error(result), do: result
+
+  defp contains_reason?(reason, wanted) when reason == wanted, do: true
+
+  defp contains_reason?(term, wanted) when is_tuple(term) do
+    term |> Tuple.to_list() |> Enum.any?(&contains_reason?(&1, wanted))
+  end
+
+  defp contains_reason?(term, wanted) when is_list(term),
+    do: Enum.any?(term, &contains_reason?(&1, wanted))
+
+  defp contains_reason?(term, wanted) when is_map(term),
+    do:
+      Enum.any?(term, fn {key, value} ->
+        contains_reason?(key, wanted) or contains_reason?(value, wanted)
+      end)
+
+  defp contains_reason?(_term, _wanted), do: false
 end

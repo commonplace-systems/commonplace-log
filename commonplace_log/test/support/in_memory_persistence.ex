@@ -17,8 +17,31 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
           {:ok, state}
 
         logs ->
-          log = %{metadata: metadata, revision: 0, tips: %{}, entries: %{}, arrival_seq: 0}
+          log = %{
+            metadata: metadata,
+            revision: 0,
+            lease_epoch: 0,
+            tips: %{},
+            entries: %{},
+            arrival_seq: 0
+          }
+
           {:ok, put_in(state.logs, Map.put(logs, log_id, log))}
+      end
+    end)
+  end
+
+  @impl true
+  def take_lease(store, log_id) do
+    Agent.get_and_update(store, fn state ->
+      case Map.fetch(state.logs, log_id) do
+        :error ->
+          {{:error, :not_found}, state}
+
+        {:ok, log} ->
+          epoch = log.lease_epoch + 1
+          state = put_in(state.logs[log_id], %{log | lease_epoch: epoch})
+          {{:ok, epoch}, state}
       end
     end)
   end
@@ -48,6 +71,7 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
        %ReadSet{
          log_id: log_id,
          revision: log.revision,
+         lease_epoch: log.lease_epoch,
          tips: tips,
          coordinates: coordinate_rows,
          entry_ids: id_rows
@@ -64,6 +88,9 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
 
         {:ok, log} when log.revision != plan.expected_revision ->
           {{:error, :stale_revision}, state}
+
+        {:ok, log} when log.lease_epoch != plan.expected_epoch ->
+          {{:error, :obsolete_epoch}, state}
 
         {:ok, log} ->
           now = System.system_time(:millisecond)
@@ -196,6 +223,7 @@ defmodule Commonplace.Log.Test.StaleThenDelegatePersistence do
   end
 
   def create_log(store, log_id, metadata), do: delegate(store, :create_log, [log_id, metadata])
+  def take_lease(store, log_id), do: delegate(store, :take_lease, [log_id])
   def read_set(store, log_id, query), do: delegate(store, :read_set, [log_id, query])
   def frontier(store, log_id), do: delegate(store, :frontier, [log_id])
 
@@ -231,6 +259,8 @@ defmodule Commonplace.Log.Test.CommitErrorPersistence do
 
   def create_log({base, _error}, log_id, metadata),
     do: InMemoryPersistence.create_log(base, log_id, metadata)
+
+  def take_lease({base, _error}, log_id), do: InMemoryPersistence.take_lease(base, log_id)
 
   def read_set({base, _error}, log_id, query),
     do: InMemoryPersistence.read_set(base, log_id, query)

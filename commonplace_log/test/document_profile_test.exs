@@ -4,6 +4,7 @@ defmodule Commonplace.Log.DocumentProfileTest do
   alias Commonplace.Log.{DocumentProfile, Engine, UUID}
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.LogStore.SQLite
+  alias Exqlite.Sqlite3
 
   @created_at ~U[2026-08-22 12:34:56Z]
 
@@ -75,6 +76,24 @@ defmodule Commonplace.Log.DocumentProfileTest do
     assert only_writer(log_id) == writer_before
   end
 
+  test "an obsolete activation cannot append after lease handoff", %{log_id: log_id} do
+    assert {:ok, first_handle} = DocumentProfile.create_log(log_id, [])
+    assert {:ok, %{writer_seq: 1}} = DocumentProfile.append(first_handle, %{"n" => 1}, [])
+    writer_id = only_writer(log_id)
+
+    assert {:ok, second_handle} = DocumentProfile.open_log(log_id, [])
+
+    assert {:error, {:writer_lease_fenced, %{}}} =
+             DocumentProfile.append(first_handle, %{"must_not_write" => true}, [])
+
+    assert {:ok, %{writers: [%{writer_id: ^writer_id, seq: 1}]}} = SQLite.frontier(log_id)
+
+    assert {:ok, %{writer_seq: 2}} =
+             DocumentProfile.append(second_handle, %{"n" => 2}, [])
+
+    assert {:ok, %{writers: [%{writer_id: ^writer_id, seq: 2}]}} = SQLite.frontier(log_id)
+  end
+
   test "opening a never-created log returns log_not_found and creates nothing", %{
     data_dir: data_dir,
     log_id: log_id
@@ -83,6 +102,23 @@ defmodule Commonplace.Log.DocumentProfileTest do
 
     assert DocumentProfile.open_log(log_id, []) == {:error, {:log_not_found, %{}}}
     assert directory_listing(data_dir) == before
+  end
+
+  test "a held local lock maps to writer_lease_unavailable", %{
+    data_dir: data_dir,
+    log_id: log_id
+  } do
+    assert {:ok, _handle} = DocumentProfile.create_log(log_id, [])
+    stop_server(log_id)
+
+    lock_path = Path.join(data_dir, log_id <> ".lock.sqlite3")
+    assert {:ok, lock_conn} = Sqlite3.open(lock_path)
+    assert :ok = Sqlite3.execute(lock_conn, "BEGIN EXCLUSIVE")
+
+    assert {:error, {:writer_lease_unavailable, %{}}} = DocumentProfile.open_log(log_id, [])
+
+    assert :ok = Sqlite3.execute(lock_conn, "ROLLBACK")
+    assert :ok = Sqlite3.close(lock_conn)
   end
 
   test "creation is idempotent and persists its identity before acknowledging", %{

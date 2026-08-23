@@ -51,6 +51,11 @@ defmodule Commonplace.LogStore.SQLite do
     dispatch(log_id, :open, &Server.append(&1, body, created_at))
   end
 
+  @doc false
+  def append_with_epoch(log_id, body, created_at, expected_epoch) do
+    dispatch(log_id, :open, &Server.append(&1, body, created_at, expected_epoch))
+  end
+
   @impl true
   def merge(log_id, entries) do
     with {:ok, raw_entries} <- canonicalize_entries(entries) do

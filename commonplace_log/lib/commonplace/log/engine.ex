@@ -20,7 +20,30 @@ defmodule Commonplace.Log.Engine do
   @spec append(module(), term(), String.t(), String.t(), map(), DateTime.t() | String.t()) ::
           {:ok, map()} | {:error, term()} | {:error, String.t(), String.t()}
   def append(persistence_mod, store, log_id, writer_id, body, created_at) do
-    retry_append(persistence_mod, store, log_id, writer_id, body, created_at, 0)
+    append(persistence_mod, store, log_id, writer_id, body, created_at, :current)
+  end
+
+  @doc "Append while requiring the caller-bound lease epoch at commit time."
+  @spec append(
+          module(),
+          term(),
+          String.t(),
+          String.t(),
+          map(),
+          DateTime.t() | String.t(),
+          non_neg_integer()
+        ) :: {:ok, map()} | {:error, term()} | {:error, String.t(), String.t()}
+  def append(persistence_mod, store, log_id, writer_id, body, created_at, expected_epoch) do
+    retry_append(
+      persistence_mod,
+      store,
+      log_id,
+      writer_id,
+      body,
+      created_at,
+      expected_epoch,
+      0
+    )
   end
 
   @doc "Validate, classify, and atomically merge canonicalizable entry bytes."
@@ -39,13 +62,20 @@ defmodule Commonplace.Log.Engine do
          writer_id,
          body,
          created_at,
+         expected_epoch,
          stale_retries
        ) do
     query = %{writers: [writer_id], coordinates: [], entry_ids: []}
 
     with {:ok, read_set} <- persistence_mod.read_set(store, log_id, query),
          {:ok, entry} <- build_append_entry(log_id, writer_id, body, created_at, read_set.tips),
-         plan = append_commit_plan(log_id, read_set.revision, entry) do
+         plan =
+           append_commit_plan(
+             log_id,
+             read_set.revision,
+             resolve_epoch(expected_epoch, read_set.lease_epoch),
+             entry
+           ) do
       case persistence_mod.commit(store, plan) do
         {:ok, revision} ->
           {:ok,
@@ -64,6 +94,7 @@ defmodule Commonplace.Log.Engine do
             writer_id,
             body,
             created_at,
+            expected_epoch,
             stale_retries + 1
           )
 
@@ -97,10 +128,11 @@ defmodule Commonplace.Log.Engine do
     end
   end
 
-  defp append_commit_plan(log_id, revision, entry) do
+  defp append_commit_plan(log_id, revision, expected_epoch, entry) do
     %CommitPlan{
       log_id: log_id,
       expected_revision: revision,
+      expected_epoch: expected_epoch,
       insert_entries: [insert_row(entry)],
       put_tips: [tip_row(entry)]
     }
@@ -148,6 +180,7 @@ defmodule Commonplace.Log.Engine do
         plan = %CommitPlan{
           log_id: log_id,
           expected_revision: read_set.revision,
+          expected_epoch: read_set.lease_epoch,
           insert_entries: Enum.map(insert_entries, &insert_row/1),
           put_tips: Enum.map(merge_plan.per_writer, &tip_row(List.last(&1.new_entries)))
         }
@@ -239,6 +272,9 @@ defmodule Commonplace.Log.Engine do
   defp retry_exhausted(operation, attempts) do
     {:error, {:retry_exhausted, %{operation: operation, attempts: attempts}}}
   end
+
+  defp resolve_epoch(:current, read_epoch), do: read_epoch
+  defp resolve_epoch(expected_epoch, _read_epoch), do: expected_epoch
 
   defp encode_created_at(%DateTime{} = created_at), do: DateTime.to_iso8601(created_at)
   defp encode_created_at(created_at) when is_binary(created_at), do: created_at

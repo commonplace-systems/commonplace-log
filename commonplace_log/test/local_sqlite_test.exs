@@ -61,6 +61,23 @@ defmodule Commonplace.Log.Persistence.LocalSQLiteTest do
     close_store(store)
   end
 
+  test "an existing revision-only persistence_meta is upgraded additively", %{data_dir: data_dir} do
+    store = open_store(data_dir)
+
+    assert :ok =
+             Sqlite3.execute(store.conn, """
+             CREATE TABLE persistence_meta (
+               singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+               revision INTEGER NOT NULL
+             ) STRICT
+             """)
+
+    assert :ok = LocalSQLite.create_log(store, @log_id, %{format_version: 1})
+    assert [[0, 0]] = query(store.conn, "SELECT revision, lease_epoch FROM persistence_meta")
+    assert {:ok, 1} = LocalSQLite.take_lease(store, @log_id)
+    close_store(store)
+  end
+
   test "read_set returns one revision with exactly the requested tips, coordinates, and ids", %{
     data_dir: data_dir
   } do
@@ -165,6 +182,38 @@ defmodule Commonplace.Log.Persistence.LocalSQLiteTest do
     assert [[0]] = query(store.conn, "SELECT COUNT(*) FROM entries")
     assert [[0]] = query(store.conn, "SELECT COUNT(*) FROM writer_tips")
     assert [[1]] = query(store.conn, "SELECT revision FROM persistence_meta")
+    close_store(store)
+  end
+
+  test "leases advance monotonically and the current epoch permits ordinary commits", %{
+    data_dir: data_dir
+  } do
+    store = initialized_store(data_dir)
+
+    assert {:ok, 1} = LocalSQLite.take_lease(store, @log_id)
+    assert {:ok, 2} = LocalSQLite.take_lease(store, @log_id)
+    assert {:ok, %ReadSet{lease_epoch: 2}} = empty_read(store)
+
+    assert {:ok, 1} =
+             LocalSQLite.commit(
+               store,
+               plan(0, [row("writer-a", 1, "entry-a1", "bytes")], 2)
+             )
+
+    assert [[1, 2]] = query(store.conn, "SELECT revision, lease_epoch FROM persistence_meta")
+    close_store(store)
+  end
+
+  test "obsolete epoch and stale revision are distinct and neither writes", %{data_dir: data_dir} do
+    store = initialized_store(data_dir)
+    assert {:ok, 1} = LocalSQLite.take_lease(store, @log_id)
+    candidate = row("writer-a", 1, "entry-a1", "bytes")
+
+    assert {:error, :obsolete_epoch} = LocalSQLite.commit(store, plan(0, [candidate], 0))
+    assert [[0]] = query(store.conn, "SELECT COUNT(*) FROM entries")
+
+    assert {:error, :stale_revision} = LocalSQLite.commit(store, plan(99, [candidate], 1))
+    assert [[0]] = query(store.conn, "SELECT COUNT(*) FROM entries")
     close_store(store)
   end
 
@@ -357,10 +406,11 @@ defmodule Commonplace.Log.Persistence.LocalSQLiteTest do
     }
   end
 
-  defp plan(revision, rows) do
+  defp plan(revision, rows, lease_epoch \\ 0) do
     %CommitPlan{
       log_id: @log_id,
       expected_revision: revision,
+      expected_epoch: lease_epoch,
       insert_entries: rows,
       put_tips: tips(rows)
     }
