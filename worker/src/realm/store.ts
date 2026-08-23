@@ -25,7 +25,6 @@ export interface EntryRow {
   prevEntryId: string | null;
   createdAt: string;
   canonicalBytes: Uint8Array;
-  receivedAtMs: number;
 }
 
 export interface TipRow {
@@ -213,6 +212,7 @@ export class RealmStore {
         }
 
         for (const entry of plan.insertEntries) {
+          const receivedAtMs = Date.now();
           this.sql.exec(
             `INSERT INTO entries
                (log_id, entry_id, writer_id, writer_seq, prev_entry_id, created_at,
@@ -228,7 +228,7 @@ export class RealmStore {
               entry.canonicalBytes.byteOffset,
               entry.canonicalBytes.byteOffset + entry.canonicalBytes.byteLength,
             ),
-            entry.receivedAtMs,
+            receivedAtMs,
           );
         }
 

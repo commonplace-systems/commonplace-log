@@ -94,6 +94,7 @@ async function body(request: Request): Promise<JsonRecord> {
 
 function entryRow(value: unknown): EntryRow {
   const row = object(value);
+  if (Object.hasOwn(row, "received_at_ms")) throw new MalformedRequest();
   // Destructure once so no incoming property can produce two different values.
   const {
     entry_id,
@@ -102,7 +103,6 @@ function entryRow(value: unknown): EntryRow {
     prev_entry_id,
     created_at,
     canonical_bytes,
-    received_at_ms,
   } = row;
   return {
     entryId: string(entry_id),
@@ -111,7 +111,6 @@ function entryRow(value: unknown): EntryRow {
     prevEntryId: nullableString(prev_entry_id),
     createdAt: string(created_at),
     canonicalBytes: decodeBase64(canonical_bytes),
-    receivedAtMs: integer(received_at_ms),
   };
 }
 
@@ -203,6 +202,12 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
           })),
         },
       });
+    }
+
+    if (path === "/take-lease") {
+      const { log_id } = value;
+      const leaseEpoch = store.takeLease(string(log_id));
+      return json({ ok: true, lease_epoch: leaseEpoch });
     }
 
     if (path === "/commit") {

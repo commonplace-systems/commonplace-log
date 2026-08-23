@@ -55,7 +55,6 @@ function entry(
       prev_entry_id: prevEntryId,
       created_at: createdAt,
     }),
-    received_at_ms: 1_777_777_777_000 + writerSeq,
   };
 }
 
@@ -123,6 +122,66 @@ async function logicalCommit(
 }
 
 describe("RealmContainer HTTP contract", () => {
+  it("advances leases and fences an earlier lease without writing rows", async () => {
+    const stub = realmStub();
+    await createLog(stub, "lease-log");
+    expect(await post(stub, "/take-lease", { log_id: "lease-log" }))
+      .toEqual({ status: 200, json: { ok: true, lease_epoch: 1 } });
+    expect(await post(stub, "/take-lease", { log_id: "lease-log" }))
+      .toEqual({ status: 200, json: { ok: true, lease_epoch: 2 } });
+
+    const before = await inspect(stub);
+    const obsolete = await post(stub, "/commit", plan("lease-log", 0, 1, [entry("old", "alice", 1, null)]));
+    expect(obsolete).toEqual({ status: 409, json: { ok: false, error: { code: "obsolete_epoch" } } });
+    const after = await inspect(stub);
+    expect(after.entries).toEqual(before.entries);
+    expect(after.tips).toEqual(before.tips);
+    expect(after.logs).toEqual(before.logs);
+  });
+
+  it("does not create schema or rows when taking a lease for an unknown log", async () => {
+    const stub = realmStub();
+    const before = await runInDurableObject(stub, (_instance, state) => ({
+      catalog: state.storage.sql.exec("SELECT name, type, sql FROM sqlite_master ORDER BY name").toArray(),
+      counts: state.storage.sql.exec("SELECT total_changes() AS n").one().n,
+    }));
+    expect(await post(stub, "/take-lease", { log_id: "missing" }))
+      .toEqual({ status: 404, json: { ok: false, error: { code: "not_found" } } });
+    const after = await runInDurableObject(stub, (_instance, state) => ({
+      catalog: state.storage.sql.exec("SELECT name, type, sql FROM sqlite_master ORDER BY name").toArray(),
+      counts: state.storage.sql.exec("SELECT total_changes() AS n").one().n,
+    }));
+    expect(after).toEqual(before);
+
+    const initialized = realmStub();
+    await createLog(initialized, "known");
+    const initializedBefore = await inspect(initialized);
+    expect(await post(initialized, "/take-lease", { log_id: "still-missing" }))
+      .toEqual({ status: 404, json: { ok: false, error: { code: "not_found" } } });
+    expect(await inspect(initialized)).toEqual(initializedBefore);
+  });
+
+  it("assigns local receipt times and rejects caller-supplied receipt metadata", async () => {
+    const stub = realmStub();
+    await createLog(stub, "receipt-log");
+    expect(await post(stub, "/commit", plan("receipt-log", 0, 0, [entry("one", "alice", 1, null)])))
+      .toEqual({ status: 200, json: { ok: true, revision: 1 } });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    expect(await post(stub, "/commit", plan("receipt-log", 1, 0, [entry("two", "bob", 1, null)])))
+      .toEqual({ status: 200, json: { ok: true, revision: 2 } });
+    const afterSecond = Date.now();
+    const stored = (await inspect(stub)).entries;
+    expect(stored[0].received_at_ms).toBeGreaterThan(0);
+    expect(stored[1].received_at_ms).toBeGreaterThan(stored[0].received_at_ms);
+    expect(stored[1].received_at_ms).toBeLessThanOrEqual(afterSecond);
+
+    const beforeRejected = await inspect(stub);
+    const supplied = { ...entry("three", "carol", 1, null), received_at_ms: 123 };
+    expect(await post(stub, "/commit", plan("receipt-log", 2, 0, [supplied])))
+      .toEqual({ status: 400, json: { ok: false, error: { code: "malformed_request" } } });
+    expect(await inspect(stub)).toEqual(beforeRejected);
+  });
+
   it("serves a realistic append and merge in exactly one read-set plus one commit each", async () => {
     const stub = realmStub();
     await createLog(stub, "append-log");

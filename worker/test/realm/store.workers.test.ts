@@ -14,7 +14,7 @@ function plan(logId: string, revision: number, epoch: number, suffix: string, wr
     expectedEpoch: epoch,
     insertEntries: [{
       entryId: `entry-${suffix}`, writerId, writerSeq: 1, prevEntryId: null,
-      createdAt: "2026-08-23T00:00:00Z", canonicalBytes: bytes(`bytes-${suffix}`), receivedAtMs: 1,
+      createdAt: "2026-08-23T00:00:00Z", canonicalBytes: bytes(`bytes-${suffix}`),
     }],
     putTips: [{ writerId, lastSeq: 1, lastEntryId: `entry-${suffix}` }],
   };
@@ -155,7 +155,7 @@ describe("realm store", () => {
     await withRealm((_sql, store) => {
       store.createLog(A);
       const entries = [1, 2, 3].map((n) => ({ entryId: `e${n}`, writerId: W1, writerSeq: n,
-        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now", canonicalBytes: bytes(`b${n}`), receivedAtMs: n }));
+        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now", canonicalBytes: bytes(`b${n}`) }));
       store.commit({ logId: A, expectedRevision: 0, expectedEpoch: 0, insertEntries: entries,
         putTips: [{ writerId: W1, lastSeq: 3, lastEntryId: "e3" }] });
       const first = store.readWriter(A, W1, { afterSeq: 0, throughSeq: 3, limit: 2 });
@@ -171,7 +171,7 @@ describe("realm store", () => {
     await withRealm((_sql, store) => {
       store.createLog(A);
       const entries = [1, 2, 3].map((n) => ({ entryId: `e${n}`, writerId: W1, writerSeq: n,
-        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now", canonicalBytes: bytes(`b${n}`), receivedAtMs: n }));
+        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now", canonicalBytes: bytes(`b${n}`) }));
       store.commit({ logId: A, expectedRevision: 0, expectedEpoch: 0, insertEntries: entries,
         putTips: [{ writerId: W1, lastSeq: 3, lastEntryId: "e3" }] });
       const first = store.tailLocal(A, { afterArrival: 0, limit: 2 });
