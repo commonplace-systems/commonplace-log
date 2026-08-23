@@ -83,8 +83,34 @@ whose. Set `WRANGLER_LOG_PATH` or `XDG_CONFIG_HOME` to a writable scratch dir **
 no host change is needed or wanted. No test was skipped or failed by this, which is exactly why it
 was both easy to ignore and easy to misdiagnose.
 
-**In flight:** Task 5 (shared persistence suite) dispatched to Sol detached,
-`scratchpad/sol-sp4-task5.log`.
+- Task 5 `a8752e4` — **the acceptance criterion.** Shared persistence contract over LocalSQLite,
+  in-memory and CloudflareSidecar; the inherited `writer_fork` control closed by asserting the
+  three domain classifications **pairwise equal across all three adapters**; anti-vacuity proved
+  against three deliberately broken adapters. **elixir 239.**
+- Task 6 `a1b1201` — Elixir against a real `wrangler dev` over a real socket, positive-control
+  gated. **No adapter/real-wire disagreement**, which is the best evidence the loopback double used
+  by Tasks 4 and 5 was faithful.
+- Task 7 — `docs/sp4b-deployment-readiness.md`.
+
+**Task 5 found a real bug, which is what an acceptance suite is for.** `LocalSQLite` returned a raw
+`"no such table: log_meta"` where the sidecar returns `:not_found` — and not only in `read_set`;
+`frontier` diverges identically, because the guard all four callbacks share queries `log_meta`
+itself. ⭐ SP-DP's V1 test missed it because that guarantee was asserted at the **public surface**,
+one layer above the contract that governs interchangeability. **A test aimed one layer off passes
+for real reasons and protects nothing.** The fix is narrowed to that exact case, with a test
+proving a corrupt database still fails distinguishably — mapping every SQLite error to `:not_found`
+would turn corruption into "no such log", which is worse than the bug.
+
+## SP4a IS COMPLETE. SP4b is jes's decision.
+
+**Read `docs/sp4b-deployment-readiness.md` before starting SP4b.** Its §4 lists every claim SP4a
+could not verify, and its §3 names the one security property — the BEAM request cannot select
+another client's realm — that **nothing local can test**, because the adapter is deliberately
+Cloudflare-ignorant and has no concept of a realm at all.
+
+⚠️ Two things that read as done and are not: **`storage_full` has never been exercised** in any
+sub-project (only its 507 mapping and spelling are pinned), and **two concurrent Realm Containers
+have never occurred** — which is the exact condition the fencing epoch was designed for.
 
 **Operational note — the launch receipt.** Detached rounds survive the harness reaper but there is
 no report if one dies at exec, and a dead round looks exactly like a quiet one. A quiescence
