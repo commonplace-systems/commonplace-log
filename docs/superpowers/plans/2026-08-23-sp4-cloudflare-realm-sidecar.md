@@ -28,8 +28,21 @@ conformance per proposal §12.
   and DELETE) and `entry is too large: SQLITE_CONSTRAINT`. The exqlite surface says only
   `entries are immutable` — **the suffix differs by runtime**, so assert what you observe.
 
-**In flight:** Task 2 (sidecar HTTP contract) dispatched to Sol detached,
-`scratchpad/sol-sp4-task2.log`.
+- Task 2 `7c43530` — `RealmContainer` DO serving §6 over HTTP. **worker: 244 tests.** Round-trip
+  count gated at exactly `[/read-set, /commit]`; commit plan carries `prev_entry_id` and
+  `created_at`, pinned by a test comparing stored columns against the entry's own canonical bytes.
+
+**CARRIED FORWARD — do not lose this.** Task 2 pinned that the sidecar returns
+`constraint_violation` with no domain name for a fork-shaped commit. It could **not** show the
+other half — that the meaning survives, i.e. the Engine still classifies that scenario as
+`writer_fork` — because no Engine bridge exists in `worker/`. ⇒ **Task 5's shared suite owns that
+positive control.** Without it we have only shown the sidecar is silent, not that nothing was lost.
+
+**Still unexercised:** `storage_full`. workerd rejects `PRAGMA max_page_count` with `SQLITE_AUTH`,
+so only the 507 mapping and spelling are pinned, in both SP2 and SP4. Not covered — spelled.
+
+**In flight:** Task 3 (`Persistence.CloudflareSidecar`) dispatched to Sol detached,
+`scratchpad/sol-sp4-task3.log`.
 
 **Operational note — the launch receipt.** Detached rounds survive the harness reaper but there is
 no report if one dies at exec, and a dead round looks exactly like a quiet one. A quiescence
