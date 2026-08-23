@@ -25,7 +25,38 @@ I probed the current implementation against the profile's §17.3 list rather tha
 
 **Not yet present:** fencing epochs and leases (§4.3, §13); the `DocumentProfile` façade (§17.2.1); a lineage interface (§17.2.7); CI (§17.2.10).
 
-## 2. The one decision I want jes to make before Task 3
+## 2. DECIDED — fencing epoch is authoritative (jes, 2026-08-23)
+
+**Accepted:** the fencing epoch becomes the authoritative exclusivity mechanism, reusing the
+compare-and-swap plumbing the persistence contract already has; the SQLite file lock is retained
+as a cheap local early-out where it genuinely applies. Task 3 is unblocked.
+
+**The reason this had to change, recorded because the availability argument is the weaker one
+and a later reader will otherwise reconstruct the wrong motivation:**
+
+The file lock is scoped to **a filesystem**; the log, in the sidecar deployment, is scoped to
+**the Durable Object**. Those scopes stop matching in SP4, and when they do not match the lock
+supplies no exclusion while still reporting success. Two Realm Containers each hold their own
+ephemeral disk: both create and lock `<log>.lock.sqlite3` locally, both succeed, neither can see
+the other, and both append to the same lane through the shared sidecar — which is exactly the
+two-live-appenders fork this profile exists to forbid. ⇒ **The lock is load-bearing today and
+becomes decorative in SP4, in the way that is hardest to notice: it still returns success.**
+
+Secondary: §13 is titled *migration* and failover, in that order. Containers are replaced on
+rollout, slept on idle and woken elsewhere, so handoff is an ordinary lifecycle event. A
+mechanism requiring the outgoing holder's cooperation makes every routine rollout contingent on
+clean shutdown.
+
+**What fencing does NOT cost, stated precisely because I first overstated it:** acknowledgement
+follows durable commit (invariant 2), so an overridden activation's commits fail at the epoch
+check and were never acknowledged, while commits it made legitimately before the CAS stand.
+**No acknowledged write is at risk.** What is lost is accepted-but-uncommitted work — exactly
+what a crash loses.
+
+Fencing does not repeal §13's rule that a system unable to establish exclusive continuation must
+stop or derive a new lineage log. It makes exclusivity *establishable* where waiting cannot.
+
+## 2b. Original framing (superseded, kept for the reasoning)
 
 **Our cross-process lock and the profile's fenced lease solve overlapping but different problems, and the difference matters for failover.**
 
