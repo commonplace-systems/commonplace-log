@@ -74,7 +74,31 @@ The profile's model (§4.3, §13) is a monotonically increasing **fencing epoch*
 - [ ] Keep `create_log` idempotent, and keep it persisting the durable `writer_id` before acknowledging (§7).
 - [ ] Commit: `fix(elixir): reads never create a log or mint an identity`
 
-### Task 2: Single-lane invariant (fixes V2)
+### Task ordering refined 2026-08-23, with the reason measured
+
+My original Task 2 said the single-lane check belongs "where a Document opens a log". Measuring
+where multi-writer traffic actually flows settles what that means:
+
+- `conformance_test.exs` makes **18 calls through the public `LogStore.SQLite` surface** and its
+  §18 items legitimately exercise multi-writer scenarios (§18.3 two writers, §18.10 mixed-writer
+  batch). Multi-writer is **legal base protocol** — §15 is explicit that it stays a capability.
+- `Sync` merges via `Engine.merge`, bypassing `LogStore` entirely, so a profile check on the
+  public surface would not constrain replica sync (correct — §8 forbids Sync gaining domain
+  opinions).
+- `adapter_equivalence_test.exs` drives a two-writer batch at the **Engine** level.
+
+⇒ **Putting the single-lane refusal into `LogStore.SQLite` would break base-protocol conformance
+for no gain.** `LogStore.SQLite` is the base-protocol surface; the restriction belongs in the
+façade the profile already calls for (§17.2.1). So Tasks 2 and 3 merge into one façade, split by
+mechanism rather than by invariant:
+
+- **Task 2′** — build `Commonplace.Log.DocumentProfile`: handle-based append with no `writer_id`
+  in the caller's hands, the single-lane invariant, and no rekey. Exclusivity from the existing
+  lock.
+- **Task 3′** — add the fencing epoch to the persistence contract and thread it through the
+  façade's lease, per the decision in §2.
+
+### Task 2 (superseded by Task 2′ above): Single-lane invariant (fixes V2)
 - [ ] Red-first: a log holding two writer lanes is **refused for ordinary activation** with `multiwriter_document_unsupported` (§16). The check belongs where a Document opens a log, not in the persistence adapter — adapters must not gain domain opinions.
 - [ ] An append that would introduce a second lane into an ordinary log is refused before it commits.
 - [ ] The base protocol keeps its multi-writer capability: `Engine`/`MergePlan`/`Sync` are unchanged, and the existing multi-writer conformance and property tests must stay green. §15 is explicit that multi-writer remains a protocol capability; this is a *profile* restriction.
