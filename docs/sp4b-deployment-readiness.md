@@ -68,23 +68,25 @@ this guarantee lives somewhere SP4a cannot reach.
 realms.** A single-realm deployment cannot distinguish "the handler scopes correctly" from "there
 was only ever one realm to return."
 
-### ⚠️ OPEN QUESTION for jes, raised 2026-08-23 — "single-realm for v1" is ambiguous here
+### ⭐ RESOLVED 2026-08-23 — this property is v1, load-bearing, and has no local test
 
-The ruling that logs and documents are single-realm for v1 admits two readings, and they imply
-different work:
+jes, asked directly:
 
-| Reading | Consequence for this property |
-|---|---|
-| **A log lives in exactly one realm**, but a deployment hosts many realms (multi-tenant) | ⭐ **Still load-bearing.** Realm A must not read realm B's logs. Testable, and must be tested with two realms |
-| **The v1 deployment has exactly one realm** | Not load-bearing in v1, and **untestable by construction** — with one realm there is nothing to isolate from |
+> "a log lives in a single realm. in fact, a cell lives in a single realm. but I may have
+> **multiple realms per tenant**"
 
-⇒ **These are not the same descope.** The first leaves cross-tenant isolation as a genuine v1
-requirement; the second defers it wholesale. ⛔ **Do not resolve this by assuming the convenient
-reading** — a wrong guess toward the second ships a system whose isolation was never tested because
-someone decided it did not apply.
+⇒ **"Single-realm" is a containment statement about each object — a log lives in one realm, a cell
+lives in one realm. It is not a claim that few realms exist.** Multiple realms per *tenant* means
+strictly more realms than one per customer.
 
-**Asked, not assumed.** Until jes answers, plan for the first reading, since it is the one that
-fails safe.
+⛔ **So cross-realm isolation is a v1 correctness property, not a v2 concern**, and it is the
+headline item of this document: **the BEAM request must not be able to select another client's
+realm.** Nothing local can verify it, by the sentence above — with one realm there is nothing to
+isolate from.
+
+⇒ **Verifying it requires a deployment with at least two realms, and that verification is not
+optional for v1.** It is the single strongest argument for the §5 ordering below, which reaches
+two-realm isolation before BEAM enters the picture.
 
 ⭐ **But it is deferred by exactly one fact, not by the whole deployment.** The property splits:
 
@@ -135,9 +137,10 @@ have no way to tell a description of intended machinery from a description of ex
 double performs a real commit and then drops the reply. This is a faithful *shape*, but no real
 socket, timeout, partition, or retry storm produced it. Production HTTP scheduling is unexercised.
 
-**Concurrent Realm Containers — ⚠️ PARTIALLY DESCOPED 2026-08-23, and less than it looks.** jes
-ruled logs and documents **single-realm for v1**. That removes the case where one log is live in
-two *different* realms.
+**Concurrent Realm Containers — ⚠️ OPEN ON BOTH AXES.** jes ruled logs and documents
+**single-realm for v1**, which removes one log being live in two *different* realms — but he also
+confirmed **multiple realms per tenant**, so distinct realms running concurrently is ordinary v1
+operation, not an exotic. And the second axis below is untouched by the ruling entirely.
 
 ⛔ **It does not remove the case the epoch actually fences.** Revision §51: "a Container is one
 restartable BEAM-node **incarnation**". SP-DP records that a Realm is replaced on rollout, and
