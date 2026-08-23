@@ -13,7 +13,10 @@ defmodule Commonplace.Log.Sync do
 
   Raw replica synchronization belongs on trusted internal storage links.
   Externally held editor capabilities operate on Document/Cell APIs, not on
-  persistence merge.
+  persistence merge. Raw merge remains scoped to physical replicas of the
+  same logical log identity: source writer IDs and coordinates never become
+  destination writer authority. Cross-Document transfer admits semantic
+  material and authors destination-native entries instead.
 
   A replica reference is the deliberately small map
   `%{module: capability_module, store: adapter_handle}`. The capability

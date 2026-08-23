@@ -80,6 +80,10 @@ defmodule Commonplace.LogStore.SQLite.Server do
   def merge(server, entries), do: GenServer.call(server, {:merge, entries})
 
   @doc false
+  def merge_with_epoch(server, entries, expected_epoch),
+    do: GenServer.call(server, {:merge_with_epoch, entries, expected_epoch})
+
+  @doc false
   def frontier(server), do: GenServer.call(server, :frontier)
 
   @doc false
@@ -161,6 +165,13 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   def handle_call({:merge, entries}, _from, state) do
     result = Engine.merge(LocalSQLite, state.store, state.log_id, entries)
+    {:reply, result, state}
+  end
+
+  def handle_call({:merge_with_epoch, entries, expected_epoch}, _from, state) do
+    result =
+      Engine.merge(LocalSQLite, state.store, state.log_id, entries, expected_epoch)
+
     {:reply, result, state}
   end
 

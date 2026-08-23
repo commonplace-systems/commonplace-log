@@ -195,6 +195,34 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
     assert InMemoryPersistence.commit(stores.memory, obsolete) == {:error, :obsolete_epoch}
   end
 
+  test "epoch-bound merge is fenced identically by all three adapters", stores do
+    assert {:ok, 1} = LocalSQLite.take_lease(stores.sqlite, @log_id)
+    assert {:ok, 1} = InMemoryPersistence.take_lease(stores.memory, @log_id)
+    assert {:ok, 1} = CloudflareSidecar.take_lease(stores.sidecar, @log_id)
+
+    assert {:ok, 2} = LocalSQLite.take_lease(stores.sqlite, @log_id)
+    assert {:ok, 2} = InMemoryPersistence.take_lease(stores.memory, @log_id)
+    assert {:ok, 2} = CloudflareSidecar.take_lease(stores.sidecar, @log_id)
+
+    entry = entry(1, entry_id(1), nil)
+
+    results = [
+      Engine.merge(LocalSQLite, stores.sqlite, @log_id, [entry], 1),
+      Engine.merge(InMemoryPersistence, stores.memory, @log_id, [entry], 1),
+      Engine.merge(CloudflareSidecar, stores.sidecar, @log_id, [entry], 1)
+    ]
+
+    assert results == [
+             {:error, :obsolete_epoch},
+             {:error, :obsolete_epoch},
+             {:error, :obsolete_epoch}
+           ]
+
+    assert {:ok, %{writers: []}} = LocalSQLite.frontier(stores.sqlite, @log_id)
+    assert {:ok, %{writers: []}} = InMemoryPersistence.frontier(stores.memory, @log_id)
+    assert {:ok, %{writers: []}} = CloudflareSidecar.frontier(stores.sidecar, @log_id)
+  end
+
   defp equal_merge(stores, entries) do
     sqlite_result = Engine.merge(LocalSQLite, stores.sqlite, @log_id, entries)
     memory_result = Engine.merge(InMemoryPersistence, stores.memory, @log_id, entries)

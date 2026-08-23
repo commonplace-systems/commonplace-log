@@ -50,8 +50,16 @@ defmodule Commonplace.Log.Engine do
   @spec merge(module(), term(), String.t(), [binary()]) ::
           {:ok, map()} | {:error, term()} | {:error, String.t(), String.t()}
   def merge(persistence_mod, store, log_id, raw_entries) when is_list(raw_entries) do
+    merge(persistence_mod, store, log_id, raw_entries, :current)
+  end
+
+  @doc "Merge while requiring the caller-bound lease epoch at commit time."
+  @spec merge(module(), term(), String.t(), [binary()], non_neg_integer()) ::
+          {:ok, map()} | {:error, term()} | {:error, String.t(), String.t()}
+  def merge(persistence_mod, store, log_id, raw_entries, expected_epoch)
+      when is_list(raw_entries) do
     with {:ok, batch} <- validate_batch(raw_entries, log_id) do
-      retry_merge(persistence_mod, store, log_id, batch, 0)
+      retry_merge(persistence_mod, store, log_id, batch, expected_epoch, 0)
     end
   end
 
@@ -166,7 +174,7 @@ defmodule Commonplace.Log.Engine do
   defp check_log_id(_entry_log_id, _target_log_id),
     do: {:error, "invalid_entry", "log-id-mismatch"}
 
-  defp retry_merge(persistence_mod, store, log_id, batch, stale_retries) do
+  defp retry_merge(persistence_mod, store, log_id, batch, expected_epoch, stale_retries) do
     query = read_query(batch)
 
     with {:ok, read_set} <- persistence_mod.read_set(store, log_id, query),
@@ -180,7 +188,7 @@ defmodule Commonplace.Log.Engine do
         plan = %CommitPlan{
           log_id: log_id,
           expected_revision: read_set.revision,
-          expected_epoch: read_set.lease_epoch,
+          expected_epoch: resolve_epoch(expected_epoch, read_set.lease_epoch),
           insert_entries: Enum.map(insert_entries, &insert_row/1),
           put_tips: Enum.map(merge_plan.per_writer, &tip_row(List.last(&1.new_entries)))
         }
@@ -195,7 +203,14 @@ defmodule Commonplace.Log.Engine do
              }}
 
           {:error, :stale_revision} when stale_retries < @max_stale_retries ->
-            retry_merge(persistence_mod, store, log_id, batch, stale_retries + 1)
+            retry_merge(
+              persistence_mod,
+              store,
+              log_id,
+              batch,
+              expected_epoch,
+              stale_retries + 1
+            )
 
           {:error, :stale_revision} ->
             retry_exhausted(:merge, stale_retries + 1)
