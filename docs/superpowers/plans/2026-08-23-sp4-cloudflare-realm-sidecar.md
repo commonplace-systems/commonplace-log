@@ -14,7 +14,32 @@ conformance per proposal §12.
 
 ---
 
-## 0. CURRENT STATE (2026-08-23, plan written; no tasks dispatched)
+## 0. CURRENT STATE (updated 2026-08-23 ~04:10 — read this first)
+
+**Landed on main:**
+- Task 1 `4ea6e4e` — realm store: §7.2 schema on real DO SQLite, revision + epoch CAS, three read
+  paths, and the §9 semantic-boundary gate. **worker: 235 tests** (218 pre-existing + 17).
+
+**Two results from Task 1 worth not re-deriving:**
+- **Real DO SQLite accepted §7.2 unchanged** — `STRICT`, `AUTOINCREMENT`, both indexes, every
+  declared type. §7.2 called its DDL illustrative pending exactly this check; it is now checked.
+  Byte identity is pinned by a test that reads the proposal itself, so drift fails a build.
+- Observed workerd trigger errors, verbatim: `entries are immutable: SQLITE_CONSTRAINT` (UPDATE
+  and DELETE) and `entry is too large: SQLITE_CONSTRAINT`. The exqlite surface says only
+  `entries are immutable` — **the suffix differs by runtime**, so assert what you observe.
+
+**In flight:** Task 2 (sidecar HTTP contract) dispatched to Sol detached,
+`scratchpad/sol-sp4-task2.log`.
+
+**Operational note — the launch receipt.** Detached rounds survive the harness reaper but there is
+no report if one dies at exec, and a dead round looks exactly like a quiet one. A quiescence
+monitor cannot tell them apart either: **it proves the instrument can fire, not that it has a
+subject.** Confirm a dispatch by *process exists OR log growing, measured over at least 60s* —
+a 20s window false-alarms on Sol's initial read-and-think phase.
+
+---
+
+## 0b. Original state (2026-08-23, plan written)
 
 SP-DP complete and CI-green (run 32615109259). Baseline on `main` @ `fb59f25`:
 
