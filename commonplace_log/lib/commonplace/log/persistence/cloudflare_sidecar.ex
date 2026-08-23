@@ -21,6 +21,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
         }
 
   @headers [{"content-type", "application/json"}]
+  @commit_reconciliation_attempts 3
 
   @spec new(String.t(), keyword()) :: t()
   def new(base_url, options \\ []) when is_binary(base_url) and is_list(options) do
@@ -80,16 +81,25 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
       "put_tips" => Enum.map(plan.put_tips, &encode_tip/1)
     }
 
-    post(store, "/commit", payload, 200, fn value ->
-      with :ok <- exact_keys(value, ["ok", "revision"]),
-           true <- value["ok"] === true,
-           {:ok, revision} <- non_negative_integer(value["revision"]) do
-        {:ok, revision}
-      else
-        false -> protocol("commit success has non-true ok")
-        {:error, _reason} = error -> error
-      end
-    end)
+    result =
+      post(store, "/commit", payload, 200, fn value ->
+        with :ok <- exact_keys(value, ["ok", "revision"]),
+             true <- value["ok"] === true,
+             {:ok, revision} <- non_negative_integer(value["revision"]) do
+          {:ok, revision}
+        else
+          false -> protocol("commit success has non-true ok")
+          {:error, _reason} = error -> error
+        end
+      end)
+
+    case result do
+      {:error, {:transport_error, _reason} = commit_error} ->
+        reconcile_commit(store, plan, commit_error)
+
+      result ->
+        result
+    end
   end
 
   @impl true
@@ -156,6 +166,68 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
       response ->
         protocol({:invalid_transport_return, response})
     end
+  end
+
+  defp reconcile_commit(_store, %CommitPlan{insert_entries: []}, commit_error) do
+    commit_outcome_unknown(commit_error, :no_insert_entries)
+  end
+
+  defp reconcile_commit(store, %CommitPlan{} = plan, commit_error) do
+    query = %{
+      writers: [],
+      coordinates: [],
+      entry_ids: Enum.map(plan.insert_entries, & &1.entry_id)
+    }
+
+    reconcile_commit(store, plan, query, commit_error, @commit_reconciliation_attempts)
+  end
+
+  defp reconcile_commit(store, plan, query, commit_error, attempts_left) do
+    case read_set(store, plan.log_id, query) do
+      {:ok, read_set} ->
+        classify_reconciliation(plan, read_set, commit_error)
+
+      {:error, {:transport_error, _reason}}
+      when attempts_left > 1 ->
+        reconcile_commit(store, plan, query, commit_error, attempts_left - 1)
+
+      {:error, reconciliation_error} ->
+        commit_outcome_unknown(commit_error, reconciliation_error)
+    end
+  end
+
+  defp classify_reconciliation(plan, read_set, commit_error) do
+    submitted = Map.new(plan.insert_entries, &{&1.entry_id, &1.canonical_bytes})
+    observed = Map.take(read_set.entry_ids, Map.keys(submitted))
+
+    cond do
+      map_size(observed) == 0 ->
+        {:error, commit_error}
+
+      Enum.all?(submitted, fn {entry_id, bytes} -> observed[entry_id] == bytes end) ->
+        {:ok, read_set.revision}
+
+      true ->
+        present_ids = Map.keys(observed) |> Enum.sort()
+
+        mismatched_ids =
+          Enum.flat_map(observed, fn {entry_id, bytes} ->
+            if submitted[entry_id] == bytes, do: [], else: [entry_id]
+          end)
+          |> Enum.sort()
+
+        commit_outcome_unknown(commit_error, %{
+          reason: :partial_or_mismatched_entries,
+          present_entry_ids: present_ids,
+          mismatched_entry_ids: mismatched_ids
+        })
+    end
+  end
+
+  defp commit_outcome_unknown(commit_error, reconciliation_error) do
+    {:error,
+     {:commit_outcome_unknown,
+      %{commit_error: commit_error, reconciliation_error: reconciliation_error}}}
   end
 
   defp parse_plain_ok(value) do

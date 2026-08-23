@@ -317,7 +317,13 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
         transport_options: test_pid
       )
 
-    assert {:error, {:transport_error, :ack_lost}} = CloudflareSidecar.commit(store, empty_plan())
+    assert {:error,
+            {:commit_outcome_unknown,
+             %{
+               commit_error: {:transport_error, :ack_lost},
+               reconciliation_error: :no_insert_entries
+             }}} = CloudflareSidecar.commit(store, empty_plan())
+
     assert_received :commit_applied
   end
 
