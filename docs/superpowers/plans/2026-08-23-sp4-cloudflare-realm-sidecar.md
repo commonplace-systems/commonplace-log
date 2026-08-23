@@ -63,8 +63,28 @@ lets a caller believe it set something it did not.
 these. The behaviour is specified tightly enough that an adapter could not be written without the
 gaps surfacing, which is the split doing its job rather than a process failure.
 
-**In flight:** Task 2.5 (both gaps) dispatched to Sol detached, `scratchpad/sol-sp4-task25.log`.
-Task 3 re-dispatches after it lands; its worktree `.worktrees/sp4-task3` is kept for that.
+- Task 2.5 `9ce7af0` — `/take-lease`; the store owns `received_at_ms`, and supplying it is a 400.
+- Task 3 `5d680ab` — `CloudflareSidecar` over an injectable transport (`:httpc`, **no new dep**),
+  plus strict entry decoding in the worker. **elixir 205, worker 249.**
+- Task 4 `73caa5f` — lost acknowledgements. **elixir 212.**
+
+**Task 4, the highest-risk item, is closed.** The adapter resolves the third outcome (applied but
+the reply was lost) before the Engine sees it, so the Engine's retry rule is untouched. It asks
+whether **its own** submitted `entry_id`s are present — not whether the log advanced, since another
+writer may have advanced it — and compares canonical bytes, so the check is self-verifying.
+`{:error, {:commit_outcome_unknown, …}}` covers partial presence and mismatch, and is deliberately
+**not** special-cased in the Engine (0 occurrences there vs 5 in the adapter) so it cannot be
+retried into the duplicate it exists to prevent.
+
+**Note for Task 6 — measured, and not what the warning says.** wrangler warns it cannot write
+`/home/jes/.config/.wrangler/logs`. The host path **is** writable; it is masked read-only *inside a
+sandboxed round*. ⭐ "Read-only" is a claim about a vantage point and the warning does not say
+whose. Set `WRANGLER_LOG_PATH` or `XDG_CONFIG_HOME` to a writable scratch dir **in the round** —
+no host change is needed or wanted. No test was skipped or failed by this, which is exactly why it
+was both easy to ignore and easy to misdiagnose.
+
+**In flight:** Task 5 (shared persistence suite) dispatched to Sol detached,
+`scratchpad/sol-sp4-task5.log`.
 
 **Operational note — the launch receipt.** Detached rounds survive the harness reaper but there is
 no report if one dies at exec, and a dead round looks exactly like a quiet one. A quiescence
