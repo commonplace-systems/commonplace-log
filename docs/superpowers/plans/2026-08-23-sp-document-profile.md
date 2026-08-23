@@ -32,11 +32,12 @@ the first real run, which settled the claims Sol correctly refused to assert fro
 `workerd` download, and both runtimes coexist in one job well enough for the conformance harness
 and the seeded 500-case fuzz to run.
 
-**NEXT: SP4 — the Cloudflare realm sidecar.** One thing already checked that keeps jes off the
-critical path again: `wrangler dev` has a local mode (`--remote` is opt-in, default false), so
-the `RealmContainer` DO and the `CloudflareSidecar` adapter can very likely be built and tested
-locally under the workers pool exactly as SP2 was. Only actual deployment should need account
-logistics — worth confirming early, because it decides how much of SP4 can proceed unblocked.
+**NEXT: SP4 — the Cloudflare realm sidecar.** Planned in
+`docs/superpowers/plans/2026-08-23-sp4-cloudflare-realm-sidecar.md`. Confirmed by measurement
+rather than assumed: `wrangler dev --remote` is `[default: false]` and wrangler 4.125.0 is already
+installed, so the realm DO, the `CloudflareSidecar` adapter and the shared persistence suite are
+all locally verifiable. SP4 therefore splits at the capability line — **4a local and checkable,
+4b needs jes's account and Containers access** — so that no local green implies a deployment.
 
 **SUPERSEDED —** Task 4 (documentation — name replica sync, authority/topology, README) dispatched
 to Sol detached, log at `scratchpad/sol-dp-task4.log`. Check for the `tokens used` marker.
