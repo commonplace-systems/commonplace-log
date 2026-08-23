@@ -161,15 +161,43 @@ server for X if one is not running" requires nothing above the log layer. Anythi
 *which Documents belong to which Cell* is above it and belongs in `commonplace-doc` or the cell
 library.
 
-**Current state, measured:** one `DynamicSupervisor` keyed per `log_id`, and **no registry**, so
-there is no way to find or reconstruct a log server by id. That gap is real and is independent of
-whether `commonplace-doc`, `directory` or `cell` exist yet.
+### ⭐ Current state — corrected 2026-08-23. The log-layer half is ALREADY BUILT.
 
-**Recommendation, for jes to accept or reject:** the log-layer slice is small and specific — a
-registry plus on-demand start keyed by `log_id`. If a realm is one server, then "the realm
-supervisor" is that server's root supervisor, which properly lives in the **cell** library and
-would *drive* this primitive rather than contain it. ⛔ Everything else in §8.3 should stay out of
-this repo. ⚠️ Not started — build order is jes's.
+⚠️ **An earlier revision of this note said "no registry, so nothing can find or reconstruct a log
+server by id." That was false.** Measured directly:
+
+```
+application.ex:9   {Registry, keys: :unique, name: Commonplace.LogStore.SQLite.Registry}
+application.ex:10  {DynamicSupervisor, strategy: :one_for_one, ...}
+sqlite.ex:86       server_for/2 -> Registry.lookup(log_id)
+                     [{server,_}] -> Process.alive?(server) ? use : start_server
+                     []           -> start_server
+sqlite.ex:108      DynamicSupervisor.start_child/2, tolerating {:already_started, server}
+server.ex:46       name: {:via, Registry, {@registry, log_id}}
+```
+
+⇒ **`server_for/2` IS "a request arrives for log X; start a server for X if none is running"** —
+the exact discriminator argued above — **including the dead-server case and the start race**, which
+are the harder halves. It knows only `log_id`, `data_dir` and mode; nothing above the log layer
+enters it.
+
+**So §8.3's log-layer half is not a gap. It is done**, and it satisfies containment-not-authority
+in code rather than only in prose.
+
+**What remains genuinely absent is realm-level only:** there is no realm supervisor and no realm
+concept in code at all — `realm` appears in `commonplace_log/lib` in three moduledocs and nowhere
+else. Per §4a that belongs above this library.
+
+**Revised recommendation:** ⛔ **nothing to build here.** The primitive a cell-library realm
+supervisor would drive already exists. ⚠️ Any §8.3 work belongs in the cell layer, not in
+`commonplace-log`.
+
+⭐ **Why the false claim is recorded rather than quietly deleted:** it was produced by a selector
+that could not see its subject. A wide grep for `Registry|DynamicSupervisor|Realm` *did* list
+`application.ex`; a second, narrower grep for `Supervisor|children` could not match line 9, which
+contains neither word — and the narrow result was believed over the wide one that had already
+flagged the file. A pattern anchored to how a name is usually written (`Registry.`, with the dot)
+is not anchored to the name.
 
 ---
 
