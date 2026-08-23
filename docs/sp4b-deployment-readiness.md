@@ -4,8 +4,11 @@
 ("I'll try to set up the cloudflare soon"); it is gated on account credentials and Containers
 access, not on the decision.
 
-**Also ruled 2026-08-23:** §8.3 Container lifecycle supervision is **out of scope for v0.1** — see
-§4, where it is recorded as absent rather than untested.
+**§8.3 Container lifecycle supervision — ruled out of scope 2026-08-23, then REOPENED the same day**
+when jes described the intended library stack (`log → reducers → commonplace-doc → directory →
+cell`, a cell running in a realm, a realm being roughly a single server) and asked whether *realm*
+reaches down to the log layer. See §4 for what exists, and §4a for the layering answer. ⚠️ The
+machinery is still **absent** either way; only its scope is in question.
 
 This document exists to make that decision on real information rather than on a green tick. Its
 most important section is the last one.
@@ -103,8 +106,8 @@ demand. ⚠️ **None of that machinery exists.** Measured 2026-08-23: `commonpl
 word *realm* appears in that tree only in documentation comments. So there is nothing to
 reconstruct log processes on demand, and nothing to reconstruct them *from* at the realm level.
 
-**jes ruled this out of scope for v0.1 on 2026-08-23.** It is therefore not a gap awaiting work; it
-is a described capability that the v0.1 log deliberately does not provide.
+**jes ruled this out of scope on 2026-08-23 and reopened it the same day** — see §4a. The
+machinery's absence is unchanged; what is open is which library should own it.
 
 ⭐ Recorded this way on purpose. "Untested" and "absent" read identically to someone planning a
 deployment, and only one of them means the supervision story is unhandled. A reader would otherwise
@@ -120,6 +123,53 @@ CAS is tested against a single store; the deployment condition that motivated it
 
 **Sharding (§7.3).** One realm database is the default. The placement directory mapping a log UUID
 to a shard DO is designed but not built.
+
+---
+
+## 4a. ⭐ Does *realm* reach down to the log layer?
+
+jes asked this on 2026-08-23, describing the intended stack: `log → reducers → commonplace-doc →
+directory → cell`; a cell runs in a realm; a realm is roughly a single server.
+
+**It already does — physically — and that part is built.** Revision §7.2's realm database holding
+many UUID-addressed logs is Task 1 (`4ea6e4e`). *Realm* is already a storage grouping at this
+layer, and the multi-log isolation tests exist precisely because of it.
+
+**It must not, logically, and the profile says so twice:**
+
+> A Realm is not the root authority for a Document merely because its storage sidecar contains the
+> Document's bytes. (§ profile:117)
+
+> Its database may hold logs belonging to several Cells hosted by a Realm. This physical
+> containment MUST NOT be interpreted as logical ownership of those Cells or logs. (§ profile:310)
+
+⇒ **Realm reaches log as containment, never as authority.** That distinction is already load-bearing
+in three moduledocs in `commonplace_log/lib`, which state the chain Realm → Cell → Document → log
+handle → persistence. jes's stack and the existing prose agree.
+
+### What that means for §8.3, which is the live question
+
+§8.3 bundles two different things, and they belong to different libraries:
+
+| §8.3 element | Owner | Why |
+|---|---|---|
+| Container lifecycle, stable realm identity, routing, wakeup | **the sidecar / realm layer** | Revision §2 assigns these to the sidecar explicitly; the durable inbox is scoped out of v0.1 by §8.3 itself |
+| **Log processes reconstructing on demand** | **arguably this library** | Needs only a `log_id` and a store. No Cell, Document, or Directory concept enters it |
+
+⭐ **The discriminator is what the supervisor must know.** "A request arrives for log X; start a
+server for X if one is not running" requires nothing above the log layer. Anything that must know
+*which Documents belong to which Cell* is above it and belongs in `commonplace-doc` or the cell
+library.
+
+**Current state, measured:** one `DynamicSupervisor` keyed per `log_id`, and **no registry**, so
+there is no way to find or reconstruct a log server by id. That gap is real and is independent of
+whether `commonplace-doc`, `directory` or `cell` exist yet.
+
+**Recommendation, for jes to accept or reject:** the log-layer slice is small and specific — a
+registry plus on-demand start keyed by `log_id`. If a realm is one server, then "the realm
+supervisor" is that server's root supervisor, which properly lives in the **cell** library and
+would *drive* this primitive rather than contain it. ⛔ Everything else in §8.3 should stay out of
+this repo. ⚠️ Not started — build order is jes's.
 
 ---
 
