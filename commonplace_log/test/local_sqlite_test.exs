@@ -78,6 +78,47 @@ defmodule Commonplace.Log.Persistence.LocalSQLiteTest do
     close_store(store)
   end
 
+  test "every read reports not_found when an opened log has no schema", %{data_dir: data_dir} do
+    store = open_store(data_dir)
+    query = %{writers: [], coordinates: [], entry_ids: []}
+
+    assert {:error, :not_found} = LocalSQLite.read_set(store, @log_id, query)
+    assert {:error, :not_found} = LocalSQLite.frontier(store, @log_id)
+
+    assert {:error, :not_found} =
+             LocalSQLite.read_writer(store, @log_id, "writer-a", after_seq: 0, limit: 1)
+
+    assert {:error, :not_found} =
+             LocalSQLite.tail_local(store, @log_id, after_arrival: 0, limit: 1)
+
+    close_store(store)
+  end
+
+  test "a malformed log schema remains distinguishable from a missing log", %{data_dir: data_dir} do
+    store = open_store(data_dir)
+    assert :ok = Sqlite3.execute(store.conn, "CREATE TABLE log_meta (wrong_column TEXT)")
+
+    assert {:error, reason} =
+             LocalSQLite.read_set(store, @log_id, %{
+               writers: [],
+               coordinates: [],
+               entry_ids: []
+             })
+
+    assert reason == "no such column: log_id"
+    refute reason == :not_found
+    close_store(store)
+  end
+
+  test "a physically corrupt database fails distinguishably during open", %{data_dir: data_dir} do
+    File.write!(Path.join(data_dir, @log_id <> ".sqlite3"), "not a sqlite database")
+
+    assert {:error, reason} = LocalSQLite.open(data_dir, @log_id)
+    assert is_binary(reason)
+    assert String.contains?(reason, "file is not a database")
+    refute reason == :not_found
+  end
+
   test "read_set returns one revision with exactly the requested tips, coordinates, and ids", %{
     data_dir: data_dir
   } do

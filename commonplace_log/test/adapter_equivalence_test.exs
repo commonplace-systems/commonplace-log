@@ -2,8 +2,8 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
   use ExUnit.Case, async: true
 
   alias Commonplace.Log.{Engine, Jcs}
-  alias Commonplace.Log.Persistence.LocalSQLite
-  alias Commonplace.Log.Test.InMemoryPersistence
+  alias Commonplace.Log.Persistence.{CloudflareSidecar, LocalSQLite}
+  alias Commonplace.Log.Test.{InMemoryPersistence, SidecarLoopback}
 
   @log_id "018f0000-0000-7000-8000-000000000001"
   @other_log_id "018f0000-0000-7000-8000-000000000002"
@@ -23,12 +23,21 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
     assert {:ok, memory} = InMemoryPersistence.start_link()
     assert :ok = InMemoryPersistence.create_log(memory, @log_id, %{})
 
+    assert {:ok, sidecar_base} = InMemoryPersistence.start_link()
+    assert :ok = InMemoryPersistence.create_log(sidecar_base, @log_id, %{})
+
+    sidecar =
+      CloudflareSidecar.new("https://loopback.example",
+        transport: SidecarLoopback,
+        transport_options: {InMemoryPersistence, sidecar_base}
+      )
+
     on_exit(fn ->
       LocalSQLite.close(sqlite)
       File.rm_rf!(data_dir)
     end)
 
-    %{sqlite: sqlite, memory: memory}
+    %{sqlite: sqlite, memory: memory, sidecar: sidecar}
   end
 
   test "gap errors are equal", stores do
@@ -189,7 +198,9 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
   defp equal_merge(stores, entries) do
     sqlite_result = Engine.merge(LocalSQLite, stores.sqlite, @log_id, entries)
     memory_result = Engine.merge(InMemoryPersistence, stores.memory, @log_id, entries)
+    sidecar_result = Engine.merge(CloudflareSidecar, stores.sidecar, @log_id, entries)
     assert sqlite_result == memory_result
+    assert sqlite_result == sidecar_result
     sqlite_result
   end
 

@@ -259,6 +259,9 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
         [[_other]] -> {:error, :log_mismatch}
         [] -> {:error, :not_found}
       end
+    else
+      {:error, "no such table: log_meta"} -> {:error, :not_found}
+      {:error, _reason} = error -> error
     end
   end
 
