@@ -133,14 +133,16 @@ The point of a second implementation is that the protocol cannot then be
 accidentally defined by Elixir internals — any behaviour only one runtime
 exhibits is a bug in one of them or a gap in the specification.
 
-The worker also contains a second, newer component: a realm sidecar that
-stores many logs in one Durable Object and serves a BEAM engine running in a
-Cloudflare Container over HTTP. The Elixir side of that bridge
-(`Commonplace.Log.Persistence.CloudflareSidecar`) has been exercised against a
-real `wrangler dev` process over a real socket, and the persistence contract
-suite shows identical engine behaviour over local SQLite, an in-memory store,
-and the sidecar. **It has not been deployed to Cloudflare.** What that would
-take, and every claim that could not be verified without an account, is
+The worker also contains a realm node: one Durable Object per realm that
+holds the realm's SQLite and manages a Cloudflare Container running the Elixir
+engine. The engine reaches its storage only through `http://storage.internal`,
+which a Worker-side outbound handler resolves from the platform-supplied
+container identity — nothing the engine sends can select another realm's
+storage. This is deployed on a development account and has been exercised end
+to end: appends from the BEAM inside the container, read back through the
+sidecar path of the same object; a container restart producing a new
+incarnation while the log survives; and a stale lease epoch refused at commit
+with nothing written. What it has not yet met, and what remains unverified, is
 recorded in [`docs/sp4b-deployment-readiness.md`](docs/sp4b-deployment-readiness.md).
 
 ## Repository layout
@@ -203,10 +205,9 @@ signatures; cross-log transactions.
 
 ## Status
 
-The locally verifiable work is complete and green. The repository is waiting
-on Cloudflare account credentials for the realm deployment, on a naming and
-placement policy decision for realms, and on the needs of the sibling
-libraries (`commonplace-doc`, `commonplace-doc-sync`, `commonplace-log-reducer`)
+The library, the workalike, and the Cloudflare realm deployment are complete
+and green. The repository is waiting on a naming and placement policy
+decision for realms, and on the needs of the sibling libraries (`commonplace-doc`, `commonplace-doc-sync`, `commonplace-log-reducer`)
 that build on this one.
 
 ## License

@@ -294,6 +294,34 @@ Two traps met on the way, recorded because each looked like something else:
   Assign `Klass.outboundByHost = {...}` after the class instead. A 530 here means "unhandled", not
   "blocked" (that is 520).
 
+**⭐ Steps 3 and 4 — deployed and exercised, 2026-08-24 19:08Z.** `RealmNode` (6c433ed) is one
+Durable Object per realm that both manages the BEAM container and holds the realm SQLite; the
+Elixir realm node (815b2ad) runs inside the container and reaches storage only through
+`http://storage.internal`, which the outbound handler resolves from the platform's `containerId`.
+Deployed as version d153138e with image `commonplace-log-realm`. Run by hand over the gateway:
+
+| Probe | Result |
+|---|---|
+| `/engine/ping`, `/engine/v1/incarnation` (cold start) | 200; incarnation `01a0352c-e17d…` |
+| `/engine/v1/logs/L/create`, two appends | 201; seq 1, seq 2, revisions 1, 2 |
+| `/frontier` on the **sidecar path of the same DO** — no BEAM involved | shows seq 2 — BEAM's writes went through `storage.internal` into *this* DO |
+| other realm's `/frontier` for L | 404 |
+| `GET /node/restart`, then `/engine/v1/incarnation` | 202; first retry 500 "container is not listening" (booting), then **a different incarnation `01a0352d-2daf…`** |
+| append on the new incarnation | seq 3 — the log outlived its container |
+| sidecar: `take-lease` ×2, then `commit` with `expected_epoch: 1` | **409 `obsolete_epoch`**, frontier still empty |
+| control: same commit with `expected_epoch: 2` | revision 1, frontier shows the entry |
+
+⇒ The BEAM-in-container path, the `containerId`-derived storage route, restart survival, and the
+epoch fence are each exercised against real Cloudflare storage, with a presence control beside
+every absence.
+
+⚠️ What step 4 still has NOT met: **two live incarnations of one realm.** In this design one DO
+manages one container, so the only overlap is a rollout's drain window, and nothing drove that
+window by hand. The fence above was exercised by two *leases* on real storage, not by two
+*containers*. The mechanism is verified where it lives; the deployment condition remains
+unobserved. Also unverified: `storage_full`, container↔DO latency under real placement, and
+network failure under production scheduling.
+
 Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
 production scheduling, two live incarnations of one realm. Nothing about those changed.
 
