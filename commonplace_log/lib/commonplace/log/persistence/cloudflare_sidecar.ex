@@ -2,8 +2,14 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   @moduledoc """
   Persistence adapter for the configured HTTP sidecar.
 
-  The handle contains only a base URL and an injectable transport. Routing
-  and endpoint resolution remain outside this adapter.
+  The handle contains only a base URL, an injectable transport, and the
+  extra request headers to send on every call. Routing and endpoint
+  resolution remain outside this adapter: a realm is selected by giving the
+  gateway's realm prefix in `base_url` (`"https://host/realms/acme-1"`), and
+  gateway authentication by a `{"authorization", "Bearer ..."}` header.
+
+  Request headers are never placed in an error term, so a bearer token
+  cannot leak into a logged error.
   """
 
   @behaviour Commonplace.Log.Persistence
@@ -11,25 +17,56 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   alias Commonplace.Log.Persistence.{CommitPlan, ReadSet}
   alias __MODULE__.Httpc
 
-  @enforce_keys [:base_url, :transport, :transport_options]
-  defstruct [:base_url, :transport, :transport_options]
+  @enforce_keys [:base_url, :transport, :transport_options, :headers]
+  defstruct [:base_url, :transport, :transport_options, :headers]
+
+  @type header :: {String.t(), String.t()}
 
   @type t :: %__MODULE__{
           base_url: String.t(),
           transport: module(),
-          transport_options: term()
+          transport_options: term(),
+          headers: [header()]
         }
 
   @headers [{"content-type", "application/json"}]
   @commit_reconciliation_attempts 3
+  @error_body_limit 4_096
 
+  @doc """
+  Builds a handle.
+
+  Options:
+
+    * `:transport` — module implementing the transport behaviour (default `Httpc`)
+    * `:transport_options` — opaque term passed to the transport on every call
+    * `:headers` — list of `{name, value}` string tuples appended to the request
+      headers on every call (default `[]`); raises `ArgumentError` otherwise
+  """
   @spec new(String.t(), keyword()) :: t()
   def new(base_url, options \\ []) when is_binary(base_url) and is_list(options) do
     %__MODULE__{
       base_url: String.trim_trailing(base_url, "/"),
       transport: Keyword.get(options, :transport, Httpc),
-      transport_options: Keyword.get(options, :transport_options, [])
+      transport_options: Keyword.get(options, :transport_options, []),
+      headers: validate_headers(Keyword.get(options, :headers, []))
     }
+  end
+
+  defp validate_headers(headers) when is_list(headers) do
+    if Enum.all?(headers, &match?({name, value} when is_binary(name) and is_binary(value), &1)) do
+      headers
+    else
+      raise ArgumentError,
+            ":headers must be a list of {name, value} binary tuples, got: " <>
+              inspect(headers, limit: 8, printable_limit: 64)
+    end
+  end
+
+  defp validate_headers(headers) do
+    raise ArgumentError,
+          ":headers must be a list of {name, value} binary tuples, got: " <>
+            inspect(headers, limit: 8, printable_limit: 64)
   end
 
   @impl true
@@ -138,7 +175,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     case store.transport.request(
            :post,
            store.base_url <> path,
-           @headers,
+           @headers ++ store.headers,
            body,
            store.transport_options
          ) do
@@ -148,7 +185,12 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
       {:ok, %{status: status, headers: headers, body: response_body}}
       when is_integer(status) and is_list(headers) and is_binary(response_body) and status >= 500 and
              status != 507 ->
-        {:error, {:transport_error, {:http_status, status}}}
+        {:error, {:transport_error, {:http_status, status, error_details(response_body)}}}
+
+      {:ok, %{status: status, headers: headers, body: response_body}}
+      when is_integer(status) and is_list(headers) and is_binary(response_body) and
+             status in [401, 403] ->
+        {:error, {:unauthorized, %{status: status, body: error_details(response_body).body}}}
 
       {:ok, %{status: status, headers: headers, body: response_body}}
       when is_integer(status) and is_list(headers) and is_binary(response_body) ->
@@ -166,6 +208,12 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
       response ->
         protocol({:invalid_transport_return, response})
     end
+  end
+
+  # Response details for a rejected request. Only the response is described;
+  # the request (and so any bearer token in its headers) never enters an error.
+  defp error_details(response_body) do
+    %{body: binary_part(response_body, 0, min(byte_size(response_body), @error_body_limit))}
   end
 
   defp reconcile_commit(_store, %CommitPlan{insert_entries: []}, commit_error) do

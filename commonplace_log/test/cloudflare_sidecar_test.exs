@@ -340,6 +340,130 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
     assert {:error, {:transport_error, _reason}} = CloudflareSidecar.frontier(store, "probe")
   end
 
+  test "a realm-prefixed base_url with a trailing slash composes exactly with every path" do
+    {:ok, transport} = TransportDouble.start_link([error_response(404, "not_found")])
+
+    store =
+      CloudflareSidecar.new("https://h/realms/r/",
+        transport: TransportDouble,
+        transport_options: transport
+      )
+
+    assert store.base_url == "https://h/realms/r"
+    assert {:error, :not_found} = CloudflareSidecar.frontier(store, "log-a")
+    assert [%{url: "https://h/realms/r/frontier"}] = TransportDouble.requests(transport)
+  end
+
+  test "the headers option defaults to [] and rejects anything but binary pairs" do
+    assert %CloudflareSidecar{headers: []} = CloudflareSidecar.new("https://sidecar.example")
+
+    assert %CloudflareSidecar{headers: [{"authorization", "Bearer fake-test-token"}]} =
+             CloudflareSidecar.new("https://sidecar.example",
+               headers: [{"authorization", "Bearer fake-test-token"}]
+             )
+
+    for bad <- [
+          %{"authorization" => "x"},
+          [{"authorization", nil}],
+          [{:authorization, "x"}],
+          ["authorization: x"],
+          [{"a", "b", "c"}],
+          "authorization"
+        ] do
+      assert_raise ArgumentError,
+                   ~r/:headers must be a list of \{name, value\} binary tuples/,
+                   fn ->
+                     CloudflareSidecar.new("https://sidecar.example", headers: bad)
+                   end
+    end
+  end
+
+  test "configured headers are sent after content-type on frontier and commit calls" do
+    {:ok, transport} =
+      TransportDouble.start_link([
+        response(200, %{"ok" => true, "frontier" => %{"writers" => []}}),
+        response(200, %{"ok" => true, "revision" => 1})
+      ])
+
+    store =
+      CloudflareSidecar.new("https://sidecar.example",
+        transport: TransportDouble,
+        transport_options: transport,
+        headers: [{"authorization", "Bearer fake-test-token"}, {"x-trace", "t-1"}]
+      )
+
+    assert {:ok, %{writers: []}} = CloudflareSidecar.frontier(store, "log-a")
+    assert {:ok, 1} = CloudflareSidecar.commit(store, empty_plan())
+
+    assert [frontier, commit] = TransportDouble.requests(transport)
+    assert frontier.url == "https://sidecar.example/frontier"
+    assert commit.url == "https://sidecar.example/commit"
+
+    for request <- [frontier, commit] do
+      assert request.headers == [
+               {"content-type", "application/json"},
+               {"authorization", "Bearer fake-test-token"},
+               {"x-trace", "t-1"}
+             ]
+    end
+  end
+
+  test "a gateway 401 is an unauthorized error carrying the response body, never the request headers" do
+    token = "Bearer fake-test-token"
+    body = Jason.encode!(%{"ok" => false, "error" => %{"code" => "unauthorized"}})
+
+    for {path, call} <- [
+          {"/frontier", &CloudflareSidecar.frontier(&1, "log-a")},
+          {"/commit", &CloudflareSidecar.commit(&1, empty_plan())}
+        ] do
+      {:ok, transport} =
+        TransportDouble.start_link([{:ok, %{status: 401, headers: [], body: body}}])
+
+      store =
+        CloudflareSidecar.new("https://sidecar.example",
+          transport: TransportDouble,
+          transport_options: transport,
+          headers: [{"authorization", token}]
+        )
+
+      assert {:error, {:unauthorized, %{status: 401, body: ^body}} = error} = call.(store)
+      assert [%{url: "https://sidecar.example" <> ^path}] = TransportDouble.requests(transport)
+      refute inspect(error, limit: :infinity, printable_limit: :infinity) =~ "fake-test-token"
+    end
+  end
+
+  test "a gateway 503 is a transport error carrying the status and body, never the request headers" do
+    token = "Bearer fake-test-token"
+    body = Jason.encode!(%{"ok" => false, "error" => %{"code" => "gateway_not_configured"}})
+
+    {:ok, transport} =
+      TransportDouble.start_link([{:ok, %{status: 503, headers: [], body: body}}])
+
+    store =
+      CloudflareSidecar.new("https://sidecar.example",
+        transport: TransportDouble,
+        transport_options: transport,
+        headers: [{"authorization", token}]
+      )
+
+    assert {:error, {:transport_error, {:http_status, 503, %{body: ^body}}} = error} =
+             CloudflareSidecar.frontier(store, "log-a")
+
+    refute inspect(error, limit: :infinity, printable_limit: :infinity) =~ "fake-test-token"
+  end
+
+  test "an oversized 5xx body is truncated in the error details" do
+    body = String.duplicate("x", 10_000)
+
+    {:ok, transport} =
+      TransportDouble.start_link([{:ok, %{status: 502, headers: [], body: body}}])
+
+    assert {:error, {:transport_error, {:http_status, 502, %{body: truncated}}}} =
+             CloudflareSidecar.frontier(store(transport), "log-a")
+
+    assert byte_size(truncated) == 4_096
+  end
+
   defp store(transport) do
     CloudflareSidecar.new("https://sidecar.example",
       transport: TransportDouble,

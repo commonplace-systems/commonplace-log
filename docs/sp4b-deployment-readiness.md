@@ -234,6 +234,46 @@ is not anchored to the name.
 
 ---
 
+## 4b. ⭐ SP4b progress — 2026-08-24, against the real account
+
+jes supplied an account API token on 2026-08-24 (stored outside every repository; read from the
+environment only). Measured the same day:
+
+**⛔ The account has no Containers access.** The API answers verbatim: *"Deploying containers
+requires the Workers Paid plan."* SQLite-backed Durable Objects are available on the current plan.
+⇒ §5 steps 1–2 could proceed and did; **steps 3–4, and the `containerId`-shape observation that
+gates the §3 outbound handler, are blocked on a plan upgrade** — an owner's decision, not work.
+
+**Steps 1–2 are deployed and verified.** `worker/src/index.ts` is now a production ingress:
+`/realms/{realm_id}` + sidecar path → `REALM_CONTAINER.getByName(realm_id)`, behind
+`Authorization: Bearer` checked against the `GATEWAY_TOKEN` Worker secret in constant time. A
+gateway with no secret configured answers 503 to everything but `GET /` — it fails closed. The
+realm is derived only from the path; this is the pre-Container gateway, not the §3 handler.
+
+Deployed to `https://commonplace-log.commonplace-systems.workers.dev`. Run by hand over the public
+internet, in this order:
+
+| Probe | Result |
+|---|---|
+| `GET /` | 200 |
+| no token / wrong token → `/realms/A/frontier` | 401 `unauthorized`, token never echoed |
+| unknown top-level path | 404 |
+| realm A: `create-log`, `commit` one entry, `frontier` | 201, revision 1, `alice seq 1` |
+| **realm B: `frontier` for the same `log_id`** | **404 `not_found`** |
+| positive control: realm B creates its own log, reads it back | 201, empty frontier |
+| realm A asks for B's log | 404 |
+| realm A `frontier` again, later request | still `alice seq 1` — durable across requests |
+
+⇒ **Named addressing end to end and real DO SQLite are now verified** (closing two §4 items), and
+**cross-realm isolation holds in its path-derived form**, with the presence control read before the
+absence was believed. What this does *not* show is the §3 property proper — that a BEAM inside a
+Container cannot *choose* its realm — because no Container exists to be scoped.
+
+Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
+production scheduling, two live incarnations of one realm. Nothing about those changed.
+
+---
+
 ## 5. Recommended shape for SP4b, if it proceeds
 
 Ordered so the unverifiable items become verifiable as early as possible:

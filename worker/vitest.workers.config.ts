@@ -23,6 +23,9 @@ export default defineWorkersProject({
     poolOptions: {
       workers: {
         wrangler: { configPath: "./wrangler.jsonc" },
+        // Test-only gateway secret. In production GATEWAY_TOKEN is a Worker
+        // secret; it must never appear as a plaintext var in wrangler.jsonc.
+        miniflare: { bindings: { GATEWAY_TOKEN: "test-gateway-token" } },
       },
     },
   },
