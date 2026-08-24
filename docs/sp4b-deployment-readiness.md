@@ -315,11 +315,16 @@ Deployed as version d153138e with image `commonplace-log-realm`. Run by hand ove
 epoch fence are each exercised against real Cloudflare storage, with a presence control beside
 every absence.
 
-⚠️ What step 4 still has NOT met: **two live incarnations of one realm.** In this design one DO
-manages one container, so the only overlap is a rollout's drain window, and nothing drove that
-window by hand. The fence above was exercised by two *leases* on real storage, not by two
-*containers*. The mechanism is verified where it lives; the deployment condition remains
-unobserved. Also unverified: `storage_full`, container↔DO latency under real placement, and
+⚠️ What step 4 still has NOT met: **two live incarnations of one realm** — and, corrected the
+same evening, **the deployed engine path cannot observe it.** The realm node's `/engine/*` appends
+call `Engine.append` with epoch `:current`: they take no lease, so a rollout's drain window would
+show the old and new containers *both* committing legitimately under `expected_revision` CAS. That
+is correct behaviour for a multi-writer surface, and a green run of it would mean "not applicable",
+not "fence verified". The fence's motivating case needs a lease-taking caller in the container —
+`DocumentProfile` over the sidecar persistence, which does not exist (the profile is SQLite-only).
+Until it does, the fence is verified by two *leases* on real storage (above), not by two
+*containers*; the mechanism is verified where it lives, the deployment condition is out of reach
+by construction rather than merely unobserved. Also unverified: `storage_full`, container↔DO latency under real placement, and
 network failure under production scheduling.
 
 Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
