@@ -89,11 +89,19 @@ defmodule Commonplace.Log.Test.PersistenceContract do
     adapter = Keyword.fetch!(options, :adapter)
 
     quote bind_quoted: [adapter: adapter] do
+      alias Commonplace.Log.{Engine, Frontier, Jcs}
       alias Commonplace.Log.Persistence.{CommitPlan, ReadSet}
       alias Commonplace.Log.Test.PersistenceContractStore
 
       @contract_adapter adapter
       @log_id "018f1000-0000-7000-8000-000000000001"
+      @frontier_writer_a "018f1000-0000-7000-8000-00000000000a"
+      @frontier_writer_b "018f1000-0000-7000-8000-00000000000b"
+      @frontier_a1 "018f1000-0000-7000-8000-000000000021"
+      @frontier_a2 "018f1000-0000-7000-8000-000000000041"
+      @frontier_b1 "018f1000-0000-7000-8000-000000000011"
+      @frontier_b2 "018f1000-0000-7000-8000-000000000031"
+      @unknown_tip "018f1000-0000-7000-8000-000000000099"
 
       setup do
         contract = PersistenceContractStore.open(@contract_adapter, @log_id)
@@ -196,6 +204,109 @@ defmodule Commonplace.Log.Test.PersistenceContract do
         assert Enum.map(last, & &1.writer_seq) == [3]
       end
 
+      test "frontier values are entry-id sorted and byte-stable across replica insertion order",
+           contract do
+        other = PersistenceContractStore.open(@contract_adapter, @log_id)
+        on_exit(other.cleanup)
+
+        assert :ok = create_log(contract)
+        assert :ok = create_log(other)
+
+        assert_frontier_batches(contract, [frontier_a_batch(), frontier_b_batch()])
+        assert_frontier_batches(other, [frontier_b_batch(), frontier_a_batch()])
+
+        assert {:ok, first} = Frontier.frontier_value(bound_log(contract))
+        assert {:ok, second} = Frontier.frontier_value(bound_log(other))
+
+        first_bytes = Frontier.encode(first)
+        second_bytes = Frontier.encode(second)
+
+        assert first_bytes == second_bytes
+
+        assert first_bytes ==
+                 Jcs.canonicalize(%{
+                   "type" => "commonplace.log.frontier/v1",
+                   "tips" => [@frontier_b2, @frontier_a2]
+                 })
+      end
+
+      test "read_through pages every lane and is independent of merge order", contract do
+        other = PersistenceContractStore.open(@contract_adapter, @log_id)
+        on_exit(other.cleanup)
+
+        assert :ok = create_log(contract)
+        assert :ok = create_log(other)
+
+        assert_frontier_batches(contract, [frontier_a_batch(), frontier_b_batch()])
+        assert_frontier_batches(other, [frontier_b_batch(), frontier_a_batch()])
+
+        assert {:ok, frontier} = Frontier.frontier_value(bound_log(contract))
+        assert {:ok, other_frontier} = Frontier.frontier_value(bound_log(other))
+
+        assert {:ok, entries} =
+                 Frontier.read_through(bound_log(contract), frontier, page_size: 1)
+
+        assert {:ok, other_entries} =
+                 Frontier.read_through(bound_log(other), other_frontier, page_size: 1)
+
+        assert entries == other_entries
+
+        assert entries ==
+                 frontier_a_batch() ++ frontier_b_batch()
+      end
+
+      test "read_through reconstructs a shorter historical prefix", contract do
+        assert :ok = create_log(contract)
+        assert_frontier_batches(contract, [frontier_a_batch(), frontier_b_batch()])
+
+        historical = Frontier.new([@frontier_a1, @frontier_b1])
+
+        assert {:ok, entries} = Frontier.read_through(bound_log(contract), historical, [])
+        assert entries == [hd(frontier_a_batch()), hd(frontier_b_batch())]
+      end
+
+      test "read_through accepts the empty prefix", contract do
+        assert :ok = create_log(contract)
+        assert_frontier_batches(contract, [frontier_a_batch()])
+
+        assert {:ok, []} =
+                 Frontier.read_through(bound_log(contract), Frontier.new([]), [])
+      end
+
+      test "read_through rejects an unknown tip without returning a truncated prefix", contract do
+        assert :ok = create_log(contract)
+        assert_frontier_batches(contract, [frontier_a_batch()])
+
+        assert {:error,
+                %Frontier.Error{
+                  operation: :verify,
+                  reason: :unknown_tip,
+                  entry_id: @unknown_tip
+                }} =
+                 Frontier.read_through(
+                   bound_log(contract),
+                   Frontier.new([@frontier_a2, @unknown_tip]),
+                   []
+                 )
+      end
+
+      test "read_through verifies the one-tip-per-lane rule", contract do
+        assert :ok = create_log(contract)
+        assert_frontier_batches(contract, [frontier_a_batch()])
+
+        assert {:error,
+                %Frontier.Error{
+                  operation: :verify,
+                  reason: :multiple_tips_for_lane,
+                  writer_id: @frontier_writer_a
+                }} =
+                 Frontier.read_through(
+                   bound_log(contract),
+                   Frontier.new([@frontier_a1, @frontier_a2]),
+                   []
+                 )
+      end
+
       test "tail_local pins arrival continuation cursor presence and values", contract do
         assert :ok = create_log(contract)
         assert {:ok, 1} = contract.module.commit(contract.store, plan(0, 0, rows()))
@@ -237,6 +348,44 @@ defmodule Commonplace.Log.Test.PersistenceContract do
       end
 
       defp create_log(contract), do: contract.module.create_log(contract.store, @log_id, %{})
+
+      defp bound_log(contract) do
+        %{module: contract.module, store: contract.store, log_id: @log_id}
+      end
+
+      defp assert_frontier_batches(contract, batches) do
+        Enum.each(batches, fn batch ->
+          assert {:ok, _result} =
+                   Engine.merge(contract.module, contract.store, @log_id, batch)
+        end)
+      end
+
+      defp frontier_a_batch do
+        [
+          frontier_entry(@frontier_writer_a, 1, @frontier_a1, nil),
+          frontier_entry(@frontier_writer_a, 2, @frontier_a2, @frontier_a1)
+        ]
+      end
+
+      defp frontier_b_batch do
+        [
+          frontier_entry(@frontier_writer_b, 1, @frontier_b1, nil),
+          frontier_entry(@frontier_writer_b, 2, @frontier_b2, @frontier_b1)
+        ]
+      end
+
+      defp frontier_entry(writer_id, writer_seq, entry_id, prev_entry_id) do
+        Jcs.canonicalize(%{
+          "version" => 1,
+          "log_id" => @log_id,
+          "entry_id" => entry_id,
+          "writer_id" => writer_id,
+          "writer_seq" => writer_seq,
+          "prev_entry_id" => prev_entry_id,
+          "created_at" => "2026-08-24T12:34:56Z",
+          "body" => %{"writer_seq" => writer_seq}
+        })
+      end
 
       defp read_set(contract) do
         contract.module.read_set(contract.store, @log_id, %{

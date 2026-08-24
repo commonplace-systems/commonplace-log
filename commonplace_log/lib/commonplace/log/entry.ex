@@ -287,9 +287,11 @@ defmodule Commonplace.Log.Entry do
     end
   end
 
-  defp uuid_problem(value) when not is_binary(value), do: :uuid_not_string
+  @doc false
+  @spec uuid_problem(term()) :: :uuid_not_string | :uuid_not_lowercase | :uuid_malformed | nil
+  def uuid_problem(value) when not is_binary(value), do: :uuid_not_string
 
-  defp uuid_problem(value) do
+  def uuid_problem(value) do
     cond do
       Regex.match?(@uuid_re, value) -> nil
       Regex.match?(@uuid_re, String.downcase(value)) -> :uuid_not_lowercase
