@@ -6,3 +6,11 @@ deps/
 
 # Per-log SQLite runtime state written by Commonplace.LogStore.SQLite (default data_dir)
 commonplace_log_data/
+
+# Credentials and local secrets: never tracked. The Cloudflare token lives
+# outside the repository and is read from the environment only.
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*.env
