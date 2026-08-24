@@ -269,6 +269,31 @@ internet, in this order:
 absence was believed. What this does *not* show is the §3 property proper — that a BEAM inside a
 Container cannot *choose* its realm — because no Container exists to be scoped.
 
+**⭐ The `containerId` shape is observed (2026-08-24, later the same day, after jes moved the
+account to Workers Paid).** A throwaway probe worker — a `Container` subclass whose outbound handler
+for `storage.internal` echoed its `ctx` — showed, on two realms:
+
+```text
+handler ctx.containerId  = e1180131…6911   (realm-x)      3be25ac7…bd6c   (realm-y)
+managing DO ctx.id       = e1180131…6911                  3be25ac7…bd6c
+idFromString(containerId) round-trips to the same id on both
+```
+
+⇒ **`containerId` IS the managing Durable Object's id.** The handler can resolve
+`env.BINDING.get(env.BINDING.idFromString(ctx.containerId))` and can cross-check any DO-supplied
+parameter with `idFromName(realm).toString() === ctx.containerId`. The platform supplies the id;
+the BEAM request carries nothing that participates. The §3 "do not write it before the observation"
+gate is lifted.
+
+Two traps met on the way, recorded because each looked like something else:
+- The entrypoint must `export { ContainerProxy } from "@cloudflare/containers"` or the container
+  fails to start with "ctx.exports.ContainerProxy is undefined" — a *start* failure, not a routing one.
+- `static outboundByHost = {...}` as a TS class field is DEFINED as an own property (ES2022
+  semantics) and never reaches the SDK's static *setter*, so no handler registers and the request
+  falls through to the real internet — where `storage.internal` answers **530 (origin DNS error)**.
+  Assign `Klass.outboundByHost = {...}` after the class instead. A 530 here means "unhandled", not
+  "blocked" (that is 520).
+
 Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
 production scheduling, two live incarnations of one realm. Nothing about those changed.
 
