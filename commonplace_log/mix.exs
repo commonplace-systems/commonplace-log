@@ -7,6 +7,7 @@ defmodule CommonplaceLog.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      releases: [commonplace_log: [include_executables_for: [:unix]]],
       deps: deps(),
       description: description(),
       package: package(),
@@ -39,6 +40,8 @@ defmodule CommonplaceLog.MixProject do
     [
       {:jason, "~> 1.4"},
       {:exqlite, "~> 0.27"},
+      {:plug, "~> 1.16"},
+      {:bandit, "~> 1.6"},
       {:stream_data, "~> 1.1", only: [:test, :dev]}
     ]
   end
