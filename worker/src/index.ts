@@ -1,7 +1,10 @@
 import type { RealmContainer } from "./realm/container";
+import type { RealmNode } from "./realm/node";
 
 export { CommonplaceLog } from "./commonplace-log-do";
 export { RealmContainer } from "./realm/container";
+export { RealmNode } from "./realm/node";
+export { ContainerProxy } from "@cloudflare/containers";
 
 /**
  * Worker bindings. `GATEWAY_TOKEN` is a Worker *secret* (never a plaintext
@@ -10,23 +13,23 @@ export { RealmContainer } from "./realm/container";
  */
 export interface Env {
   REALM_CONTAINER: DurableObjectNamespace<RealmContainer>;
+  REALM_NODE?: DurableObjectNamespace<RealmNode>;
   GATEWAY_TOKEN?: string;
 }
 
 /**
- * Pre-Container gateway (docs/sp4b-deployment-readiness.md §5 steps 1–2).
+ * Authenticated realm gateway (docs/sp4b-deployment-readiness.md §5).
  *
  * Every realm request is `/realms/{realm_id}` + a sidecar path, e.g.
  * `POST /realms/acme-1/commit`. The realm is derived ONLY from the URL path and
- * the request is forwarded to `REALM_CONTAINER.getByName(realm_id)` with the
- * `/realms/{realm_id}` prefix stripped; method, headers, body and query pass
- * through untouched. This is what lets named addressing and two-realm
- * isolation be exercised against a real account before BEAM is involved.
+ * the request is forwarded to `REALM_NODE.getByName(realm_id)` in production,
+ * with the `/realms/{realm_id}` prefix stripped; method, headers, body and query
+ * pass through untouched. The container-free test configuration deliberately
+ * omits that binding and uses `REALM_CONTAINER` instead.
  *
- * ⚠️ This is NOT the outbound handler of readiness §3 / revision §8.2, which
+ * This is distinct from the outbound handler of readiness §3 / revision §8.2, which
  * derives the realm from a Container's `containerId` rather than from anything
- * the client sends. That is a separate, later component; a BEAM inside a
- * Container never talks to this route.
+ * the client sends. A BEAM process inside a Container never talks to this route.
  */
 
 const REALM_ID = /^[A-Za-z0-9._-]{1,128}$/;
@@ -62,6 +65,16 @@ function realmRoute(pathname: string): { realmId: string; sidecarPath: string } 
   return { realmId, sidecarPath: slash === -1 ? "/" : remainder.slice(slash) };
 }
 
+function realmStub(env: Env, realmId: string): DurableObjectStub {
+  if (env.REALM_NODE !== undefined) {
+    return env.REALM_NODE.getByName(realmId);
+  }
+
+  // Test-only compatibility path: vitest-pool-workers cannot instantiate a
+  // Container subclass because its Durable Object context has no container.
+  return env.REALM_CONTAINER.getByName(realmId);
+}
+
 export async function handleIngress(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
@@ -89,7 +102,7 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
   const forwarded = new Request(target, request);
   // The sidecar has no auth of its own; do not carry the gateway secret into it.
   forwarded.headers.delete("authorization");
-  return await env.REALM_CONTAINER.getByName(route.realmId).fetch(forwarded);
+  return await realmStub(env, route.realmId).fetch(forwarded);
 }
 
 export default {

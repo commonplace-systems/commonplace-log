@@ -9,11 +9,23 @@
   "durable_objects": {
     "bindings": [
       { "name": "COMMONPLACE_LOG", "class_name": "CommonplaceLog" },
-      { "name": "REALM_CONTAINER", "class_name": "RealmContainer" }
+      { "name": "REALM_CONTAINER", "class_name": "RealmContainer" },
+      { "name": "REALM_NODE", "class_name": "RealmNode" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["CommonplaceLog"] },
-    { "tag": "v2", "new_sqlite_classes": ["RealmContainer"] }
+    { "tag": "v2", "new_sqlite_classes": ["RealmContainer"] },
+    { "tag": "v3", "new_sqlite_classes": ["RealmNode"] }
+  ],
+  "containers": [
+    {
+      "name": "commonplace-log-realm",
+      "class_name": "RealmNode",
+      "image": "../commonplace_log/Dockerfile",
+      "image_build_context": "../commonplace_log",
+      "max_instances": 3,
+      "instance_type": "lite"
+    }
   ]
 }

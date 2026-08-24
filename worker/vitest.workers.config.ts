@@ -22,7 +22,9 @@ export default defineWorkersProject({
     include: ["test/do/**/*.test.ts", "test/realm/**/*.workers.test.ts"],
     poolOptions: {
       workers: {
-        wrangler: { configPath: "./wrangler.jsonc" },
+        // Deliberately container-free (wrangler.jsonc carries the containers stanza, which the pool rejects): workerd's test pool supplies no
+        // `ctx.container`, so ingress exercises its REALM_CONTAINER fallback.
+        wrangler: { configPath: "./wrangler.test.jsonc" },
         // Test-only gateway secret. In production GATEWAY_TOKEN is a Worker
         // secret; it must never appear as a plaintext var in wrangler.jsonc.
         miniflare: { bindings: { GATEWAY_TOKEN: "test-gateway-token" } },

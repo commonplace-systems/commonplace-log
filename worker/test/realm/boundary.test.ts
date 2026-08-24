@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 
 const WORKER_ROOT = resolve(import.meta.dirname, "../..");
 const DEFAULT_REALM_ROOT = resolve(WORKER_ROOT, "src/realm");
+const REQUIRED_REALM_ENTRIES = ["node.ts", "outbound.ts"];
 const FORBIDDEN = new Set([
   resolve(WORKER_ROOT, "src/entry.ts"),
   resolve(WORKER_ROOT, "src/jcs.ts"),
@@ -42,6 +43,15 @@ export function assertRealmBoundary(root: string): void {
   const entries = sourceFiles(root);
   if (entries.length === 0) {
     throw new Error(`realm boundary gate found no TypeScript source files under ${root}`);
+  }
+
+  if (root === DEFAULT_REALM_ROOT) {
+    for (const name of REQUIRED_REALM_ENTRIES) {
+      const required = resolve(root, name);
+      if (!entries.includes(required)) {
+        throw new Error(`realm boundary gate is missing required entry ${relative(WORKER_ROOT, required)}`);
+      }
+    }
   }
 
   const visited = new Set<string>();
