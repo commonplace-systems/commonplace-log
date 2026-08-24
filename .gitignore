@@ -3,3 +3,6 @@ node_modules/
 _build/
 deps/
 .worktrees/
+
+# Per-log SQLite runtime state written by Commonplace.LogStore.SQLite (default data_dir)
+commonplace_log_data/

@@ -1,94 +1,214 @@
 # Commonplace Monotonic Log
 
-`commonplace-log` implements an append-only log made from independent, gapless writer sequences. Each writer owns a sequence numbered from 1; a log is the union of those sequences. Replicas converge by retaining the longer compatible prefix for each writer.
+An append-only log that several parties can write to, replicate, and merge
+without a leader, a consensus protocol, or a CRDT — and that refuses to guess
+when something has gone wrong.
 
-There is no global order between writers, consensus, or CRDT conflict resolution. Concurrent writes are valid when they use different writer IDs. If two live replicas append with the same writer ID, they create a fork: the system reports and refuses it and never silently chooses a branch.
+The design rests on one rule: **every writer owns its own sequence, numbered
+1, 2, 3… with no gaps, and a log is the union of those sequences.** Because a
+writer's own sequence is totally ordered and nobody else may extend it, two
+replicas of the same log can always be merged by a pointwise rule — for each
+writer, keep the longer of the two prefixes. That merge is idempotent,
+commutative, and associative, so replicas converge no matter how, or in what
+order, they exchange entries.
 
-## Authority and protocol
+What the log does *not* do is as deliberate as what it does:
 
-The normative protocol is [the Commonplace Monotonic Log specification](docs/commonplace-monotonic-log-spec.md), version 0.1-draft, as amended by [Amendment 1: BEAM-Native Recentering](docs/protocol/0.1-amendment-1-beam-native.md). The amendment makes the Elixir implementation under `commonplace_log/` normative. The reasoning and deployment direction are recorded in [the BEAM-native architecture proposal](docs/proposals/2026-08-22-beam-native-revision.md).
+- **No global order.** Entries from different writers have no order relative
+  to each other. Applications that need one build it on top; the log does not
+  pretend to know it.
+- **No consensus.** Concurrent writers do not coordinate; they use different
+  writer IDs. A replica never has to ask anyone's permission to append.
+- **No silent conflict resolution.** If two replicas each hold a *different*
+  entry at the same `(writer_id, writer_seq)` coordinate, the writer's history
+  has forked — a duplicated process, a restored backup, a cloned disk. The log
+  reports `writer_fork` and stops. It never picks a winner, because either
+  choice would discard someone's data while looking like success.
 
-The Elixir library is the reference implementation for entry validity, canonical JSON, merge classification, and synchronization. The TypeScript Cloudflare Durable Object is a complete, conforming workalike: it implements the protocol independently and is checked against the same language-neutral vectors. That independence helps ensure the protocol is not accidentally defined by Elixir internals.
+Replicas synchronize by exchanging **frontiers** — for each writer, the
+sequence number and entry ID at the tip — and then fetching exactly the ranges
+the other side is missing. Entries are immutable JSON objects with a
+canonical byte encoding (RFC 8785 / JCS), so every runtime agrees on the exact
+bytes of every entry.
 
-For an ordinary Document, a Realm hosts the Cell, the Cell authorizes the Document, and the Document has one log, one lifetime append lane, and one fenced appender. Replicas copy that same log; branches and mirrors instead derive new logs with explicit lineage. Storage location does not confer authority: a Realm or sidecar may hold the bytes without owning the Cell or Document.
+This repository contains the protocol, a reference implementation in Elixir,
+and an independent implementation in TypeScript for Cloudflare Durable
+Objects, with a shared conformance corpus that both are checked against
+byte-for-byte.
+
+## An entry, and a merge
+
+Every entry has exactly eight fields:
+
+```json
+{
+  "version": 1,
+  "log_id":        "7d4b…",
+  "entry_id":      "c1a9…",
+  "writer_id":     "a3f2…",
+  "writer_seq":    4,
+  "prev_entry_id": "9e77…",
+  "created_at":    "2026-08-24T16:02:11.318Z",
+  "body":          { "op": "set-title", "title": "Draft 3" }
+}
+```
+
+`writer_seq` starts at 1 and `prev_entry_id` names the previous entry in the
+same writer's sequence, so a sequence is also a hash-free chain. The `body`
+is application data; the log stores it and never interprets it.
+
+Two replicas holding
+
+```text
+A = { alice -> [a1 a2 a3],   bob -> [b1] }
+B = { alice -> [a1 a2],      bob -> [b1 b2 b3] }
+```
+
+merge to `{ alice -> [a1 a2 a3], bob -> [b1 b2 b3] }`. If `B` instead held
+`alice -> [a1 a2 x3]` where `x3 ≠ a3`, the merge is refused with
+`{:error, {:writer_fork, %{writer_id: alice, seq: 3}}}` and neither replica
+is changed.
+
+## Using the Elixir library
+
+The library lives in `commonplace_log/` and stores each log in its own SQLite
+database. The single-writer rule is enforced locally: a per-log server process
+holds an exclusive lock and a durable writer identity, so an ordinary restart
+keeps its identity and a cloned or restored database is required to take a new
+one.
+
+```elixir
+alias Commonplace.Log.DocumentProfile
+
+log_id = Commonplace.Log.UUID.uuidv7()
+{:ok, doc} = DocumentProfile.create_log(log_id, [])
+
+{:ok, %{writer_seq: 1, entry_id: _}} =
+  DocumentProfile.append(doc, %{"op" => "set-title", "title" => "Draft 3"}, [])
+```
+
+`DocumentProfile` is the surface for the common case of a document with one
+appending process. It also offers an **exact-retry** path:
+`prepare_append/3` derives entry IDs deterministically from an
+`:operation_id`, a caller-supplied `:created_at`, and the log's current state,
+so a process that crashes between preparing and learning whether its commit
+landed can re-prepare, get byte-identical entries, and commit again without
+risk of a duplicate or a fork.
+
+Below that façade, `Commonplace.LogStore.SQLite` implements the multi-writer
+`Commonplace.LogStore` behaviour (`create_log`, `append`, `merge`, `frontier`,
+`read_writer`, `tail_local`), and `Commonplace.Log.Sync` drives frontier and
+range synchronization between two stores. Errors from every layer have the
+shape `{:error, {code, details}}`, where protocol codes (`writer_gap`,
+`writer_fork`, `invalid_entry`, `log_not_found`, …) are distinct from
+`:storage` failures, so a caller can tell a statement about the log's contents
+from an I/O problem.
+
+Configure the storage directory with:
+
+```elixir
+config :commonplace_log, Commonplace.LogStore.SQLite,
+  data_dir: "/var/lib/commonplace-log"
+```
+
+It defaults to `commonplace_log_data/` under the current directory.
+
+## Two implementations, one corpus
+
+The Elixir library is **normative**: where the prose specification and the
+Elixir behaviour disagree, the Elixir behaviour wins and the specification is
+amended (see [Amendment 1](docs/protocol/0.1-amendment-1-beam-native.md)).
+
+The TypeScript code in `worker/` is an **independent, conforming workalike**
+for Cloudflare Durable Objects. It shares no code with the Elixir library —
+each has its own validator, canonicalizer, and merge classifier, written
+against the same specification. Both are checked
+against the same language-neutral vectors in `conformance/`: canonical-JSON
+cases with expected bytes, and invalid-entry cases that fix an error code and
+a reason slug both runtimes must produce. `conformance/check.sh` compares the
+two runtimes with each other and with the stored expectations; `fuzz.sh` does
+seeded differential fuzzing between them.
+
+The point of a second implementation is that the protocol cannot then be
+accidentally defined by Elixir internals — any behaviour only one runtime
+exhibits is a bug in one of them or a gap in the specification.
+
+The worker also contains a second, newer component: a realm sidecar that
+stores many logs in one Durable Object and serves a BEAM engine running in a
+Cloudflare Container over HTTP. The Elixir side of that bridge
+(`Commonplace.Log.Persistence.CloudflareSidecar`) has been exercised against a
+real `wrangler dev` process over a real socket, and the persistence contract
+suite shows identical engine behaviour over local SQLite, an in-memory store,
+and the sidecar. **It has not been deployed to Cloudflare.** What that would
+take, and every claim that could not be verified without an account, is
+recorded in [`docs/sp4b-deployment-readiness.md`](docs/sp4b-deployment-readiness.md).
 
 ## Repository layout
 
 | Path | What is here |
 | --- | --- |
-| `conformance/` | Shared RFC 8785 canonical-JSON and invalid-entry vectors. Each invalid case fixes an error code and shared reason slug. `check.sh` compares both runtimes byte-for-byte with each other and with stored expectations; `fuzz.sh` runs seeded differential fuzzing. The `999-*` canonical-JSON vector is deliberately wrong so the harness must observe its expected failure before reporting success. |
-| `commonplace_log/` | The normative Elixir library. `Entry` and `JCS` validate entries and produce canonical JSON; `MergePlan` classifies merges without side effects; `Engine` owns domain decisions; `Persistence` defines the storage boundary and `Persistence.LocalSQLite` implements it. The per-log SQLite server holds the cross-process lock and writer identity, `Commonplace.LogStore` is the public surface, and `Sync` performs frontier/range synchronization. Storage adapters move rows according to engine decisions; they do not reimplement domain classification. |
-| `worker/` | An independent TypeScript workalike for Cloudflare Durable Objects: entry validation and canonical JSON, SQLite schema, merge classification, store operations, and versioned HTTP endpoints. Its tests exercise the specification's conformance requirements against real Durable Object SQLite storage. |
-| `docs/` | The protocol specification and amendment, architecture proposal, and implementation plans and decision ledgers under `docs/superpowers/plans/`. |
+| [`docs/commonplace-monotonic-log-spec.md`](docs/commonplace-monotonic-log-spec.md) | The protocol, version 0.1-draft. Kept byte-identical to what its author wrote; changes are recorded as amendments in `docs/protocol/`. |
+| [`docs/proposals/`](docs/proposals/) | The architecture proposal that made Elixir normative and set the Cloudflare deployment direction. |
+| [`docs/superpowers/plans/`](docs/superpowers/plans/) | The implementation plans and decision ledgers the code was built from, including decisions that were considered and rejected. They are kept in the open on purpose: the reasoning is part of the record. |
+| `commonplace_log/` | The Elixir library. `Entry` and `Jcs` validate entries and produce canonical bytes; `MergePlan` classifies a merge without side effects; `Engine` makes the domain decisions; `Persistence` is the storage boundary, with `LocalSQLite` and `CloudflareSidecar` adapters; `LogStore.SQLite` is the per-log store; `DocumentProfile` is the single-lane document surface; `Sync` synchronizes two stores. |
+| `worker/` | The TypeScript workalike. `src/do/` is the per-log Durable Object (frozen as a milestone); `src/realm/` is the multi-log sidecar for a BEAM container. A test walks the import graph to ensure `realm/` never borrows `do/`'s canonicalization or merge code. |
+| `conformance/` | The shared vectors and the scripts that run them. One canonical-JSON case is deliberately wrong so the harness has to observe its own expected failure before it may report green. |
 
-## Run the checks
+## Running the checks
 
-Prerequisites and tool versions are recorded in `.tool-versions`; dependencies are managed separately in the Elixir and Node projects.
+Tool versions are pinned in `.tool-versions` (Erlang 27.3, Elixir 1.18, Node 24)
+and CI runs exactly the commands below.
 
 ```sh
-# Elixir library, including property tests
-cd commonplace_log
-mix test
-
-# TypeScript Durable Object
-cd ../worker
-npm test
-
-# From the repository root: stored vectors and cross-runtime byte equality
-cd ..
-bash conformance/check.sh
-
-# Seeded cross-runtime differential fuzzing
-bash conformance/fuzz.sh
+cd commonplace_log && mix deps.get && mix test      # Elixir, incl. property tests (~80 s)
+cd ../worker && npm ci && npm test                  # TypeScript, against real DO SQLite
+cd .. && bash conformance/check.sh                  # cross-runtime byte equality
+bash conformance/fuzz.sh                            # seeded differential fuzzing
 ```
 
-The Elixir suite includes property tests (200 generated cases each) and so takes appreciably longer than a plain unit suite — roughly 80 seconds, against a couple of seconds for the rest. The Elixir row was re-measured on 2026-08-23; the remaining snapshot figures were measured on 2026-08-22:
+Some tests exist to be watched *failing*: the persistence-contract suite runs
+deliberately broken adapters under `PERSISTENCE_CONTRACT_MUTATION` to prove it
+can go red, because a cross-adapter suite that cannot fail proves nothing.
 
-| Check | Result |
-| --- | --- |
-| `mix test` (Elixir) | 1 doctest, 5 properties, 195 tests, 0 failures — ~80 s |
-| `npm test` (TypeScript) | 218 tests across 11 files, 0 failures |
-| `conformance/check.sh` | GREEN over 19 canonical-JSON cases |
-| Shared corpus | 19 canonical-JSON vectors, 30 invalid-entry vectors |
+## Things that look like oversights and are not
 
-Re-run the commands above rather than trusting these figures; they are a snapshot, not a guarantee.
+Each of these was a decision. Changing one without reading its reason would
+remove a guarantee.
 
-## Planned work
+- **The lease epoch is verified inside the commit transaction, never checked
+  beforehand.** An earlier version compared the epoch and then merged; the
+  race between those two reads was observed writing a displaced writer's row
+  under the newly current epoch. A check the commit does not consult is not
+  a fence. See the `DocumentProfile` moduledoc.
+- **Entry identity for prepared appends is derived, not minted.** A generated
+  UUID only survives an in-process retry; a caller that crashes and
+  re-prepares would mint a fresh ID and fork its own log. This is also why
+  `created_at` must be caller-supplied on that path.
+- **`Engine.append` still mints its own entry ID.** It is the base-protocol
+  path; the exact-retry guarantee lives on the `DocumentProfile` surface.
+- **A displaced appender gets `writer_lease_fenced`, not `writer_fork`.** An
+  obsolete authority is not a competing account of history, and reporting
+  corruption for a routine failover would train operators to ignore the
+  alarm.
+- **`conformance/` is a cross-repository surface.** Adding vectors is safe;
+  changing byte rules, numbering, or `expected.hex` files must be announced
+  to the sibling projects that consume them.
 
-The next phase is the Cloudflare realm deployment described in the architecture proposal: a named Cloudflare Container runs the BEAM engine, while its managing Durable Object is a durable SQLite sidecar holding many logs for that realm. The BEAM side reaches storage through a read-set/commit-plan persistence adapter, keeping protocol decisions in the engine rather than in the sidecar.
+## Not in version 0.1
 
-After that comes integration with the wider Commonplace system. Per-log Durable Objects remain a supported sharding strategy, but are not the default deployment unit.
+Merkle trees or content-addressed entry IDs; a CRDT interpretation; a total
+order across writers; consensus or leader election; deletion or compaction
+(an application deletes by appending a tombstone); capabilities or
+signatures; cross-log transactions.
 
-The locally verifiable half of that work is complete. What remains needs a real account, and `docs/sp4b-deployment-readiness.md` records what it needs and — more usefully — every claim that could not be verified without one.
+## Status
 
-## What this repository is waiting on
+The locally verifiable work is complete and green. The repository is waiting
+on Cloudflare account credentials for the realm deployment, on a naming and
+placement policy decision for realms, and on the needs of the sibling
+libraries (`commonplace-doc`, `commonplace-doc-sync`, `commonplace-log-reducer`)
+that build on this one.
 
-Nothing here is blocked on work anyone could do locally. It resumes when one of these happens:
+## License
 
-- **Cloudflare credentials exist** — an account with Workers, Durable Objects, and Containers access. This is the only thing gating the deployment work.
-- **A decision is made on realm naming and placement policy.** Account-independent, but it is an owner's choice rather than an implementation detail.
-- **A sibling library needs something from the log surface.** `commonplace-doc`, `commonplace-doc-sync` and `commonplace-log-reducer` build on this one; a gap in what the public API can express is a reason to reopen it.
-
-## Do not "tidy" these
-
-Each of these looks like an oversight and is a decision. Changing one without reading its reason would remove a guarantee.
-
-- **The lease epoch is verified inside the commit transaction, never checked beforehand.** An earlier implementation compared the epoch and then merged. The race between those two reads was observed writing a displaced writer's row under the newly current epoch. A check the commit does not consult is not a fence. See the `DocumentProfile` moduledoc.
-- **Entry identity for prepared appends is derived, not minted.** A generated UUID only survives an in-process retry; a caller that crashes and re-prepares would mint a fresh id and fork the log. This is also why `created_at` must be caller-supplied.
-- **`Engine.append/6` still mints its own entry id, and that is fine.** It is the base-protocol path. The exact-retry guarantee lives on the Document surface.
-- **`docs/commonplace-monotonic-log-spec.md` is byte-identical to what its author sent.** Normative changes are recorded as amendments beside it, never as edits to it.
-- **`conformance/` is a cross-repo surface.** Adding vectors is safe; changing byte rules, numbering or `expected.hex` must be announced to `commonplace-log-reducer`.
-- **The `worker/src/do/` tree is a frozen milestone**, and `worker/src/realm/` must never import its canonicalization or merge-classification modules. A test enforces this by walking the transitive import graph.
-- **Some tests exist to be watched failing.** The anti-vacuity suite runs deliberately broken adapters under `PERSISTENCE_CONTRACT_MUTATION`; a cross-adapter suite that cannot fail proves nothing.
-
-## Deliberate 0.1 limits
-
-Version 0.1 does not include:
-
-- Merkle trees or content-addressed entry IDs
-- a CRDT interpretation
-- a total order across writers
-- consensus or leader election
-- deletion or compaction; application-level deletion is represented by an appended tombstone entry
-- capabilities or signatures
-- cross-log transactions
+MIT — see [LICENSE](LICENSE).

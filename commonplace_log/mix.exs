@@ -7,7 +7,22 @@ defmodule CommonplaceLog.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: description(),
+      package: package(),
+      source_url: "https://github.com/commonplace-systems/commonplace-log"
+    ]
+  end
+
+  defp description do
+    "An append-only log made of independent, gapless per-writer sequences: " <>
+      "replicas merge by prefix, no consensus, and writer forks are reported and refused."
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/commonplace-systems/commonplace-log"}
     ]
   end
 

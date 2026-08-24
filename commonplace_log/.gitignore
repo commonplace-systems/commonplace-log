@@ -21,3 +21,6 @@ commonplace_log-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Default data_dir for Commonplace.LogStore.SQLite: runtime state, never source.
+/commonplace_log_data/
