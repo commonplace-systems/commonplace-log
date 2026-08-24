@@ -1,7 +1,8 @@
 defmodule Commonplace.LogStore.SQLiteTest do
   use ExUnit.Case, async: false
 
-  alias Commonplace.Log.UUID
+  alias Commonplace.Log.{Frontier, UUID}
+  alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.LogStore.SQLite
   alias Exqlite.Sqlite3
 
@@ -36,6 +37,8 @@ defmodule Commonplace.LogStore.SQLiteTest do
   } do
     operations = [
       frontier: &SQLite.frontier/1,
+      frontier_value: &SQLite.frontier_value/1,
+      read_through: &SQLite.read_through(&1, Frontier.new([]), []),
       read_writer: &SQLite.read_writer(&1, UUID.uuidv7(), after_seq: 0, limit: 10),
       tail_local: &SQLite.tail_local(&1, after_arrival: 0, limit: 10),
       append: &SQLite.append(&1, UUID.uuidv7(), %{"missing" => true}, @created_at),
@@ -238,6 +241,58 @@ defmodule Commonplace.LogStore.SQLiteTest do
     assert Enum.map(frontier, & &1.writer_id) == Enum.sort(writers)
   end
 
+  test "frontier operations dispatch by log_id and match their bound-map forms", %{
+    log_id: log_id
+  } do
+    assert :ok = SQLite.create_log(log_id)
+    writers = Enum.map(1..2, fn _ -> UUID.uuidv7() end)
+    assert {:ok, _} = SQLite.merge(log_id, Enum.flat_map(writers, &chain(log_id, &1, 2)))
+
+    [{server, _}] = Registry.lookup(Commonplace.LogStore.SQLite.Registry, log_id)
+    %{store: store} = :sys.get_state(server)
+    bound_log = %{module: LocalSQLite, store: store, log_id: log_id}
+
+    assert {:ok, frontier} = Frontier.frontier_value(bound_log)
+    assert SQLite.frontier_value(log_id) == {:ok, frontier}
+
+    assert SQLite.read_through(log_id, frontier, page_size: 1) ==
+             Frontier.read_through(bound_log, frontier, page_size: 1)
+  end
+
+  test "unknown frontier tips keep their typed error through dispatch", %{log_id: log_id} do
+    assert :ok = SQLite.create_log(log_id)
+    unknown_tip = UUID.uuidv7()
+
+    assert {:error,
+            %Frontier.Error{
+              operation: :verify,
+              reason: :unknown_tip,
+              entry_id: ^unknown_tip
+            }} = SQLite.read_through(log_id, Frontier.new([unknown_tip]), [])
+  end
+
+  test "frontier operation successes and errors never expose LocalSQLite", %{
+    log_id: log_id
+  } do
+    assert :ok = SQLite.create_log(log_id)
+    assert {:ok, appended} = SQLite.append(log_id, "ignored", %{"n" => 1}, @created_at)
+    frontier = Frontier.new([appended.entry_id])
+    missing_log = UUID.uuidv7()
+
+    results = [
+      SQLite.frontier_value(log_id),
+      SQLite.read_through(log_id, frontier, []),
+      SQLite.frontier_value(missing_log),
+      SQLite.read_through(missing_log, Frontier.new([]), []),
+      SQLite.read_through(log_id, Frontier.new([UUID.uuidv7()]), [])
+    ]
+
+    Enum.each(results, fn result ->
+      refute contains_local_sqlite?(result),
+             "LocalSQLite escaped in #{inspect(result)}"
+    end)
+  end
+
   test "read_writer is exclusive/inclusive and cursor pages equal one unpaged read", %{
     log_id: log_id
   } do
@@ -328,6 +383,24 @@ defmodule Commonplace.LogStore.SQLiteTest do
     assert code in @protocol_codes
     assert is_map(details)
   end
+
+  defp contains_local_sqlite?(%LocalSQLite{}), do: true
+
+  defp contains_local_sqlite?(value) when is_map(value) do
+    value
+    |> Map.to_list()
+    |> Enum.any?(fn {key, item} ->
+      contains_local_sqlite?(key) or contains_local_sqlite?(item)
+    end)
+  end
+
+  defp contains_local_sqlite?(value) when is_list(value),
+    do: Enum.any?(value, &contains_local_sqlite?/1)
+
+  defp contains_local_sqlite?(value) when is_tuple(value),
+    do: value |> Tuple.to_list() |> Enum.any?(&contains_local_sqlite?/1)
+
+  defp contains_local_sqlite?(_value), do: false
 
   defp directory_listing(data_dir), do: data_dir |> File.ls!() |> Enum.sort()
 

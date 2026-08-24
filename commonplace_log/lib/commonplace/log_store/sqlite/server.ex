@@ -16,7 +16,7 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   use GenServer
 
-  alias Commonplace.Log.{Engine, UUID}
+  alias Commonplace.Log.{Engine, Frontier, UUID}
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Exqlite.Sqlite3
 
@@ -85,6 +85,13 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   @doc false
   def frontier(server), do: GenServer.call(server, :frontier)
+
+  @doc false
+  def frontier_value(server), do: GenServer.call(server, :frontier_value)
+
+  @doc false
+  def read_through(server, frontier, opts),
+    do: GenServer.call(server, {:read_through, frontier, opts})
 
   @doc false
   def read_writer(server, writer_id, opts),
@@ -179,6 +186,14 @@ defmodule Commonplace.LogStore.SQLite.Server do
     {:reply, LocalSQLite.frontier(state.store, state.log_id), state}
   end
 
+  def handle_call(:frontier_value, _from, state) do
+    {:reply, Frontier.frontier_value(bound_log(state)), state}
+  end
+
+  def handle_call({:read_through, frontier, opts}, _from, state) do
+    {:reply, Frontier.read_through(bound_log(state), frontier, opts), state}
+  end
+
   def handle_call({:read_writer, writer_id, opts}, _from, state) do
     {:reply, LocalSQLite.read_writer(state.store, state.log_id, writer_id, opts), state}
   end
@@ -200,6 +215,10 @@ defmodule Commonplace.LogStore.SQLite.Server do
       nil -> start_registry()
       _pid -> :ok
     end
+  end
+
+  defp bound_log(state) do
+    %{module: LocalSQLite, store: state.store, log_id: state.log_id}
   end
 
   defp start_registry do

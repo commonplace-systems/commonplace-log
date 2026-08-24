@@ -36,7 +36,7 @@ defmodule Commonplace.LogStore.SQLite do
 
   @behaviour Commonplace.LogStore
 
-  alias Commonplace.Log.Jcs
+  alias Commonplace.Log.{Frontier, Jcs}
   alias Commonplace.LogStore.SQLite.Server
 
   @registry Commonplace.LogStore.SQLite.Registry
@@ -66,6 +66,17 @@ defmodule Commonplace.LogStore.SQLite do
 
   @impl true
   def frontier(log_id), do: dispatch(log_id, :open, &Server.frontier/1)
+
+  @doc "Construct the current portable frontier value for an existing log."
+  @spec frontier_value(String.t()) :: {:ok, Frontier.t()} | {:error, term()}
+  def frontier_value(log_id), do: dispatch(log_id, :open, &Server.frontier_value/1)
+
+  @doc "Read exactly the prefix named by a portable frontier for an existing log."
+  @spec read_through(String.t(), Frontier.t(), keyword()) ::
+          {:ok, [binary()]} | {:error, term()}
+  def read_through(log_id, frontier, opts) do
+    dispatch(log_id, :open, &Server.read_through(&1, frontier, opts))
+  end
 
   @impl true
   def read_writer(log_id, writer_id, opts) do
@@ -180,6 +191,8 @@ defmodule Commonplace.LogStore.SQLite do
 
   defp normalize({:error, {:storage, details}}),
     do: {:error, {:storage, details_map(details)}}
+
+  defp normalize({:error, %Frontier.Error{}} = error), do: error
 
   defp normalize({:error, reason}), do: storage_error(reason)
   defp normalize(other), do: other
