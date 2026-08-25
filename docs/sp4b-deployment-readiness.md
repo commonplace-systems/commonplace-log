@@ -387,6 +387,18 @@ only a thrown-error arm. Fixed in 05b6d6e (Response arm + an unrelated-500 pass-
 re-probed: **503 `realm_capacity`** on the real platform. ⇒ A mapping unit-tested against a stipulated
 shape is a spelling until the platform has produced the shape once.
 
+**Entry v2 on the platform — 2026-08-25 20:14Z, version ca2c28a2.** On a container booted after
+the rollout reached `ready`: a document append (prepared path) lands as `"version":2` with the
+caller's `operation_id`; a base `Engine.append` lands as `"version":1`; both read back through the
+sidecar's `tail-local` in arrival order.
+
+⚠️ **Rollouts are staged, and the stage is visible.** After `wrangler deploy` the application sat in
+state `provisioning` for about six minutes (`wrangler containers list`), and during that window
+containers started FRESH still ran the *old* image — the first post-deploy probe emitted v1 from a
+container booted a minute after the deploy "succeeded". Only after the state read `ready` did new
+starts get the new image. ⇒ "Deployed" means the Worker; the container image follows on its own
+schedule, and a probe taken between the two measures the old image, not a bug.
+
 Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
 production scheduling, two live incarnations of one realm. Nothing about those changed.
 
