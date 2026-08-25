@@ -6,8 +6,7 @@ defmodule Commonplace.Log.EntryTest do
   anchors are `conformance/canonical-json/016` (accept, exact canonical
   bytes), `017` (>1 MiB raw input, small canonical form — the §7.1 cap is on
   canonical bytes), and `018` (float-spelled integer fields, byte-identical
-  canonical form to 016), `019` (v2 with operation_id), and `020` (v2 without
-  operation_id, with float-spelled 2.0).
+  canonical form to 016), and `019` (v2 with required operation_id).
   """
   use ExUnit.Case, async: true
 
@@ -43,8 +42,8 @@ defmodule Commonplace.Log.EntryTest do
   end
 
   describe "corpus discovery (anti-vacuity)" do
-    test "finds at least 35 invalid-entries cases" do
-      assert length(@invalid_cases) >= 35
+    test "finds at least 36 invalid-entries cases" do
+      assert length(@invalid_cases) >= 36
     end
   end
 
@@ -89,20 +88,17 @@ defmodule Commonplace.Log.EntryTest do
       assert Entry.validate_entry(raw) == {:ok, expected}
     end
 
-    for name <- ["019-entry-v2-operation-id", "020-entry-v2-without-operation-id"] do
-      @case_name name
-      test "#{name} validates ok with exactly its expected bytes" do
-        raw = read_input(@canonical_dir, @case_name)
-        expected = read_expected_bytes(@case_name)
-        assert Entry.validate_entry(raw) == {:ok, expected}
-      end
+    test "019-entry-v2-operation-id validates ok with exactly its expected bytes" do
+      raw = read_input(@canonical_dir, "019-entry-v2-operation-id")
+      expected = read_expected_bytes("019-entry-v2-operation-id")
+      assert Entry.validate_entry(raw) == {:ok, expected}
     end
   end
 
   describe "version-2 operation_id boundary and parsed-number semantics" do
     defp mutate_v2(fun) do
       @canonical_dir
-      |> read_input("020-entry-v2-without-operation-id")
+      |> read_input("019-entry-v2-operation-id")
       |> Jason.decode!()
       |> then(fun)
       |> Jason.encode!()
@@ -113,8 +109,8 @@ defmodule Commonplace.Log.EntryTest do
       assert {:ok, _canonical} = Entry.validate_entry(raw)
     end
 
-    test "rejects string version 2 while JSON 2.0 is accepted by case 020" do
-      raw = mutate_v2(&Map.put(&1, "version", "2"))
+    test "rejects string version 2" do
+      raw = mutate_v2(&(&1 |> Map.delete("operation_id") |> Map.put("version", "2")))
       assert Entry.validate_entry(raw) == {:error, "invalid_entry", "wrong-version"}
     end
   end

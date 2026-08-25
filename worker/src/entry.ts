@@ -171,14 +171,17 @@ export function validateEntry(raw: Uint8Array): ValidateEntryResult {
     }
   }
 
-  // Value-based like writer_seq (cases 018 and 020): JSON 1.0/2.0 parse to
+  // Value-based like writer_seq (cases 018 and 037): JSON 1.0/2.0 parse to
   // Numbers 1/2 and pass; anything else — 3, "2", non-numbers — is wrong-version.
   const version = entry["version"];
   if (version !== 1 && version !== 2) {
     return invalid(REASONS.wrongVersion);
   }
 
-  if (version === 2 && Object.hasOwn(entry, "operation_id")) {
+  if (version === 2) {
+    if (!Object.hasOwn(entry, "operation_id")) {
+      return invalid(REASONS.invalidOperationId);
+    }
     const operationId = entry["operation_id"];
     if (typeof operationId !== "string" || operationId.length === 0) {
       return invalid(REASONS.invalidOperationId);

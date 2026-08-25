@@ -26,8 +26,8 @@
 # from uniformly random 64-bit patterns (subnormals and extremes arise
 # naturally; non-finite patterns fail the ::float match and are filtered);
 # well-formed-Unicode strings incl. controls, quotes, backslashes and astral
-# chars; every fifth top-level value is a valid v2 entry (alternating with and
-# without operation_id); object keys mixing BMP >= U+E000 with astral chars to stress
+# chars; every fifth top-level value is a valid v2 entry carrying its required
+# operation_id; object keys mixing BMP >= U+E000 with astral chars to stress
 # UTF-16-vs-code-point key ordering; arrays/objects nested to depth ~6.
 # Deliberately NOT generated (recorded-unpinned classes): integers beyond
 # ±(2^53−1), lone surrogates, duplicate keys.
@@ -143,14 +143,15 @@ counter = :counters.new(3, [])
     name = "fuzz-" <> String.pad_leading(Integer.to_string(i), 4, "0")
 
     # Deterministically reserve every fifth case for the newly versioned entry
-    # shape, while retaining random nested content in its body. Multiples of
-    # ten carry operation_id; the alternating fifths omit it. This guarantees
-    # both optional-field arms are hit for every allowed N (N >= 100).
+    # shape, while retaining random nested content in its body. Every v2 shape
+    # carries the required operation_id.
     value =
       if rem(i, 5) == 0 do
         :counters.add(counter, 2, 1)
 
-        entry = %{
+        :counters.add(counter, 3, 1)
+
+        %{
           "version" => 2,
           "log_id" => "0198cc6e-47ac-7d72-93db-b6fbd92bfca2",
           "entry_id" => "0198cc70-3800-75bd-b56a-5f913fbdeed3",
@@ -158,15 +159,9 @@ counter = :counters.new(3, [])
           "writer_seq" => 1,
           "prev_entry_id" => nil,
           "created_at" => "2026-08-25T19:15:00Z",
-          "body" => %{"fuzz_value" => generated_value}
+          "body" => %{"fuzz_value" => generated_value},
+          "operation_id" => "fuzz-operation-#{i}"
         }
-
-        if rem(i, 10) == 0 do
-          :counters.add(counter, 3, 1)
-          Map.put(entry, "operation_id", "fuzz-operation-#{i}")
-        else
-          entry
-        end
       else
         generated_value
       end
@@ -198,6 +193,5 @@ File.write!(
 IO.puts(
   :stderr,
   "fuzz_differential.exs: wrote #{emitted} cases (v2=#{v2_count}, " <>
-    "with_operation_id=#{v2_with_operation_id_count}, " <>
-    "without_operation_id=#{v2_count - v2_with_operation_id_count}) to #{out_dir}"
+    "with_required_operation_id=#{v2_with_operation_id_count}) to #{out_dir}"
 )

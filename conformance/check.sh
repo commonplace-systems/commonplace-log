@@ -14,7 +14,7 @@
 #              the harness or corpus is broken).
 #
 # Anti-vacuity: the emitted file SETS are diffed against the corpus case list
-# in both directions, and the run fails if fewer than 21 cases were checked.
+# in both directions, and the run fails if fewer than 20 cases were checked.
 #
 # Usage: conformance/check.sh
 set -euo pipefail
@@ -66,8 +66,8 @@ else
 fi
 
 case_count="$(wc -l < "${LISTS}/corpus")"
-if [ "$case_count" -lt 21 ]; then
-  echo "FAIL: only ${case_count} corpus cases found (< 21) — corpus missing or wrong referent"
+if [ "$case_count" -lt 20 ]; then
+  echo "FAIL: only ${case_count} corpus cases found (< 20) — corpus missing or wrong referent"
   fail=1
 fi
 

@@ -21,15 +21,13 @@ function toHex(bytes: Uint8Array): string {
 // measured on CANONICAL bytes, not raw input bytes. 018: the same entry with
 // float-spelled integer fields (27.0, 1.0) — integer-field semantics are
 // VALUE-based, spelling is irrelevant, and the canonical bytes are again
-// exactly 016's. 019/020 are v2 with and without operation_id; 020 spells its
-// version 2.0 to pin parsed-number equality with integer 2.
+// exactly 016's. 019 is v2 with its required operation_id.
 
 const validEntryCases = [
   "016-spec-example-entry",
   "017-whitespace-padded-entry",
   "018-float-spelled-integers",
   "019-entry-v2-operation-id",
-  "020-entry-v2-without-operation-id",
 ];
 
 describe("validateEntry accepts the valid-entry anchor cases", () => {
@@ -64,7 +62,7 @@ describe("cap-side discrimination", () => {
 describe("version-2 operation_id boundary and parsed-number semantics", () => {
   function mutateV2(mutator: (entry: Record<string, unknown>) => void): Uint8Array {
     const source = readFileSync(
-      join(canonicalJsonDir, "020-entry-v2-without-operation-id", "input.json"),
+      join(canonicalJsonDir, "019-entry-v2-operation-id", "input.json"),
       "utf8",
     );
     const entry = JSON.parse(source) as Record<string, unknown>;
@@ -79,8 +77,9 @@ describe("version-2 operation_id boundary and parsed-number semantics", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("rejects string version 2 while JSON 2.0 is accepted by case 020", () => {
+  it("rejects string version 2", () => {
     const result = validateEntry(mutateV2((entry) => {
+      delete entry["operation_id"];
       entry["version"] = "2";
     }));
     expect(result).toEqual({ ok: false, code: "invalid_entry", reason: "wrong-version" });
@@ -115,8 +114,8 @@ const invalidCaseNames = readdirSync(invalidEntriesDir, {
   .sort();
 
 describe("invalid-entries corpus discovery", () => {
-  it("finds at least 35 invalid cases", () => {
-    expect(invalidCaseNames.length).toBeGreaterThanOrEqual(35);
+  it("finds at least 36 invalid cases", () => {
+    expect(invalidCaseNames.length).toBeGreaterThanOrEqual(36);
   });
 });
 

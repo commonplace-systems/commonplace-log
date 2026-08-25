@@ -44,8 +44,10 @@ published contract rather than an internal test aid.
 vectors is safe and needs no announcement.
 
 Exact counts, so a downstream anti-vacuity floor can be set correctly:
-**21 case directories = 20 pass-gate cases + 1 deliberately-wrong (`999-`)**. A
-harness should expect 20 matches and exactly 1 required mismatch.
+**20 case directories = 19 pass-gate cases + 1 deliberately-wrong (`999-`)**. A
+harness should expect 19 matches and exactly 1 required mismatch. Canonical
+number 020 is intentionally unused: its former v2-without-`operation_id` shape
+moved to invalid case 037 when `operation_id` became required.
 
 Numbering policy: new cases take the next unused number in sequence; the `9xx`
 range is reserved for deliberately-wrong cases (harnesses may exclude `9xx-*`
@@ -92,10 +94,9 @@ Input classes currently **covered**:
   form again 016's exact bytes. Pins that integer-field semantics are
   VALUE-based (see the `invalid-entries/` integer-field rule below) — entry
   validators must accept 018.
-- Entry v2 (cases 019 and 020): the eight base fields with optional
-  `operation_id`; 019 pins RFC 8785 key order with `operation_id` between
-  `log_id` and `prev_entry_id`, while 020 omits it and spells `version` as
-  `2.0`, pinning parsed-value acceptance and canonical output `2`.
+- Entry v2 (case 019): the eight base fields plus required `operation_id`,
+  pinning RFC 8785 key order with `operation_id` between `log_id` and
+  `prev_entry_id`.
 
 Input classes deliberately **not covered** (yet):
 
@@ -182,7 +183,6 @@ RFC-stated key order reproduced those bytes exactly
 | `017-whitespace-padded-entry` | Raw input > 1 MiB of inter-token whitespace collapsing to the 327-byte canonical form of 016 — cap-side discrimination: the entry-size cap measures canonical bytes | Input is 016's `input.json` with 1,048,600 spaces injected after the opening brace (raw size 1,048,977 bytes); `expected.hex` is a **deliberate byte-for-byte copy of 016's** (same canonical form, same reasoning as the 011/012 duplication), verified byte-identical with `cmp`; generation script asserted the padded input parses deep-equal to 016's (`VALUE-EQ OK`) |
 | `018-float-spelled-integers` | Float-spelled integer fields (`27.0`, `1.0`) parse to the same doubles as `27`, `1` and canonicalize to 016's exact 327 bytes — input spelling is irrelevant (same philosophy as 011/012); doubles as the value-based integer-field acceptance pin for entry validators | Input is 016's `input.json` with the two literal spellings substituted as raw text (generation script asserted both substitutions applied and the result parses deep-equal to 016's, `VALUE-EQ OK`); `expected.hex` is a **deliberate byte-for-byte copy of 016's**, verified with `cmp` |
 | `019-entry-v2-operation-id` | Complete v2 entry with `operation_id`; key order is `body` < `created_at` < `entry_id` < `log_id` < `operation_id` < `prev_entry_id` < `version` < `writer_id` < `writer_seq` | Hand-derived ASCII key order against RFC 8785 §3.2.3; primitive spellings copied from case 016, `operation_id` serialized as the single JSON string `"operation-123"`, and the canonical text concatenated by hand without consulting either canonicalizer under test; hex is the lowercase byte encoding of that text |
-| `020-entry-v2-without-operation-id` | Complete valid v2 entry without the optional field; raw `2.0` canonicalizes to `2` | Input preserves the former `invalid-entries/009` entry shape, changing only the raw version spelling to `2.0` to pin the value-based decision. Expected key order is case 016's eight-field order and primitives, with canonical version `2`; text concatenated by hand and lowercase-hex encoded without consulting either implementation under test |
 | `999-deliberate-mismatch` | **Intentionally wrong expected bytes** (unsorted `{"b":2,"a":1}` instead of correct `{"a":1,"b":2}`) — the red-demonstration case, see above | Wrongness constructed and verified at derivation time: stored bytes differ from the hand-derived correct canonical form |
 
 ### Sanity checks run at seeding (2026-08-21, node v24.13.1)
@@ -255,6 +255,28 @@ The default differential run used seed `3594639925`: A, B-ts, and B-ex were
 500/500; 100 cases were v2, split exactly 50 with `operation_id` and 50 without.
 Reproduce with `conformance/fuzz.sh 500 3594639925`.
 
+### ENTRYV2-R7 required-operation-id refinement (2026-08-25)
+
+The 19:48Z ruling made `operation_id` required in every version-2 entry.
+Canonical case `020-entry-v2-without-operation-id` was retired without
+renumbering; its exact `input.json` bytes are now invalid case
+`037-v2-missing-operation-id`, classified as `invalid_entry` /
+`invalid-operation-id`. Counts changed from 21 canonical directories (20
+pass-gate + 999) and 35 invalid directories to 20 canonical directories (19
+pass-gate + 999) and 36 invalid directories. The fuzz generator now gives
+every generated valid v2 shape an `operation_id`.
+
+The byte-rule/file-set checker covered all 112 corpus files (20 × 2 canonical
+plus 36 × 2 invalid): UTF-8, no BOM/CR, exactly one trailing LF, companion
+format, exact directory file sets, and JavaScript JSON parseability all passed.
+The retired 020 input and new 037 input compared byte-identical. Before the
+green harness, 999 was judged as an ordinary expectation and both runtimes
+mismatched as required: each emitted `{"a":1,"b":2}` while the stored bytes
+decode to `{"b":2,"a":1}`. The full harness then passed 19 non-9xx matches
+plus the one required mismatch. Differential fuzz seed `3597330646` passed A,
+B-ts, and B-ex 500/500, including 100 v2 shapes all carrying required
+`operation_id`; reproduce with `conformance/fuzz.sh 500 3597330646`.
+
 ## Cross-runtime byte-diff harness — `conformance/check.sh`
 
 The headline artifact for the cross-runtime byte-equality claim: it makes the
@@ -283,7 +305,7 @@ directly), `mix` with the project's deps fetched (versions per the repo-root
    ```
 
 2. **anti-vacuity**: diffs each emitter's file *list* against the corpus case
-   list (both directions) and fails if fewer than 21 cases were found;
+   list (both directions) and fails if fewer than 20 cases were found;
 3. **verdict A**: `diff -r` over the two emitted trees — TypeScript and
    Elixir must be byte-identical on every case including 9xx (both produce
    the *correct* bytes for 999; they must agree with each other even where
@@ -295,7 +317,7 @@ directly), `mix` with the project's deps fetched (versions per the repo-root
 
 Exit is non-zero on any violation. The final summary includes the SELECTOR
 line: green means TS==Elixir==expected over the canonical-json corpus,
-21 cases; **invalid-entries classification is covered by the unit suites,
+20 cases; **invalid-entries classification is covered by the unit suites,
 not this harness**.
 
 ### Recorded red demonstrations (2026-08-22, node v24.13.1, Elixir 1.18.4-otp-27)
@@ -377,10 +399,9 @@ Pipeline:
    ```
 
    emits N pseudo-random I-JSON values, writing per case `fuzz-NNNN`.
-   Every fifth case is deterministically wrapped as a valid v2 entry; multiples
-   of ten include `operation_id`, while the alternating fifths omit it. Thus a
-   default 500-case run covers exactly 100 v2 entries, 50 in each optional-field
-   arm, while retaining random nested content in `body`:
+   Every fifth case is deterministically wrapped as a valid v2 entry carrying
+   its required `operation_id`. Thus a default 500-case run covers exactly 100
+   valid v2 entries while retaining random nested content in `body`:
 
    - `fuzz-NNNN.json` — the input, as the **Elixir canonicalizer's own
      bytes** for the generated value, so every input file is canonical by
@@ -420,7 +441,7 @@ same summary).
 ### Domain SELECTOR — what a green fuzz run does and does not mean
 
 Generated (matching the corpus SELECTOR's covered classes):
-valid v2 entry shapes with and without `operation_id`; `null`/`true`/`false`;
+valid v2 entry shapes, all with required `operation_id`; `null`/`true`/`false`;
 integers only within ±(2^53−1) (small and
 full-range); finite doubles from uniformly random 64-bit patterns — NaN and
 Infinity bit patterns fail Erlang's `::float` match and are filtered, so
@@ -526,7 +547,7 @@ The harness prints this protocol whenever it goes red.
 Vectors for the spec §7 / §7.1 entry validator: inputs that every runtime's
 `validate_entry` must **reject**, each with the exact error code and a shared
 reason slug both runtimes must emit identically. Valid-entry anchors are
-`canonical-json/016-spec-example-entry` for v1 and cases 019/020 for v2;
+`canonical-json/016-spec-example-entry` for v1 and case 019 for v2;
 validators must produce exactly each case's `expected.hex` canonical bytes.
 
 Each case is one directory: `invalid-entries/NNN-short-name/` containing
@@ -553,7 +574,7 @@ check fields in the spec §7 table order (`version`, `log_id`, `entry_id`,
 `writer_id`, `writer_seq`, `prev_entry_id`, `created_at`, `body`),
 required-key presence and version-sensitive allowed-key checks before value
 checks, so any input gets a deterministic slug. Version 1 allows exactly the
-eight required fields; version 2 additionally allows optional `operation_id`.
+eight required fields; version 2 additionally requires `operation_id`.
 "One violation" is not always literally achievable: in `013`/`014` the
 invalid `writer_seq` unavoidably interacts with the `prev_entry_id` rule
 (when `writer_seq` is itself invalid, *any* `prev_entry_id` value is
@@ -582,9 +603,10 @@ token, not the parsed value.
 
 Notes on individual behaviors:
 
-- **`operation_id`**: only v2 may carry it. If present it must be a non-empty
-  string whose UTF-8 encoding is at most 256 bytes; empty, non-string, and
-  257-byte forms use `invalid_entry` / `invalid-operation-id`. The accepted
+- **`operation_id`**: every v2 entry must carry it, and only v2 may carry it.
+  It must be a non-empty string whose UTF-8 encoding is at most 256 bytes;
+  absent, empty, non-string, and 257-byte forms use `invalid_entry` /
+  `invalid-operation-id`. The accepted
   256-byte boundary is pinned in both runtime unit suites. It is opaque and
   duplicate values are accepted; mixed v1/v2 lanes and cross-writer duplicate
   operation IDs are pinned by both runtimes' merge tests.
@@ -631,8 +653,8 @@ Notes on individual behaviors:
 Violation classes currently **covered** (one case each unless noted): every
 required top-level field missing (8 cases, incl. the `prev_entry_id` key
 absent entirely); wrong `version` (version 3); v1 `operation_id` and unrelated
-v2 extra key (both `extra-top-level-field`); empty, non-string, and 257-byte v2
-`operation_id` (all `invalid-operation-id`); non-lowercase UUID;
+v2 extra key (both `extra-top-level-field`); missing, empty, non-string, and
+257-byte v2 `operation_id` (all `invalid-operation-id`); non-lowercase UUID;
 malformed UUID in `entry_id`, `writer_id`, and a non-null `prev_entry_id`
 (3 cases, same slug); `writer_seq` zero / negative (2 cases, same slug),
 non-integer (1.5), and integral-but-unsafe (`1e30`, same slug as 1.5 —
@@ -729,6 +751,7 @@ Violation classes deliberately **not covered** (yet):
 | `034-v2-operation-id-over-256-bytes` | `invalid_entry` | `invalid-operation-id` |
 | `035-version-3` | `invalid_entry` | `wrong-version` |
 | `036-v2-extra-top-level-field` | `invalid_entry` | `extra-top-level-field` |
+| `037-v2-missing-operation-id` | `invalid_entry` | `invalid-operation-id` |
 
 Provenance: the 29 retained pre-Amendment-2 inputs are byte-identical to the
 original corpus and use its scripted raw-text mutations. Cases 031-036 are the
@@ -736,4 +759,6 @@ same spec §7 example bytes with exactly the displayed Amendment-2 mutation
 inserted by hand: v1 `operation_id`, empty/non-string/257-ASCII-byte v2
 `operation_id`, version 3, or unrelated v2 key. No input was serialized through
 a runtime JSON encoder. `error.txt` contents were assigned by hand from spec
-§7/§7.1/§11.6 plus Amendment 2; `invalid-operation-id` is the new shared slug.
+§7/§7.1/§11.6 plus Amendment 2; `invalid-operation-id` is the shared slug.
+Case 037's `input.json` is byte-identical to retired canonical case 020; only
+its corpus location and companion expectation changed.

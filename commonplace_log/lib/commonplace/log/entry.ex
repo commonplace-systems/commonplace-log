@@ -259,7 +259,7 @@ defmodule Commonplace.Log.Entry do
     end
   end
 
-  # Value-based like writer_seq (cases 018 and 020): 1.0 == 1 and 2.0 == 2
+  # Value-based like writer_seq (cases 018 and 037): 1.0 == 1 and 2.0 == 2
   # pass; anything else — 3, "2", non-numbers — is wrong-version. Elixir's
   # == compares mixed int/float numerically and never equates non-numbers to a
   # number, mirroring TypeScript comparisons against the parsed Number 1/2.
@@ -272,7 +272,7 @@ defmodule Commonplace.Log.Entry do
   defp check_operation_id(%{"version" => version} = entry) when version == 2 do
     case Map.fetch(entry, "operation_id") do
       :error ->
-        :ok
+        invalid(:invalid_operation_id)
 
       {:ok, operation_id}
       when is_binary(operation_id) and byte_size(operation_id) in 1..@max_operation_id_bytes ->
