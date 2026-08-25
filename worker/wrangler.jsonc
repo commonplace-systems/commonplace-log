@@ -26,6 +26,8 @@
       "class_name": "RealmNode",
       "image": "../commonplace_log/Dockerfile",
       "image_build_context": "../commonplace_log",
+      // Bump to force a rollout; the Dockerfile turns it into a label only.
+      "image_vars": { "BUILD_STAMP": "2026-08-25T04-r1" },
       "max_instances": 3,
       "instance_type": "lite",
       // Keep the displaced incarnation alive for two minutes while its replacement starts;

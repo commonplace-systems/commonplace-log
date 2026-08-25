@@ -189,11 +189,16 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
                  limit: 10
                )
 
+      # arrival_seq is a per-database cursor (spec §4), not per-log: other logs
+      # in the same realm advance it, so only its presence and monotonicity are
+      # asserted here, never a literal value.
       assert {:ok,
               %{
-                entries: [%{canonical_bytes: @wire_bytes, arrival_seq: 1}],
+                entries: [%{canonical_bytes: @wire_bytes, arrival_seq: arrival_seq}],
                 next_after_arrival: nil
               }} = CloudflareSidecar.tail_local(store, @log_id, after_arrival: 0, limit: 10)
+
+      assert is_integer(arrival_seq) and arrival_seq >= 1
 
       assert {:error, :stale_revision} =
                CloudflareSidecar.commit(store, %CommitPlan{

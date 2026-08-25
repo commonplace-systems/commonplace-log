@@ -14,6 +14,11 @@ RUN mix compile && mix release commonplace_log
 
 FROM debian:bookworm-slim AS runtime
 
+# Bump image_vars.BUILD_STAMP in worker/wrangler.jsonc to force a container
+# rollout without a code change (used to observe old/new incarnation overlap).
+ARG BUILD_STAMP=dev
+LABEL org.commonplace.build_stamp=$BUILD_STAMP
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libstdc++6 openssl ca-certificates libncurses6 \
     && rm -rf /var/lib/apt/lists/*
