@@ -368,6 +368,25 @@ double → real `wrangler dev` socket → the real deployment (`test/cloudflare_
    restart or another opener, cannot write. §4's "two live incarnations" item closes as
    *not reachable*, with the fence verified against the reachable case.
 
+**⭐ Realm naming, creation, authorization, placement — jes ruled all five questions of
+`docs/proposals/2026-08-25-realm-naming-and-placement.md` on 2026-08-25 (Q1 1a, Q2 2a, Q3 3a+2a,
+Q4 accepted, Q5 not now). Built in b05a673, 1f82904, 05b6d6e; deployed as 4945452d. Hand-run over
+the public gateway, 18 arms, every one as specified:** uncreated realm → 404 on sidecar, engine and
+node paths; wrong deployment token / slug id / bad hint on create → 401 / 404 / 400; create with
+`location_hint: wnam` → 201 with the secret; second create → 409 and no secret; realm route with the
+deployment token → 401; with another realm's secret → 401; with its own → proceeds through
+create-log, container boot, document create/append (BEAM → `storage.internal`, no secret in that
+path), frontier; `/realm/create` via a realm secret → 404; restart → 202. The Elixir deployed test
+(now creating its realms and carrying wrong-secret and cross-realm arms) passes.
+
+**The capacity arm, run on the platform, found a defect the unit test could not:** with
+`max_instances: 10`, eleven fresh realms hit the cap at the seventh (earlier containers still
+running — the cap is per application), and the DO returned the platform's raw 500 text. The SDK
+*resolves* `containerFetch` to a 500 Response for this case rather than throwing; the mapping had
+only a thrown-error arm. Fixed in 05b6d6e (Response arm + an unrelated-500 pass-through control);
+re-probed: **503 `realm_capacity`** on the real platform. ⇒ A mapping unit-tested against a stipulated
+shape is a spelling until the platform has produced the shape once.
+
 Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
 production scheduling, two live incarnations of one realm. Nothing about those changed.
 
