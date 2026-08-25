@@ -15,6 +15,7 @@ export interface Env {
   REALM_CONTAINER: DurableObjectNamespace<RealmContainer>;
   REALM_NODE?: DurableObjectNamespace<RealmNode>;
   GATEWAY_TOKEN?: string;
+  REALM_TEST_LEVERS?: string;
 }
 
 /**

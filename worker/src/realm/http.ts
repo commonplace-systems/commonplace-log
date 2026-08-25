@@ -202,6 +202,7 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
           format_version: result.formatVersion,
           revision: result.revision,
           lease_epoch: result.leaseEpoch,
+          document_writer_id: result.documentWriterId,
           tips: result.tips.map((tip) => ({
             writer_id: tip.writerId,
             last_seq: tip.lastSeq,
@@ -222,8 +223,8 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
 
     if (path === "/take-lease") {
       const { log_id } = value;
-      const leaseEpoch = store.takeLease(string(log_id));
-      return json({ ok: true, lease_epoch: leaseEpoch });
+      const lease = store.takeLease(string(log_id));
+      return json({ ok: true, lease_epoch: lease.leaseEpoch, writer_id: lease.writerId });
     }
 
     if (path === "/commit") {

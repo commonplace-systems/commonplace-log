@@ -1,6 +1,11 @@
 import proposal from "beam-native-revision.md?raw";
 import { describe, expect, it } from "vitest";
-import { IMMUTABILITY_TRIGGERS, SCHEMA_DDL, initSchema } from "../../src/realm/schema";
+import {
+  DOCUMENT_WRITER_ID_COLUMN_DDL,
+  IMMUTABILITY_TRIGGERS,
+  SCHEMA_DDL,
+  initSchema,
+} from "../../src/realm/schema";
 import { caught, withRealm } from "./helpers";
 
 function proposalDdl(): string {
@@ -32,6 +37,7 @@ describe("realm section 7.2 schema on real DO SQLite", () => {
         expect(objects.get(trigger)?.type).toBe("trigger");
       const columns = sql.exec("PRAGMA table_info(logs)").toArray().map((row) => String(row.name));
       expect(columns).toContain("lease_epoch");
+      expect(columns).toContain("document_writer_id");
       expect(IMMUTABILITY_TRIGGERS).toContain("entries are immutable");
     });
   });
@@ -40,6 +46,40 @@ describe("realm section 7.2 schema on real DO SQLite", () => {
     await withRealm((sql) => {
       initSchema(sql);
       expect(() => initSchema(sql)).not.toThrow();
+    });
+  });
+
+  it("idempotently migrates an existing pre-writer-column database without changing its rows", async () => {
+    await withRealm((sql) => {
+      sql.exec(SCHEMA_DDL);
+      sql.exec("ALTER TABLE logs ADD COLUMN lease_epoch INTEGER NOT NULL DEFAULT 0");
+      sql.exec(
+        `INSERT INTO logs (log_id, format_version, revision, created_at, lease_epoch)
+         VALUES ('existing', 7, 3, 'before-migration', 2)`,
+      );
+
+      initSchema(sql);
+      expect(() => initSchema(sql)).not.toThrow();
+
+      const columns = sql.exec("PRAGMA table_info(logs)").toArray();
+      expect(columns.filter((row) => row.name === "document_writer_id")).toHaveLength(1);
+      expect(columns.find((row) => row.name === "document_writer_id")).toMatchObject({
+        type: "TEXT", notnull: 0,
+      });
+      expect(sql.exec(
+        `SELECT log_id, format_version, revision, created_at, lease_epoch, document_writer_id
+         FROM logs`,
+      ).toArray()).toEqual([{
+        log_id: "existing",
+        format_version: 7,
+        revision: 3,
+        created_at: "before-migration",
+        lease_epoch: 2,
+        document_writer_id: null,
+      }]);
+      expect(DOCUMENT_WRITER_ID_COLUMN_DDL).toBe(
+        "ALTER TABLE logs ADD COLUMN document_writer_id TEXT",
+      );
     });
   });
 

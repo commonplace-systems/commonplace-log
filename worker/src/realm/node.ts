@@ -5,6 +5,7 @@ import { RealmStore } from "./store";
 
 interface Env {
   REALM_NODE: DurableObjectNamespace<RealmNode>;
+  REALM_TEST_LEVERS?: string;
 }
 
 /** One Container-managing Durable Object and SQLite sidecar per realm. */
@@ -12,6 +13,10 @@ export class RealmNode extends Container<Env> {
   defaultPort = 4000;
   sleepAfter = "10m";
   enableInternet = false;
+  // Development-only test controls are explicitly bridged into the BEAM container.
+  envVars = {
+    COMMONPLACE_REALM_TEST_LEVERS: this.env.REALM_TEST_LEVERS ?? "",
+  };
 
   private readonly store = new RealmStore(this.ctx.storage.sql, this.ctx.storage);
 

@@ -6,6 +6,8 @@
   // (workerd 1.20260310.1).
   "compatibility_date": "2026-03-10",
   "compatibility_flags": ["nodejs_compat"],
+  // Development deployment only. This must be "" or absent in every other deployment.
+  "vars": { "REALM_TEST_LEVERS": "1" },
   "durable_objects": {
     "bindings": [
       { "name": "COMMONPLACE_LOG", "class_name": "CommonplaceLog" },
@@ -25,7 +27,10 @@
       "image": "../commonplace_log/Dockerfile",
       "image_build_context": "../commonplace_log",
       "max_instances": 3,
-      "instance_type": "lite"
+      "instance_type": "lite",
+      // Keep the displaced incarnation alive for two minutes while its replacement starts;
+      // this rollout overlap is the condition fenced by the durable lease epoch.
+      "rollout_active_grace_period": 120
     }
   ]
 }

@@ -49,10 +49,20 @@ describe("realm store", () => {
 
   it("takes monotonically increasing writer leases", async () => {
     await withRealm((_sql, store) => {
-      store.createLog(A);
-      expect(store.takeLease(A)).toBe(1);
-      expect(store.takeLease(A)).toBe(2);
-      expect(store.readSet(A, { writers: [], coordinates: [], entryIds: [] }).leaseEpoch).toBe(2);
+      store.createLog(A); store.createLog(B);
+      const first = store.takeLease(A);
+      const second = store.takeLease(A);
+      const fresh = store.takeLease(B);
+      expect(first).toEqual({
+        leaseEpoch: 1,
+        writerId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+      });
+      expect(second).toEqual({ leaseEpoch: 2, writerId: first.writerId });
+      expect(fresh.leaseEpoch).toBe(1);
+      expect(fresh.writerId).not.toBe(first.writerId);
+      expect(store.readSet(A, { writers: [], coordinates: [], entryIds: [] })).toMatchObject({
+        leaseEpoch: 2, documentWriterId: first.writerId,
+      });
     });
   });
 
@@ -75,7 +85,7 @@ describe("realm store", () => {
   it("obsolete_epoch is distinct from stale_revision and writes nothing", async () => {
     await withRealm((sql, store) => {
       store.createLog(A);
-      const epoch = store.takeLease(A);
+      const epoch = store.takeLease(A).leaseEpoch;
       expect(epoch).toBe(1);
       const before = JSON.stringify({
         log: sql.exec("SELECT revision, lease_epoch FROM logs WHERE log_id = ?", A).one(),
@@ -99,7 +109,7 @@ describe("realm store", () => {
       expect(store.readSet(A, {
         writers: [W1], coordinates: [{ writerId: W1, writerSeq: 1 }], entryIds: ["entry-one"],
       })).toEqual({
-        logId: A, formatVersion: 1, revision: 1, leaseEpoch: 0,
+        logId: A, formatVersion: 1, revision: 1, leaseEpoch: 0, documentWriterId: null,
         tips: [{ writerId: W1, lastSeq: 1, lastEntryId: "entry-one" }],
         coordinates: [{ writerId: W1, writerSeq: 1, canonicalBytes: bytes("bytes-one") }],
         entryIds: [{ entryId: "entry-one", canonicalBytes: bytes("bytes-one") }],
@@ -110,7 +120,7 @@ describe("realm store", () => {
   it("isolates two logs across metadata, entries, tips, frontier, and reads", async () => {
     await withRealm((sql, store) => {
       store.createLog(A); store.createLog(B);
-      const bEpoch = store.takeLease(B);
+      const bEpoch = store.takeLease(B).leaseEpoch;
       store.commit(plan(B, 0, bEpoch, "b"));
       const beforeB = JSON.stringify({
         log: sql.exec("SELECT revision, lease_epoch FROM logs WHERE log_id = ?", B).one(),

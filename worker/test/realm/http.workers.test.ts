@@ -125,10 +125,30 @@ describe("RealmContainer HTTP contract", () => {
   it("advances leases and fences an earlier lease without writing rows", async () => {
     const stub = realmStub();
     await createLog(stub, "lease-log");
-    expect(await post(stub, "/take-lease", { log_id: "lease-log" }))
-      .toEqual({ status: 200, json: { ok: true, lease_epoch: 1 } });
-    expect(await post(stub, "/take-lease", { log_id: "lease-log" }))
-      .toEqual({ status: 200, json: { ok: true, lease_epoch: 2 } });
+    await createLog(stub, "fresh-log");
+    const first = await post(stub, "/take-lease", { log_id: "lease-log" });
+    const second = await post(stub, "/take-lease", { log_id: "lease-log" });
+    const fresh = await post(stub, "/take-lease", { log_id: "fresh-log" });
+    expect(first).toEqual({ status: 200, json: {
+      ok: true,
+      lease_epoch: 1,
+      writer_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+    } });
+    expect(second).toEqual({ status: 200, json: {
+      ok: true, lease_epoch: 2, writer_id: first.json.writer_id,
+    } });
+    expect(fresh).toEqual({ status: 200, json: {
+      ok: true,
+      lease_epoch: 1,
+      writer_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+    } });
+    expect(fresh.json.writer_id).not.toBe(first.json.writer_id);
+    const read = await post(stub, "/read-set", {
+      log_id: "lease-log", writers: [], coordinates: [], entry_ids: [],
+    });
+    expect(read.json.read_set).toMatchObject({
+      lease_epoch: 2, document_writer_id: first.json.writer_id,
+    });
 
     const before = await inspect(stub);
     const obsolete = await post(stub, "/commit", plan("lease-log", 0, 1, [entry("old", "alice", 1, null)]));
@@ -271,6 +291,7 @@ describe("RealmContainer HTTP contract", () => {
     const b = await post(stub, "/frontier", { log_id: "log-b" });
     expect(a).toEqual({ status: 200, json: { ok: true, read_set: {
       log_id: "log-a", format_version: 1, revision: 1, lease_epoch: 0,
+      document_writer_id: null,
       tips: [{ writer_id: "writer", last_seq: 1, last_entry_id: "a1" }],
       coordinates: [{ writer_id: "writer", writer_seq: 1,
         canonical_bytes: entry("a1", "writer", 1, null).canonical_bytes }],

@@ -52,6 +52,7 @@ export interface RealmReadSet {
   formatVersion: number;
   revision: number;
   leaseEpoch: number;
+  documentWriterId: string | null;
   tips: TipRow[];
   coordinates: Array<{ writerId: string; writerSeq: number; canonicalBytes: Uint8Array }>;
   entryIds: Array<{ entryId: string; canonicalBytes: Uint8Array }>;
@@ -66,6 +67,11 @@ export interface ReadWriterOptions {
 export interface TailLocalOptions {
   afterArrival: number;
   limit: number;
+}
+
+export interface Lease {
+  leaseEpoch: number;
+  writerId: string;
 }
 
 interface Transactor {
@@ -114,21 +120,31 @@ export class RealmStore {
     }
   }
 
-  takeLease(logId: string): number {
+  takeLease(logId: string): Lease {
     try {
       return this.txn.transactionSync(() => {
         const log = this.requireLog(logId);
         const epoch = Number(log.lease_epoch);
+        const writerId = log.document_writer_id === null
+          ? crypto.randomUUID().toLowerCase()
+          : String(log.document_writer_id);
         const rows = this.sql
           .exec(
-            `UPDATE logs SET lease_epoch = lease_epoch + 1
-             WHERE log_id = ? AND lease_epoch = ? RETURNING lease_epoch`,
+            `UPDATE logs
+             SET lease_epoch = lease_epoch + 1,
+                 document_writer_id = COALESCE(document_writer_id, ?)
+             WHERE log_id = ? AND lease_epoch = ?
+             RETURNING lease_epoch, document_writer_id`,
+            writerId,
             logId,
             epoch,
           )
           .toArray();
         if (rows[0] === undefined) throw new RealmStoreError("stale_epoch");
-        return Number(rows[0].lease_epoch);
+        return {
+          leaseEpoch: Number(rows[0].lease_epoch),
+          writerId: String(rows[0].document_writer_id),
+        };
       });
     } catch (error) {
       translateStorageError(error);
@@ -193,6 +209,7 @@ export class RealmStore {
         formatVersion: Number(log.format_version),
         revision: Number(log.revision),
         leaseEpoch: Number(log.lease_epoch),
+        documentWriterId: log.document_writer_id === null ? null : String(log.document_writer_id),
         tips,
         coordinates,
         entryIds,
@@ -341,7 +358,8 @@ export class RealmStore {
     if (!hasLogs) throw new RealmStoreError("not_found");
     const row = this.sql
       .exec(
-        "SELECT log_id, format_version, revision, lease_epoch, created_at FROM logs WHERE log_id = ?",
+        `SELECT log_id, format_version, revision, lease_epoch, document_writer_id, created_at
+         FROM logs WHERE log_id = ?`,
         logId,
       )
       .toArray()[0];

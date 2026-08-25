@@ -59,6 +59,10 @@ BEGIN
 END;
 `;
 
+/** Durable single-lane identity, additive to the pinned proposal layout. */
+export const DOCUMENT_WRITER_ID_COLUMN_DDL =
+  "ALTER TABLE logs ADD COLUMN document_writer_id TEXT";
+
 function hasTable(sql: SqlStorage, name: string): boolean {
   return sql
     .exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name)
@@ -72,6 +76,9 @@ export function initSchema(sql: SqlStorage): void {
   const logColumns = sql.exec("PRAGMA table_info(logs)").toArray();
   if (!logColumns.some((column) => column.name === "lease_epoch")) {
     sql.exec("ALTER TABLE logs ADD COLUMN lease_epoch INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!logColumns.some((column) => column.name === "document_writer_id")) {
+    sql.exec(DOCUMENT_WRITER_ID_COLUMN_DDL);
   }
 
   sql.exec(IMMUTABILITY_TRIGGERS);
