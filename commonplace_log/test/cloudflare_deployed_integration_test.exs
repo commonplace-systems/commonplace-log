@@ -99,8 +99,23 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
     lane = [lane: {SidecarLane, store}]
 
     assert {:ok, first} = DocumentProfile.create_log(log_id, lane)
-    assert {:ok, %{writer_seq: 1}} = DocumentProfile.append(first, %{"n" => 1}, [])
+    operation_id = "deployed-document-profile-operation"
+
+    assert {:ok, prepared} =
+             DocumentProfile.prepare_append(first, [%{"n" => 1}],
+               operation_id: operation_id,
+               created_at: "2026-08-25T19:15:00Z"
+             )
+
+    assert {:ok, %{inserted: 1}} = DocumentProfile.commit_prepared(first, prepared)
     writer_id = first.writer_id
+
+    assert {:ok, %{entries: [%{operation_id: ^operation_id, writer_seq: 1}], next_after_seq: nil}} =
+             CloudflareSidecar.read_writer(store, log_id, writer_id,
+               after_seq: 0,
+               limit: 10
+             )
+
     assert {:ok, second} = DocumentProfile.open_log(log_id, lane)
     assert second.writer_id == writer_id
     assert {:ok, before_frontier} = CloudflareSidecar.frontier(store, log_id)

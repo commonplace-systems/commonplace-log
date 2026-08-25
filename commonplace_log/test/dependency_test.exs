@@ -30,7 +30,9 @@ defmodule Commonplace.Log.DependencyTest do
     source = Enum.map_join(paths, "\n", &File.read!/1)
     assert source =~ "Persistence"
 
-    for forbidden <- ["Commonplace.Log.Entry", "Commonplace.Log.Jcs", "Commonplace.Log.MergePlan"] do
+    # Entry.operation_id/1 is the deliberate canonical-byte read projection;
+    # persistence still must not own canonicalization or merge classification.
+    for forbidden <- ["Commonplace.Log.Jcs", "Commonplace.Log.MergePlan"] do
       refute source =~ forbidden
     end
   end

@@ -42,6 +42,14 @@ defmodule Commonplace.Log.DocumentProfileSidecarTest do
 
     assert {:ok, %{writers: [%{writer_id: ^writer_id, seq: 2}]}} =
              CloudflareSidecar.frontier(ctx.store, ctx.log_id)
+
+    assert {:ok, %{entries: entries, next_after_seq: nil}} =
+             CloudflareSidecar.read_writer(ctx.store, ctx.log_id, writer_id,
+               after_seq: 0,
+               limit: 10
+             )
+
+    assert Enum.map(entries, & &1.operation_id) == [nil, nil]
   end
 
   test "re-preparing exact inputs over the sidecar has one byte-identical logical effect", ctx do
@@ -59,6 +67,24 @@ defmodule Commonplace.Log.DocumentProfileSidecarTest do
     assert {:ok, %{inserted: 0, present: 2}} = DocumentProfile.commit_prepared(handle, retry)
     assert lane_bytes(ctx.store, ctx.log_id, handle.writer_id) == first_bytes
     assert length(first_bytes) == 2
+
+    assert {:ok, %{entries: writer_entries, next_after_seq: nil}} =
+             CloudflareSidecar.read_writer(ctx.store, ctx.log_id, handle.writer_id,
+               after_seq: 0,
+               limit: 100
+             )
+
+    assert Enum.map(writer_entries, & &1.operation_id) ==
+             ["sidecar-exact-retry", "sidecar-exact-retry"]
+
+    assert {:ok, %{entries: local_entries, next_after_arrival: nil}} =
+             CloudflareSidecar.tail_local(ctx.store, ctx.log_id,
+               after_arrival: 0,
+               limit: 100
+             )
+
+    assert Enum.map(local_entries, & &1.operation_id) ==
+             ["sidecar-exact-retry", "sidecar-exact-retry"]
   end
 
   test "sidecar open never creates an unknown log", ctx do

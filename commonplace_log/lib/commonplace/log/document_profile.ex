@@ -25,15 +25,21 @@ defmodule Commonplace.Log.DocumentProfile do
   `commit_prepared/2`. Preparation requires both `:operation_id` and
   `:created_at`; the timestamp is caller-supplied because generating it during
   preparation would make crash-time re-preparation produce different bytes.
+  Prepared appends emit version-2 entries and persist the caller's exact
+  operation ID. `append/3`, the non-prepared convenience, and
+  `Commonplace.Log.Engine.append` continue to emit version-1 entries because
+  neither has an operation ID.
   `append_batch/3` is the prepare-then-commit convenience form. The prepared
   value is opaque and binds exact canonical entries without exposing lane
   selection on this public surface.
 
-  Entry IDs are deterministic digests of the operation ID, batch index, log
-  ID, bound writer ID, writer sequence, predecessor entry ID, canonical body
-  bytes, and created-at value. Preparation searches the existing lane for an
-  exact derived batch before selecting the next coordinate. Consequently,
-  identical inputs after an ambiguous committed result recover the same bytes.
+  Entry-ID derivation is unchanged in principle: IDs are deterministic digests
+  of canonical material covering the operation ID, batch index, log ID, bound
+  writer ID, writer sequence, predecessor entry ID, canonical body bytes, and
+  created-at value. The emitted entry's canonical bytes now also carry the
+  operation ID. Preparation searches the existing lane for an exact derived
+  batch before selecting the next coordinate. Consequently, identical inputs
+  after an ambiguous committed result recover the same bytes.
 
   Two policy choices, both ruled by jes on 2026-08-23:
 
@@ -56,6 +62,12 @@ defmodule Commonplace.Log.DocumentProfile do
       exactly the cases that could corrupt history and no others. This cost
       was named before the choice was made and was accepted deliberately in
       preference to a durable registry with a retention policy.
+
+      On 2026-08-25 jes knowingly reversed this limitation ("yep, v2 persist"):
+      `operation_id` is now persisted in version-2 entries, so a reader can
+      derive the applied-operation set by replay. The log STILL keeps no
+      registry and STILL does not enforce uniqueness of the key — coordinate
+      occupancy and derived entry IDs remain the mechanism.
 
   The epoch fence is verified at commit rather than checked beforehand. An
   earlier implementation compared the epoch and then called merge; the race
@@ -286,6 +298,12 @@ defmodule Commonplace.Log.DocumentProfile do
       not (is_binary(opts[:operation_id]) and opts[:operation_id] != "") ->
         invalid_prepared(:operation_id_must_be_nonempty_string)
 
+      not String.valid?(opts[:operation_id]) ->
+        invalid_prepared(:operation_id_must_be_valid_utf8_string)
+
+      byte_size(opts[:operation_id]) > 256 ->
+        invalid_prepared(:operation_id_must_be_at_most_256_bytes)
+
       not Keyword.has_key?(opts, :created_at) ->
         invalid_prepared(:created_at_required)
 
@@ -423,9 +441,10 @@ defmodule Commonplace.Log.DocumentProfile do
 
       raw =
         Jason.encode!(%{
-          "version" => 1,
+          "version" => 2,
           "log_id" => log_id,
           "entry_id" => entry_id,
+          "operation_id" => operation_id,
           "writer_id" => writer_id,
           "writer_seq" => writer_seq,
           "prev_entry_id" => prev_id,

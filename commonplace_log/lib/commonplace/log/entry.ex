@@ -135,6 +135,18 @@ defmodule Commonplace.Log.Entry do
     end
   end
 
+  @doc "Return the persisted operation ID decoded from canonical entry bytes, or nil."
+  @spec operation_id(binary()) :: String.t() | nil
+  def operation_id(canonical_bytes) when is_binary(canonical_bytes) do
+    case Jason.decode(canonical_bytes) do
+      {:ok, %{"version" => 2, "operation_id" => operation_id}} when is_binary(operation_id) ->
+        operation_id
+
+      _other ->
+        nil
+    end
+  end
+
   defp invalid(reason_key), do: {:error, "invalid_entry", reason(reason_key)}
 
   defp check_utf8(raw) do

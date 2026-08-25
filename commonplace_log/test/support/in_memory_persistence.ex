@@ -3,6 +3,7 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
 
   @behaviour Commonplace.Log.Persistence
 
+  alias Commonplace.Log.Entry
   alias Commonplace.Log.Persistence.{CommitPlan, ReadSet}
 
   def start_link(_opts \\ []) do
@@ -175,7 +176,11 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
 
       entries =
         Enum.map(page, fn {{_writer, writer_seq}, row} ->
-          %{canonical_bytes: row.canonical_bytes, writer_seq: writer_seq}
+          %{
+            canonical_bytes: row.canonical_bytes,
+            writer_seq: writer_seq,
+            operation_id: Entry.operation_id(row.canonical_bytes)
+          }
         end)
 
       {:ok,
@@ -203,7 +208,11 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
 
       entries =
         Enum.map(page, fn row ->
-          %{canonical_bytes: row.canonical_bytes, arrival_seq: row.arrival_seq}
+          %{
+            canonical_bytes: row.canonical_bytes,
+            arrival_seq: row.arrival_seq,
+            operation_id: Entry.operation_id(row.canonical_bytes)
+          }
         end)
 
       {:ok,

@@ -14,6 +14,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
   @behaviour Commonplace.Log.Persistence
 
+  alias Commonplace.Log.Entry
   alias Commonplace.Log.Persistence.{CommitPlan, ReadSet}
   alias __MODULE__.Httpc
 
@@ -438,7 +439,12 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
          :ok <- exact_keys(row, ["canonical_bytes", "writer_seq"]),
          {:ok, bytes} <- decode_base64(row["canonical_bytes"]),
          {:ok, writer_seq} <- positive_integer(row["writer_seq"]) do
-      {:ok, %{canonical_bytes: bytes, writer_seq: writer_seq}}
+      {:ok,
+       %{
+         canonical_bytes: bytes,
+         writer_seq: writer_seq,
+         operation_id: Entry.operation_id(bytes)
+       }}
     else
       {:error, _reason} = error -> error
       value when not is_map(value) -> protocol("writer entry is not an object")
@@ -465,7 +471,12 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
          :ok <- exact_keys(row, ["canonical_bytes", "arrival_seq"]),
          {:ok, bytes} <- decode_base64(row["canonical_bytes"]),
          {:ok, arrival_seq} <- positive_integer(row["arrival_seq"]) do
-      {:ok, %{canonical_bytes: bytes, arrival_seq: arrival_seq}}
+      {:ok,
+       %{
+         canonical_bytes: bytes,
+         arrival_seq: arrival_seq,
+         operation_id: Entry.operation_id(bytes)
+       }}
     else
       {:error, _reason} = error -> error
       value when not is_map(value) -> protocol("local entry is not an object")

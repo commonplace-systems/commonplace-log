@@ -11,6 +11,7 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
 
   @behaviour Commonplace.Log.Persistence
 
+  alias Commonplace.Log.Entry
   alias Commonplace.Log.Persistence.{CommitPlan, ReadSet}
   alias Commonplace.LogStore.SQLite.Schema
   alias Exqlite.Sqlite3
@@ -165,7 +166,11 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
 
       entries =
         Enum.map(page, fn [canonical_bytes, writer_seq] ->
-          %{canonical_bytes: canonical_bytes, writer_seq: writer_seq}
+          %{
+            canonical_bytes: canonical_bytes,
+            writer_seq: writer_seq,
+            operation_id: Entry.operation_id(canonical_bytes)
+          }
         end)
 
       {:ok,
@@ -193,7 +198,11 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
 
       entries =
         Enum.map(page, fn [canonical_bytes, arrival_seq] ->
-          %{canonical_bytes: canonical_bytes, arrival_seq: arrival_seq}
+          %{
+            canonical_bytes: canonical_bytes,
+            arrival_seq: arrival_seq,
+            operation_id: Entry.operation_id(canonical_bytes)
+          }
         end)
 
       {:ok,

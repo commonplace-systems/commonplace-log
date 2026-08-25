@@ -6,8 +6,10 @@ defmodule Commonplace.Log.Persistence do
   query. `ReadSet.entry_ids` maps an entry ID directly to canonical bytes;
   it never contains parsed fields or coordinates. When identity
   classification needs the stored coordinate, the Engine parses those
-  canonical bytes itself. Parsing and domain classification never move to
-  the adapter side.
+  canonical bytes itself. Domain validation and classification never move to
+  the adapter side. The caller-visible writer and local-tail rows are the one
+  parsing exception: adapters derive their nullable `operation_id` projection
+  from canonical bytes through `Commonplace.Log.Entry.operation_id/1`.
 
   A read set also carries the durable lease epoch and, where the persistence
   service owns a Document lane, its durable writer identity observed in that snapshot.
@@ -117,7 +119,11 @@ defmodule Commonplace.Log.Persistence do
   @type frontier :: %{writers: [frontier_writer()]}
 
   @typedoc "One canonical entry in a writer-range page."
-  @type writer_entry :: %{canonical_bytes: binary(), writer_seq: pos_integer()}
+  @type writer_entry :: %{
+          canonical_bytes: binary(),
+          writer_seq: pos_integer(),
+          operation_id: String.t() | nil
+        }
 
   @typedoc "A writer-range page. The continuation key is always present."
   @type writer_page :: %{
@@ -126,7 +132,11 @@ defmodule Commonplace.Log.Persistence do
         }
 
   @typedoc "One canonical entry in replica-local arrival order."
-  @type local_entry :: %{canonical_bytes: binary(), arrival_seq: pos_integer()}
+  @type local_entry :: %{
+          canonical_bytes: binary(),
+          arrival_seq: pos_integer(),
+          operation_id: String.t() | nil
+        }
 
   @typedoc "A local-tail page. The continuation key is always present."
   @type local_page :: %{

@@ -1,7 +1,7 @@
 defmodule Commonplace.Log.DocumentProfileTest do
   use ExUnit.Case, async: false
 
-  alias Commonplace.Log.{DocumentProfile, Engine, UUID}
+  alias Commonplace.Log.{DocumentProfile, Engine, Entry, UUID}
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.LogStore.SQLite
   alias Exqlite.Sqlite3
@@ -115,6 +115,60 @@ defmodule Commonplace.Log.DocumentProfileTest do
     assert receipt.inserted == 2
 
     assert [_first, _second] = stored_bytes(log_id)
+  end
+
+  test "prepared canonical bytes are valid v2 with operation_id in canonical key order", %{
+    log_id: log_id
+  } do
+    assert {:ok, handle} = DocumentProfile.create_log(log_id, [])
+
+    assert {:ok, prepared} =
+             DocumentProfile.prepare_append(handle, [%{"kind" => "v2"}],
+               operation_id: "caller-operation-42",
+               created_at: @created_at
+             )
+
+    assert {:ok, %{inserted: 1}} = DocumentProfile.commit_prepared(handle, prepared)
+    assert [canonical_bytes] = stored_bytes(log_id)
+    decoded = Jason.decode!(canonical_bytes)
+
+    assert decoded["version"] == 2
+    assert decoded["operation_id"] == "caller-operation-42"
+    assert {:ok, ^canonical_bytes} = Entry.validate_entry(canonical_bytes)
+
+    assert canonical_bytes =~
+             ~s("log_id":"#{log_id}","operation_id":"caller-operation-42","prev_entry_id":null)
+  end
+
+  test "prepared v2 and convenience v1 share a lane and both reads expose operation_id", %{
+    log_id: log_id
+  } do
+    assert {:ok, handle} = DocumentProfile.create_log(log_id, [])
+
+    assert {:ok, prepared} =
+             DocumentProfile.prepare_append(handle, [%{"kind" => "prepared"}],
+               operation_id: "mixed-lane-operation",
+               created_at: @created_at
+             )
+
+    assert {:ok, %{inserted: 1}} = DocumentProfile.commit_prepared(handle, prepared)
+
+    assert {:ok, %{writer_seq: 2}} =
+             DocumentProfile.append(handle, %{"kind" => "convenience"}, created_at: @created_at)
+
+    writer_id = only_writer(log_id)
+
+    assert {:ok, %{entries: writer_entries, next_after_seq: nil}} =
+             SQLite.read_writer(log_id, writer_id, after_seq: 0, limit: 10)
+
+    assert Enum.map(writer_entries, & &1.operation_id) == ["mixed-lane-operation", nil]
+    assert Enum.map(writer_entries, &Jason.decode!(&1.canonical_bytes)["version"]) == [2, 1]
+
+    assert {:ok, %{entries: local_entries, next_after_arrival: nil}} =
+             SQLite.tail_local(log_id, after_arrival: 0, limit: 10)
+
+    assert Enum.map(local_entries, & &1.operation_id) == ["mixed-lane-operation", nil]
+    assert Enum.map(local_entries, &Jason.decode!(&1.canonical_bytes)["writer_seq"]) == [1, 2]
   end
 
   test "committing the same prepared append twice stores exactly one copy", %{log_id: log_id} do
@@ -290,6 +344,13 @@ defmodule Commonplace.Log.DocumentProfileTest do
 
     assert {:error, {:invalid_prepared_append, %{reason: :created_at_required}}} =
              DocumentProfile.prepare_append(handle, [%{"n" => 1}], operation_id: "missing-time")
+
+    assert {:error,
+            {:invalid_prepared_append, %{reason: :operation_id_must_be_at_most_256_bytes}}} =
+             DocumentProfile.prepare_append(handle, [%{"n" => 1}],
+               operation_id: String.duplicate("é", 129),
+               created_at: @created_at
+             )
   end
 
   test "opening a never-created log returns log_not_found and creates nothing", %{
