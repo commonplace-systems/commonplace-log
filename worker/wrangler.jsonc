@@ -27,7 +27,7 @@
       "image": "../commonplace_log/Dockerfile",
       "image_build_context": "../commonplace_log",
       // Bump to force a rollout; the Dockerfile turns it into a label only.
-      "image_vars": { "BUILD_STAMP": "2026-08-25T04-r1" },
+      "image_vars": { "BUILD_STAMP": "2026-08-25T20-entryv2" },
       // Deliberate capacity for the development deployment; not a production sizing claim.
       "max_instances": 10,
       "instance_type": "lite",
