@@ -21,12 +21,15 @@ function toHex(bytes: Uint8Array): string {
 // measured on CANONICAL bytes, not raw input bytes. 018: the same entry with
 // float-spelled integer fields (27.0, 1.0) — integer-field semantics are
 // VALUE-based, spelling is irrelevant, and the canonical bytes are again
-// exactly 016's.
+// exactly 016's. 019/020 are v2 with and without operation_id; 020 spells its
+// version 2.0 to pin parsed-number equality with integer 2.
 
 const validEntryCases = [
   "016-spec-example-entry",
   "017-whitespace-padded-entry",
   "018-float-spelled-integers",
+  "019-entry-v2-operation-id",
+  "020-entry-v2-without-operation-id",
 ];
 
 describe("validateEntry accepts the valid-entry anchor cases", () => {
@@ -58,6 +61,32 @@ describe("cap-side discrimination", () => {
   });
 });
 
+describe("version-2 operation_id boundary and parsed-number semantics", () => {
+  function mutateV2(mutator: (entry: Record<string, unknown>) => void): Uint8Array {
+    const source = readFileSync(
+      join(canonicalJsonDir, "020-entry-v2-without-operation-id", "input.json"),
+      "utf8",
+    );
+    const entry = JSON.parse(source) as Record<string, unknown>;
+    mutator(entry);
+    return new TextEncoder().encode(JSON.stringify(entry));
+  }
+
+  it("accepts a non-empty operation_id of exactly 256 UTF-8 bytes", () => {
+    const result = validateEntry(mutateV2((entry) => {
+      entry["operation_id"] = "é".repeat(128);
+    }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects string version 2 while JSON 2.0 is accepted by case 020", () => {
+    const result = validateEntry(mutateV2((entry) => {
+      entry["version"] = "2";
+    }));
+    expect(result).toEqual({ ok: false, code: "invalid_entry", reason: "wrong-version" });
+  });
+});
+
 // --- Invalid entries: invalid-entries/* -----------------------------------
 
 interface InvalidCase {
@@ -86,8 +115,8 @@ const invalidCaseNames = readdirSync(invalidEntriesDir, {
   .sort();
 
 describe("invalid-entries corpus discovery", () => {
-  it("finds at least 15 invalid cases (corpus is non-empty)", () => {
-    expect(invalidCaseNames.length).toBeGreaterThanOrEqual(15);
+  it("finds at least 35 invalid cases", () => {
+    expect(invalidCaseNames.length).toBeGreaterThanOrEqual(35);
   });
 });
 

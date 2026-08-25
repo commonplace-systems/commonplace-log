@@ -1,6 +1,6 @@
 /**
- * Version-1 entry validation (spec §7 shape, §7.1 I-JSON constraints, 1 MiB
- * canonical-size cap). The shared conformance corpora in
+ * Version-1 and version-2 entry validation (spec §7 plus Amendment 2 shape,
+ * §7.1 I-JSON constraints, 1 MiB canonical-size cap). The shared corpora in
  * conformance/canonical-json/ and conformance/invalid-entries/ are the
  * arbiters of correctness; error codes and reason slugs are cross-runtime
  * contract and must match error.txt vectors exactly.
@@ -28,6 +28,7 @@ const REASONS = {
     `missing-field-${field.replaceAll("_", "-")}`,
   wrongVersion: "wrong-version",
   extraTopLevelField: "extra-top-level-field",
+  invalidOperationId: "invalid-operation-id",
   uuidNotString: "uuid-not-string",
   uuidNotLowercase: "uuid-not-lowercase",
   uuidMalformed: "uuid-malformed",
@@ -48,6 +49,7 @@ const REASONS = {
 } as const;
 
 const MAX_CANONICAL_BYTES = 1_048_576; // 1 MiB, spec §7.1
+const MAX_OPERATION_ID_BYTES = 256; // Amendment 2
 
 // HARD CONSTRAINT: unsafe-integer detection (conformance case
 // 022-unsafe-integer-in-body) requires JSON.parse to pass the reviver's
@@ -163,15 +165,30 @@ export function validateEntry(raw: Uint8Array): ValidateEntryResult {
     }
   }
   for (const key of Object.keys(entry)) {
-    if (!(REQUIRED_FIELDS as readonly string[]).includes(key)) {
+    const operationIdAllowed = entry["version"] === 2 && key === "operation_id";
+    if (!(REQUIRED_FIELDS as readonly string[]).includes(key) && !operationIdAllowed) {
       return invalid(REASONS.extraTopLevelField);
     }
   }
 
-  // Value-based like writer_seq (case 018): 1.0 === 1 passes; anything else
-  // — 2, "1", non-numbers — is wrong-version.
-  if (entry["version"] !== 1) {
+  // Value-based like writer_seq (cases 018 and 020): JSON 1.0/2.0 parse to
+  // Numbers 1/2 and pass; anything else — 3, "2", non-numbers — is wrong-version.
+  const version = entry["version"];
+  if (version !== 1 && version !== 2) {
     return invalid(REASONS.wrongVersion);
+  }
+
+  if (version === 2 && Object.hasOwn(entry, "operation_id")) {
+    const operationId = entry["operation_id"];
+    if (typeof operationId !== "string" || operationId.length === 0) {
+      return invalid(REASONS.invalidOperationId);
+    }
+    if (!isWellFormedUtf16(operationId)) {
+      return invalid(REASONS.illFormedUnicode);
+    }
+    if (new TextEncoder().encode(operationId).byteLength > MAX_OPERATION_ID_BYTES) {
+      return invalid(REASONS.invalidOperationId);
+    }
   }
 
   for (const field of ["log_id", "entry_id", "writer_id"] as const) {

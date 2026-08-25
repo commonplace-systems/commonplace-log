@@ -12,7 +12,7 @@ import { uuidv7 } from "../../src/do/uuid";
  * bytes are compared against SP1's validateEntry canonical bytes — the store
  * is never its own byte oracle.
  *
- * Anti-vacuity: this file registers 23 tests (>= the 14-test floor).
+ * Anti-vacuity: this file registers 24 tests (>= the 14-test floor).
  */
 
 const LOG_ID = "0198cc6e-47ac-7d72-93db-b6fbd92bfca2";
@@ -158,6 +158,40 @@ describe("mergeEntries (§12.1 / §9.3)", () => {
       for (let i = 1; i < arrivals.length; i++) {
         expect(arrivals[i]!).toBeGreaterThan(arrivals[i - 1]!);
       }
+    });
+  });
+
+  it("lanes may mix v1/v2 and operation_id is persisted but not uniqueness-enforced", async () => {
+    await withStore(({ sql, store }) => {
+      store.createLog(LOG_ID);
+      const mixedLane = makeChain(W_LOW, 2);
+      const v1 = mixedLane[0]!;
+      const secondV1 = mixedLane[1]!;
+      const v2: RawEntry = {
+        ...secondV1,
+        version: 2,
+        operation_id: "mixed-lane-operation",
+      };
+      const otherWriterV1 = makeChain(W_MID, 1)[0]!;
+      const otherWriterV2: RawEntry = {
+        ...otherWriterV1,
+        version: 2,
+        operation_id: "mixed-lane-operation",
+      };
+
+      expect(store.mergeEntries([v1, v2, otherWriterV2])).toMatchObject({
+        inserted: 3,
+        present: 0,
+      });
+      const stored = storedBytes(sql, String(v2["entry_id"]));
+      expect(Array.from(stored)).toEqual(Array.from(canonicalBytesOf(v2)));
+      const parsed = JSON.parse(new TextDecoder().decode(stored)) as Record<string, unknown>;
+      expect(parsed["version"]).toBe(2);
+      expect(parsed["operation_id"]).toBe("mixed-lane-operation");
+      const otherParsed = JSON.parse(
+        new TextDecoder().decode(storedBytes(sql, String(otherWriterV2["entry_id"]))),
+      ) as Record<string, unknown>;
+      expect(otherParsed["operation_id"]).toBe("mixed-lane-operation");
     });
   });
 

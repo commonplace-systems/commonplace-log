@@ -55,6 +55,9 @@ else
   (cd "${REPO_ROOT}/commonplace_log" && mix run scripts/fuzz_differential.exs "$GEN" "$N")
 fi
 seed_used="$(cat "${GEN}/SEED")"
+v2_count="$(cat "${GEN}/V2_COUNT")"
+v2_with_operation_id_count="$(cat "${GEN}/V2_WITH_OPERATION_ID_COUNT")"
+v2_without_operation_id_count=$((v2_count - v2_with_operation_id_count))
 
 echo "== canonicalize: TypeScript (worker/scripts/fuzz-check.ts) =="
 node "${REPO_ROOT}/worker/scripts/fuzz-check.ts" "$GEN" "$TS_OUT"
@@ -81,6 +84,12 @@ fi
 if [ "$case_count" -lt 100 ]; then
   echo "FAIL: only ${case_count} cases present (< 100) — generation missing or wrong referent"
   fail=1
+fi
+if [ "$v2_with_operation_id_count" -lt 1 ] || [ "$v2_without_operation_id_count" -lt 1 ]; then
+  echo "FAIL: v2 coverage missing (with operation_id=${v2_with_operation_id_count}, without=${v2_without_operation_id_count})"
+  fail=1
+else
+  echo "v2 entry coverage: ${v2_count} total (${v2_with_operation_id_count} with operation_id, ${v2_without_operation_id_count} without)"
 fi
 if diff "${LISTS}/gen-json" "${LISTS}/gen-bin"; then
   echo "Elixir .bin file set == generated .json file set"
@@ -158,10 +167,11 @@ echo
 echo "== summary =="
 echo "SEED: ${seed_used} (reproduce: conformance/fuzz.sh ${N} ${seed_used})"
 echo "cases generated:                        ${case_count} (requested N=${N}, floor 100)"
+echo "v2 entries:                             ${v2_count} (${v2_with_operation_id_count} with operation_id, ${v2_without_operation_id_count} without)"
 echo "verdict A pass (TS bin == EX bin):      ${a_pass}/${case_count}"
 echo "verdict B-ts pass (TS bin == .json):    ${bts_pass}/${case_count}"
 echo "verdict B-ex pass (EX bin == .json):    ${bex_pass}/${case_count}"
-echo "SELECTOR: green means: TS==Elixir==input over ${case_count} random I-JSON values — null/true/false, integers within ±(2^53−1), finite doubles from random 64-bit patterns (subnormals/extremes included), well-formed-Unicode strings (controls, quotes, backslashes, astral), UTF-16-ordering-stress keys (BMP ≥ U+E000 mixed with astral), nesting to depth ~6; NOT covered: integers beyond ±(2^53−1), lone surrogates, duplicate keys (recorded-unpinned classes — see conformance/README.md), and everything invalid-entries covers."
+echo "SELECTOR: green means: TS==Elixir==input over ${case_count} random I-JSON values — including ${v2_count} valid v2 entry shapes (${v2_with_operation_id_count} with operation_id, ${v2_without_operation_id_count} without), null/true/false, integers within ±(2^53−1), finite doubles from random 64-bit patterns (subnormals/extremes included), well-formed-Unicode strings (controls, quotes, backslashes, astral), UTF-16-ordering-stress keys (BMP ≥ U+E000 mixed with astral), nesting to depth ~6; NOT covered: integers beyond ±(2^53−1), lone surrogates, duplicate keys (recorded-unpinned classes — see conformance/README.md), and everything invalid-entries covers."
 
 if [ "$fail" -ne 0 ]; then
   echo "RESULT: RED — at least one check above failed"

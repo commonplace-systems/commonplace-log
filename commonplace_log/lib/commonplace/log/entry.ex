@@ -1,7 +1,8 @@
 defmodule Commonplace.Log.Entry do
   @moduledoc """
-  Version-1 entry validation (spec §7 shape, §7.1 I-JSON constraints, 1 MiB
-  canonical-size cap), mirroring `worker/src/entry.ts` behavior-for-behavior
+  Version-1 and version-2 entry validation (spec §7 plus Amendment 2 shape,
+  §7.1 I-JSON constraints, 1 MiB canonical-size cap), mirroring
+  `worker/src/entry.ts` behavior-for-behavior
   on all corpus-pinned classes; known unpinned classes are listed below.
   The shared conformance corpora in `conformance/canonical-json/` and
   `conformance/invalid-entries/` are the arbiters of correctness; error codes
@@ -65,6 +66,7 @@ defmodule Commonplace.Log.Entry do
     entry_not_object: "entry-not-object",
     wrong_version: "wrong-version",
     extra_top_level_field: "extra-top-level-field",
+    invalid_operation_id: "invalid-operation-id",
     uuid_not_string: "uuid-not-string",
     uuid_not_lowercase: "uuid-not-lowercase",
     uuid_malformed: "uuid-malformed",
@@ -88,6 +90,7 @@ defmodule Commonplace.Log.Entry do
   defp missing_field(field), do: "missing-field-#{String.replace(field, "_", "-")}"
 
   @max_canonical_bytes 1_048_576
+  @max_operation_id_bytes 256
   @max_safe_integer 9_007_199_254_740_991
 
   # Spec §7 field table order; checks run in this order, deterministically.
@@ -108,7 +111,7 @@ defmodule Commonplace.Log.Entry do
   @high_surrogate_escape_re ~r/^\\u[dD][89abAB][0-9a-fA-F]{2}$/
 
   @doc """
-  Validate `raw` bytes as a version-1 entry.
+  Validate `raw` bytes as a version-1 or version-2 entry.
 
   Returns `{:ok, canonical_bytes}` (the RFC 8785 canonical form, at most
   1 MiB) or `{:error, code, reason}` with `code` one of `"invalid_json"`,
@@ -218,13 +221,23 @@ defmodule Commonplace.Log.Entry do
       end
     end) ||
       Enum.find_value(Map.keys(entry), fn key ->
-        unless key in @required_fields, do: invalid(:extra_top_level_field)
+        unless key in allowed_fields(entry["version"]), do: invalid(:extra_top_level_field)
       end) ||
       check_values(entry)
   end
 
+  # The permitted top-level shape is version-sensitive, using the same parsed
+  # numeric-value comparison as check_version/1. An invalid version gets only
+  # the v1 field set here, but reaches wrong-version when it has no extra key.
+  defp allowed_fields(version) do
+    if is_number(version) and version == 2,
+      do: ["operation_id" | @required_fields],
+      else: @required_fields
+  end
+
   defp check_values(entry) do
     with :ok <- check_version(entry["version"]),
+         :ok <- check_operation_id(entry),
          :ok <- check_uuids(entry),
          {:ok, writer_seq} <- check_writer_seq(entry["writer_seq"]),
          :ok <- check_prev_entry_id(entry["prev_entry_id"], writer_seq),
@@ -234,13 +247,31 @@ defmodule Commonplace.Log.Entry do
     end
   end
 
-  # Value-based like writer_seq (case 018): 1.0 == 1 passes; anything else —
-  # 2, "1", non-numbers — is wrong-version. Elixir's == compares mixed
-  # int/float numerically and never equates non-numbers to 1, mirroring the
-  # TypeScript `entry["version"] !== 1` double comparison.
+  # Value-based like writer_seq (cases 018 and 020): 1.0 == 1 and 2.0 == 2
+  # pass; anything else — 3, "2", non-numbers — is wrong-version. Elixir's
+  # == compares mixed int/float numerically and never equates non-numbers to a
+  # number, mirroring TypeScript comparisons against the parsed Number 1/2.
   defp check_version(version) do
-    if is_number(version) and version == 1, do: :ok, else: invalid(:wrong_version)
+    if is_number(version) and (version == 1 or version == 2),
+      do: :ok,
+      else: invalid(:wrong_version)
   end
+
+  defp check_operation_id(%{"version" => version} = entry) when version == 2 do
+    case Map.fetch(entry, "operation_id") do
+      :error ->
+        :ok
+
+      {:ok, operation_id}
+      when is_binary(operation_id) and byte_size(operation_id) in 1..@max_operation_id_bytes ->
+        :ok
+
+      {:ok, _operation_id} ->
+        invalid(:invalid_operation_id)
+    end
+  end
+
+  defp check_operation_id(_entry), do: :ok
 
   defp check_uuids(entry) do
     Enum.find_value(~w(log_id entry_id writer_id), fn field ->

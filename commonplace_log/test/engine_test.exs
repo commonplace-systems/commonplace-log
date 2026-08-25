@@ -91,6 +91,37 @@ defmodule Commonplace.Log.EngineTest do
     assert result.inserted + result.present == length(batch)
   end
 
+  test "lanes may mix v1/v2 and operation_id is persisted but not uniqueness-enforced", %{
+    store: store
+  } do
+    [v1, second_v1] = chain(@writer_a, 2)
+
+    v2 =
+      second_v1
+      |> Jason.decode!()
+      |> Map.merge(%{"version" => 2, "operation_id" => "mixed-lane-operation"})
+      |> Jcs.canonicalize()
+
+    [other_writer_v1] = chain(@writer_b, 1)
+
+    other_writer_v2 =
+      other_writer_v1
+      |> Jason.decode!()
+      |> Map.merge(%{"version" => 2, "operation_id" => "mixed-lane-operation"})
+      |> Jcs.canonicalize()
+
+    assert {:ok, %{inserted: 3, present: 0}} =
+             Engine.merge(InMemoryPersistence, store, @log_id, [v1, v2, other_writer_v2])
+
+    assert [stored_v1, stored_v2] = stored_entries(store, @writer_a)
+    assert stored_v1["version"] == 1
+    assert stored_v2["version"] == 2
+    assert stored_v2["operation_id"] == "mixed-lane-operation"
+
+    assert [%{"operation_id" => "mixed-lane-operation"}] =
+             stored_entries(store, @writer_b)
+  end
+
   test "a gap is a domain error and stores nothing", %{store: store} do
     [entry] = chain(@writer_a, 1, start_seq: 2, prev: UUID.uuidv7(1))
 
