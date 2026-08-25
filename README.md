@@ -1,5 +1,7 @@
 # Commonplace Monotonic Log
 
+**Status (measured at cb94330, 2026-08-25):** the Elixir library (302 tests + 5 properties), the TypeScript workalike (271 tests), and the shared conformance corpus (19 canonical-JSON + 30 invalid-entry vectors) are green, and the Cloudflare realm deployment — gateway, per-realm Durable Objects with per-realm secrets, BEAM engine in Containers, single-lane documents over the sidecar — is deployed on a development account and verified by hand and by env-gated tests; what remains unverified is listed in [`docs/sp4b-deployment-readiness.md`](docs/sp4b-deployment-readiness.md) §4b.
+
 An append-only log that several parties can write to, replicate, and merge
 without a leader, a consensus protocol, or a CRDT — and that refuses to guess
 when something has gone wrong.

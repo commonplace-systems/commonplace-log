@@ -1,8 +1,8 @@
 # SP4b deployment readiness — what is needed, and what has not been verified
 
-**Status:** SP4a complete as of 2026-08-23. **jes approved SP4b in principle on 2026-08-23**
-("I'll try to set up the cloudflare soon"); it is gated on account credentials and Containers
-access, not on the decision.
+**Status (measured at cb94330, 2026-08-25):** SP4b is deployed on a Workers Paid account — gateway, per-realm Durable Objects, BEAM in Containers, DocumentProfile over the sidecar, explicit realm creation with per-realm secrets — and every claim in §4b was run by hand against that deployment; §4 below is the pre-deployment list and is superseded item by item by §4b.
+
+_Earlier header, kept for provenance:_ SP4a complete as of 2026-08-23; jes approved SP4b in principle on 2026-08-23 ("I'll try to set up the cloudflare soon"); it was gated on account credentials and Containers access, which arrived 2026-08-24.
 
 **§8.3 Container lifecycle supervision — ruled out of scope 2026-08-23, then REOPENED the same day**
 when jes described the intended library stack (`log → reducers → commonplace-doc → directory →
@@ -137,7 +137,7 @@ have no way to tell a description of intended machinery from a description of ex
 double performs a real commit and then drops the reply. This is a faithful *shape*, but no real
 socket, timeout, partition, or retry storm produced it. Production HTTP scheduling is unexercised.
 
-**Concurrent Realm Containers — ⚠️ OPEN ON BOTH AXES.** jes ruled logs and documents
+**Concurrent Realm Containers — ⚠️ OPEN ON BOTH AXES** *(superseded 2026-08-25, see §4b: a rollout does not preempt a running DO-managed container, so two live incarnations of one realm are unreachable by construction; the fence is verified against a superseded activation with a real container).* jes ruled logs and documents
 **single-realm for v1**, which removes one log being live in two *different* realms — but he also
 confirmed **multiple realms per tenant**, so distinct realms running concurrently is ordinary v1
 operation, not an exotic. And the second axis below is untouched by the ruling entirely.
