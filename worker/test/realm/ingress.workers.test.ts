@@ -1,20 +1,21 @@
 import { SELF, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import worker, { handleIngress, type Env } from "../../src/index";
+import type { RealmContainer } from "../../src/realm/container";
 
-const TOKEN = "test-gateway-token";
+const DEPLOYMENT_TOKEN = "test-gateway-token";
 
 function realmName(): string {
   return crypto.randomUUID();
 }
 
-function fetchGateway(path: string, init: RequestInit = {}, token: string | null = TOKEN) {
+function fetchGateway(path: string, init: RequestInit = {}, token: string | null = DEPLOYMENT_TOKEN) {
   const headers = new Headers(init.headers);
   if (token !== null) headers.set("authorization", `Bearer ${token}`);
   return SELF.fetch(`https://gateway.invalid${path}`, { ...init, headers });
 }
 
-async function post(path: string, body: unknown, token: string | null = TOKEN) {
+async function post(path: string, body: unknown, token: string | null) {
   const response = await fetchGateway(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -23,10 +24,9 @@ async function post(path: string, body: unknown, token: string | null = TOKEN) {
   return { status: response.status, json: await response.json() as Record<string, any> };
 }
 
-function entry(entryId: string, writerId: string, writerSeq: number, prevEntryId: string | null) {
-  const createdAt = "2026-08-24T00:00:00Z";
-  const fields = { entry_id: entryId, writer_id: writerId, writer_seq: writerSeq, prev_entry_id: prevEntryId, created_at: createdAt };
-  return { ...fields, canonical_bytes: btoa(JSON.stringify(fields)) };
+async function createRealm(realmId: string, locationHint?: string) {
+  const body = locationHint === undefined ? {} : { location_hint: locationHint };
+  return await post(`/realms/${realmId}`, body, DEPLOYMENT_TOKEN);
 }
 
 describe("realm ingress", () => {
@@ -36,67 +36,82 @@ describe("realm ingress", () => {
     expect(await response.text()).toBe("commonplace-log");
   });
 
-  it("rejects a missing bearer token with 401 and never echoes the token", async () => {
-    const response = await fetchGateway(`/realms/${realmName()}/frontier`, { method: "POST", body: "{}" }, null);
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ ok: false, error: { code: "unauthorized" } });
+  it("creates once with and without a location hint and returns the secret only once", async () => {
+    for (const hint of [undefined, "weur"]) {
+      const realm = realmName();
+      const created = await createRealm(realm, hint);
+      expect(created).toEqual({
+        status: 201,
+        json: { ok: true, realm_id: realm, realm_secret: expect.stringMatching(/^[0-9a-f]{64}$/) },
+      });
+      const second = await createRealm(realm);
+      expect(second).toEqual({ status: 409, json: { ok: false, error: { code: "realm_exists" } } });
+      expect(second.json).not.toHaveProperty("realm_secret");
+    }
   });
 
-  it("rejects a wrong bearer token with 401 and never echoes the token", async () => {
-    const wrong = "wrong-gateway-token-value";
-    const response = await fetchGateway(`/realms/${realmName()}/frontier`, { method: "POST", body: "{}" }, wrong);
-    expect(response.status).toBe(401);
-    const text = await response.text();
-    expect(JSON.parse(text)).toEqual({ ok: false, error: { code: "unauthorized" } });
-    expect(text).not.toContain(wrong);
-    expect(text).not.toContain(TOKEN);
-    // Same-length wrong token exercises the constant-time branch, not the length guard.
-    const sameLength = TOKEN.replace(/./g, "x");
-    expect((await fetchGateway("/realms/r/frontier", { method: "POST", body: "{}" }, sameLength)).status).toBe(401);
-    // A non-Bearer scheme is not a token.
-    expect((await SELF.fetch("https://gateway.invalid/realms/r/frontier", {
-      method: "POST", body: "{}", headers: { authorization: `Basic ${TOKEN}` },
-    })).status).toBe(401);
+  it("rejects invalid create bodies and location hints with 400", async () => {
+    for (const body of [{ location_hint: "moon" }, { location_hint: 5 }, { extra: true }, []]) {
+      expect(await post(`/realms/${realmName()}`, body, DEPLOYMENT_TOKEN)).toEqual({
+        status: 400, json: { ok: false, error: { code: "malformed_request" } },
+      });
+    }
   });
 
-  it("proxies an authenticated request to the realm sidecar, path and body intact", async () => {
+  it("requires the deployment token for create", async () => {
     const realm = realmName();
-    const created = await post(`/realms/${realm}/create-log`, { log_id: "log-x", format_version: 1 });
-    expect(created).toEqual({ status: 201, json: { ok: true } });
-    // The sidecar's own error envelope comes back through unchanged.
-    expect(await post(`/realms/${realm}/no-such-sidecar-route`, {})).toEqual({
-      status: 404, json: { ok: false, error: { code: "not_found" } },
-    });
-    expect(await post(`/realms/${realm}/create-log`, { log_id: 5 })).toEqual({
-      status: 400, json: { ok: false, error: { code: "malformed_request" } },
-    });
+    expect((await post(`/realms/${realm}`, {}, null)).status).toBe(401);
+    expect((await post(`/realms/${realm}`, {}, "obvious-wrong-deployment-token")).status).toBe(401);
+    expect((await createRealm(realm)).status).toBe(201);
   });
 
-  it("path-derived realm isolation: a log committed in realm A is absent from realm B", async () => {
+  it("returns not_found for sidecar, engine, and node paths of an uncreated realm", async () => {
+    const realm = realmName();
+    for (const path of ["/frontier", "/engine/ping", "/node/restart"]) {
+      const response = await post(`/realms/${realm}${path}`, {}, "obvious-unassigned-realm-secret");
+      expect(response, path).toEqual({ status: 404, json: { ok: false, error: { code: "not_found" } } });
+    }
+  });
+
+  it("lets only the created realm's secret reach its routes", async () => {
+    const realm = realmName();
+    const created = await createRealm(realm);
+    const secret = created.json.realm_secret as string;
+
+    expect(await post(`/realms/${realm}/create-log`, { log_id: "log-x" }, "obvious-wrong-realm-secret"))
+      .toEqual({ status: 401, json: { ok: false, error: { code: "unauthorized" } } });
+    expect(await post(`/realms/${realm}/create-log`, { log_id: "log-x" }, DEPLOYMENT_TOKEN))
+      .toEqual({ status: 401, json: { ok: false, error: { code: "unauthorized" } } });
+    expect(await post(`/realms/${realm}/create-log`, { log_id: "log-x" }, secret))
+      .toEqual({ status: 201, json: { ok: true } });
+    expect(await post(`/realms/${realm}/frontier`, { log_id: "log-x" }, secret))
+      .toEqual({ status: 200, json: { ok: true, frontier: { writers: [] } } });
+    expect(await post(`/realms/${realm}/realm/create`, {}, secret))
+      .toEqual({ status: 404, json: { ok: false, error: { code: "not_found" } } });
+  });
+
+  it("keeps two realm secrets scoped, with positive controls both ways", async () => {
     const realmA = realmName();
     const realmB = realmName();
-    expect((await post(`/realms/${realmA}/create-log`, { log_id: "shared-name", format_version: 1 })).status).toBe(201);
-    const first = entry("e1", "alice", 1, null);
-    const commit = await post(`/realms/${realmA}/commit`, {
-      log_id: "shared-name", expected_revision: 0, expected_epoch: 0,
-      insert_entries: [first],
-      put_tips: [{ writer_id: "alice", last_seq: 1, last_entry_id: "e1" }],
-    });
-    expect(commit).toEqual({ status: 200, json: { ok: true, revision: 1 } });
+    const secretA = (await createRealm(realmA)).json.realm_secret as string;
+    const secretB = (await createRealm(realmB)).json.realm_secret as string;
 
-    expect(await post(`/realms/${realmA}/frontier`, { log_id: "shared-name" })).toEqual({
-      status: 200,
-      json: { ok: true, frontier: { writers: [{ writer_id: "alice", seq: 1, entry_id: "e1" }] } },
-    });
-    expect(await post(`/realms/${realmB}/frontier`, { log_id: "shared-name" })).toEqual({
-      status: 404, json: { ok: false, error: { code: "not_found" } },
-    });
-    // Positive control for the instrument: realm B does hold its own logs.
-    expect((await post(`/realms/${realmB}/create-log`, { log_id: "only-in-b", format_version: 1 })).status).toBe(201);
-    expect((await post(`/realms/${realmB}/frontier`, { log_id: "only-in-b" })).json).toEqual({
-      ok: true, frontier: { writers: [] },
-    });
-    expect((await post(`/realms/${realmA}/frontier`, { log_id: "only-in-b" })).status).toBe(404);
+    expect((await post(`/realms/${realmA}/create-log`, { log_id: "a" }, secretB)).status).toBe(401);
+    expect((await post(`/realms/${realmB}/create-log`, { log_id: "b" }, secretA)).status).toBe(401);
+    expect((await post(`/realms/${realmA}/create-log`, { log_id: "a" }, secretA)).status).toBe(201);
+    expect((await post(`/realms/${realmB}/create-log`, { log_id: "b" }, secretB)).status).toBe(201);
+    expect((await post(`/realms/${realmA}/frontier`, { log_id: "a" }, secretA)).status).toBe(200);
+    expect((await post(`/realms/${realmB}/frontier`, { log_id: "b" }, secretB)).status).toBe(200);
+  });
+
+  it("requires a syntactically valid bearer on realm routes", async () => {
+    const realm = realmName();
+    const missing = await fetchGateway(`/realms/${realm}/frontier`, { method: "POST", body: "{}" }, null);
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toEqual({ ok: false, error: { code: "unauthorized" } });
+    expect((await SELF.fetch(`https://gateway.invalid/realms/${realm}/frontier`, {
+      method: "POST", body: "{}", headers: { authorization: "Basic obvious-fake" },
+    })).status).toBe(401);
   });
 
   it("returns 404 for malformed realm ids and unknown top-level paths", async () => {
@@ -110,29 +125,51 @@ describe("realm ingress", () => {
       expect(response.status, path).toBe(404);
       expect(await response.json()).toEqual({ ok: false, error: { code: "not_found" } });
     }
-    expect((await fetchGateway("/realm/a/commit", { method: "POST", body: "{}" })).status).toBe(404);
     expect((await fetchGateway("/health")).status).toBe(404);
     expect((await fetchGateway("/", { method: "POST" })).status).toBe(404);
   });
 
-  it("fails closed with 503 for every request when GATEWAY_TOKEN is unset or empty", async () => {
-    for (const token of [undefined, ""]) {
-      const fakeEnv: Env = { REALM_CONTAINER: env.REALM_CONTAINER, GATEWAY_TOKEN: token };
-      const withGoodToken = new Request("https://gateway.invalid/realms/r/frontier", {
-        method: "POST", body: "{}", headers: { authorization: `Bearer ${TOKEN}` },
-      });
-      const response = await handleIngress(withGoodToken, fakeEnv);
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ ok: false, error: { code: "gateway_not_configured" } });
-      expect((await worker.fetch(new Request("https://gateway.invalid/health"), fakeEnv)).status).toBe(503);
-      // Liveness stays up; it is the only route that never consults the token.
-      expect((await handleIngress(new Request("https://gateway.invalid/"), fakeEnv)).status).toBe(200);
-    }
-    // Control: the same handler, given the configured token, gets past the 503 gate.
-    const configured: Env = { REALM_CONTAINER: env.REALM_CONTAINER, GATEWAY_TOKEN: TOKEN };
-    expect((await handleIngress(new Request("https://gateway.invalid/health"), configured)).status).toBe(401);
-    expect((await handleIngress(new Request("https://gateway.invalid/health", {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    }), configured)).status).toBe(404);
+  it("needs GATEWAY_TOKEN only for create, not for an authorized realm route", async () => {
+    const realm = realmName();
+    const secret = (await createRealm(realm)).json.realm_secret as string;
+    const fakeEnv: Env = { REALM_CONTAINER: env.REALM_CONTAINER, GATEWAY_TOKEN: undefined };
+    const create = new Request(`https://gateway.invalid/realms/${realmName()}`, {
+      method: "POST", headers: { authorization: `Bearer ${DEPLOYMENT_TOKEN}` }, body: "{}",
+    });
+    const createResponse = await handleIngress(create, fakeEnv);
+    expect(createResponse.status).toBe(503);
+    await createResponse.json();
+
+    const realmRequest = new Request(`https://gateway.invalid/realms/${realm}/create-log`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({ log_id: "still-open" }),
+    });
+    const realmResponse = await handleIngress(realmRequest, fakeEnv);
+    expect(realmResponse.status).toBe(201);
+    await realmResponse.json();
+    const liveness = await worker.fetch(new Request("https://gateway.invalid/"), fakeEnv);
+    expect(liveness.status).toBe(200);
+    await liveness.text();
+  });
+
+  it("passes a validated location hint to idFromName plus get for create", async () => {
+    const calls: Array<{ id: unknown; options: unknown }> = [];
+    const namespace = {
+      idFromName(name: string) { return { name }; },
+      get(id: unknown, options?: unknown) {
+        calls.push({ id, options });
+        return { fetch: async () => Response.json({ ok: true }, { status: 201 }) };
+      },
+    } as unknown as DurableObjectNamespace<RealmContainer>;
+    const realm = realmName();
+    const request = new Request(`https://gateway.invalid/realms/${realm}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${DEPLOYMENT_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ location_hint: "weur" }),
+    });
+    const response = await handleIngress(request, { REALM_CONTAINER: namespace, GATEWAY_TOKEN: DEPLOYMENT_TOKEN });
+    expect(response.status).toBe(201);
+    expect(calls).toEqual([{ id: { name: realm }, options: { locationHint: "weur" } }]);
   });
 });

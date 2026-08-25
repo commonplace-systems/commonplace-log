@@ -8,7 +8,7 @@ export interface ContainerOutboundContext {
 /** Structural subset used here, kept small so the handler is plain-node testable. */
 export interface RealmNodeBinding<Id> {
   idFromString(value: string): Id;
-  get(id: Id): { fetch(request: Request): Promise<Response> | Response };
+  get(id: Id): { storageFetch(request: Request): Promise<Response> | Response };
 }
 
 export interface StorageInternalEnv<Id> {
@@ -43,5 +43,5 @@ export async function storageInternal<Id>(
   // The sidecar authenticates by the platform-supplied Container identity, not
   // by a credential a process inside the Container can manufacture.
   forwarded.headers.delete("authorization");
-  return await stub.fetch(forwarded);
+  return await stub.storageFetch(forwarded);
 }

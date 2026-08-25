@@ -1,9 +1,11 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { handleRealmRequest } from "../../src/realm/http";
+import { REALM_CREATE_HEADER, REALM_ID_HEADER } from "../../src/realm/realm_auth";
 import { RealmStore, RealmStoreError } from "../../src/realm/store";
 
 let realmSequence = 0;
+const realmSecrets = new WeakMap<object, string>();
 
 type JsonObject = Record<string, any>;
 
@@ -17,12 +19,39 @@ async function post(stub: DurableObjectStub, path: string, body: unknown): Promi
   status: number;
   json: JsonObject;
 }> {
+  const headers = new Headers({ "content-type": "application/json" });
+  const secret = realmSecrets.get(stub);
+  if (secret !== undefined) headers.set("authorization", `Bearer ${secret}`);
   const response = await stub.fetch(`https://realm.invalid${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
   return { status: response.status, json: await response.json() as JsonObject };
+}
+
+async function createRealm(stub: DurableObjectStub): Promise<JsonObject> {
+  const realmId = crypto.randomUUID();
+  const response = await stub.fetch("https://realm.invalid/realm/create", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [REALM_CREATE_HEADER]: "1",
+      [REALM_ID_HEADER]: realmId,
+    },
+    body: "{}",
+  });
+  const result = { status: response.status, json: await response.json() as JsonObject };
+  if (response.status === 201) realmSecrets.set(stub, result.json.realm_secret);
+  return result;
+}
+
+async function ensureRealm(stub: DurableObjectStub): Promise<void> {
+  if (realmSecrets.has(stub)) return;
+  expect(await createRealm(stub)).toMatchObject({
+    status: 201,
+    json: { ok: true, realm_id: expect.any(String), realm_secret: expect.stringMatching(/^[0-9a-f]{64}$/) },
+  });
 }
 
 function canonical(fields: {
@@ -75,6 +104,7 @@ function plan(logId: string, revision: number, epoch: number, entries: ReturnTyp
 }
 
 async function createLog(stub: DurableObjectStub, logId: string): Promise<void> {
+  await ensureRealm(stub);
   expect(await post(stub, "/create-log", {
     log_id: logId,
     format_version: 1,
@@ -122,6 +152,71 @@ async function logicalCommit(
 }
 
 describe("RealmContainer HTTP contract", () => {
+  it("creates a realm once, stores only its hash, and refuses public unauthenticated store access", async () => {
+    const stub = realmStub();
+    const created = await createRealm(stub);
+    expect(created).toMatchObject({
+      status: 201,
+      json: { ok: true, realm_id: expect.any(String), realm_secret: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    });
+
+    const stored = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT secret_hash, created_at FROM realm_meta WHERE singleton = 1").one());
+    expect(new Uint8Array(stored.secret_hash as ArrayBuffer)).toHaveLength(32);
+    expect(new TextDecoder().decode(stored.secret_hash as ArrayBuffer)).not.toContain(created.json.realm_secret);
+    expect(stored.created_at).toEqual(expect.any(String));
+
+    const unauthenticated = await stub.fetch("https://realm.invalid/create-log", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ log_id: "must-not-exist" }),
+    });
+    expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toEqual({ ok: false, error: { code: "unauthorized" } });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'logs'").toArray()))
+      .toEqual([]);
+
+    const second = await createRealm(stub);
+    expect(second).toEqual({ status: 409, json: { ok: false, error: { code: "realm_exists" } } });
+    expect(second.json).not.toHaveProperty("realm_secret");
+  });
+
+  it("returns 404 for every public route before realm creation", async () => {
+    const stub = realmStub();
+    for (const path of ["/frontier", "/engine/ping", "/node/restart"]) {
+      const response = await stub.fetch(`https://realm.invalid${path}`, {
+        method: "POST", headers: { authorization: "Bearer obvious-fake" }, body: "{}",
+      });
+      expect(response.status, path).toBe(404);
+      expect(await response.json()).toEqual({ ok: false, error: { code: "not_found" } });
+    }
+  });
+
+  it("does not let realm secrets cross and does not open create through the realm-secret path", async () => {
+    const a = realmStub();
+    const b = realmStub();
+    await ensureRealm(a);
+    await ensureRealm(b);
+    const secretA = realmSecrets.get(a)!;
+    const secretB = realmSecrets.get(b)!;
+
+    const request = async (stub: DurableObjectStub, secret: string, path = "/create-log") => {
+      const response = await stub.fetch(`https://realm.invalid${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+        body: JSON.stringify({ log_id: "x" }),
+      });
+      const result = { status: response.status, json: await response.json() };
+      return result;
+    };
+    expect((await request(a, secretB)).status).toBe(401);
+    expect((await request(b, secretA)).status).toBe(401);
+    expect((await request(a, secretA)).status).toBe(201);
+    expect((await request(b, secretB)).status).toBe(201);
+    expect((await request(a, secretA, "/realm/create")).status).toBe(404);
+  });
+
   it("advances leases and fences an earlier lease without writing rows", async () => {
     const stub = realmStub();
     await createLog(stub, "lease-log");
@@ -365,7 +460,12 @@ describe("RealmContainer HTTP contract", () => {
     await createLog(stub, "safe-log");
     const before = JSON.stringify(await inspect(stub));
     const badJsonResponse = await stub.fetch("https://realm.invalid/commit", {
-      method: "POST", headers: { "content-type": "application/json" }, body: "{",
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${realmSecrets.get(stub)!}`,
+      },
+      body: "{",
     });
     expect(badJsonResponse.status).toBe(400);
     expect(await badJsonResponse.json()).toEqual({ ok: false, error: { code: "malformed_request" } });

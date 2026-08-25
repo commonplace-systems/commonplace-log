@@ -5,7 +5,9 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
 
   Runs only when both `COMMONPLACE_LOG_GATEWAY_URL` and
   `COMMONPLACE_LOG_GATEWAY_TOKEN` are set; otherwise the module is skipped.
-  The token is read at test time and never printed.
+  `COMMONPLACE_LOG_GATEWAY_TOKEN` is the deployment token: it creates realms
+  but does not authorize their data routes. The token and returned realm
+  secrets are read at test time and never printed.
   """
 
   use ExUnit.Case, async: false
@@ -13,6 +15,7 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
   alias Commonplace.Log.{DocumentProfile, UUID}
   alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.{CloudflareSidecar, CommitPlan, ReadSet}
+  alias Commonplace.Log.Persistence.CloudflareSidecar.Httpc
 
   @url_var "COMMONPLACE_LOG_GATEWAY_URL"
   @token_var "COMMONPLACE_LOG_GATEWAY_TOKEN"
@@ -26,7 +29,7 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
 
   test "a log committed in realm A is present there and absent from realm B" do
     gateway_url = System.fetch_env!(@url_var) |> String.trim_trailing("/")
-    token = System.fetch_env!(@token_var)
+    deployment_token = System.fetch_env!(@token_var)
 
     log_id = UUID.uuidv7()
     writer_id = UUID.uuidv7()
@@ -34,9 +37,13 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
     realm_a_id = UUID.uuidv7()
     realm_b_id = UUID.uuidv7()
 
-    realm_a = adapter(gateway_url, realm_a_id, token)
-    realm_b = adapter(gateway_url, realm_b_id, token)
-    wrong_token = adapter(gateway_url, realm_a_id, "Bearer obviously-wrong-token")
+    assert {:ok, realm_a_secret} = create_realm(gateway_url, realm_a_id, deployment_token)
+    assert {:ok, realm_b_secret} = create_realm(gateway_url, realm_b_id, deployment_token)
+
+    realm_a = adapter(gateway_url, realm_a_id, realm_a_secret)
+    realm_b = adapter(gateway_url, realm_b_id, realm_b_secret)
+    wrong_secret = adapter(gateway_url, realm_a_id, "obviously-wrong-realm-secret")
+    realm_b_secret_on_a = adapter(gateway_url, realm_a_id, realm_b_secret)
 
     # Realm A: create, lease, commit one entry, then read the frontier back.
     assert :ok =
@@ -69,17 +76,25 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
                entry_ids: []
              })
 
-    # Authentication: a wrong bearer token is rejected at the gateway with the 401 shape.
+    # Authentication: neither a wrong secret nor realm B's secret opens realm A.
     assert {:error, {:unauthorized, %{status: 401, body: body}}} =
-             CloudflareSidecar.frontier(wrong_token, log_id)
+             CloudflareSidecar.frontier(wrong_secret, log_id)
 
     assert %{"ok" => false, "error" => %{"code" => "unauthorized"}} = Jason.decode!(body)
+
+    assert {:error, {:unauthorized, %{status: 401, body: cross_body}}} =
+             CloudflareSidecar.frontier(realm_b_secret_on_a, log_id)
+
+    assert %{"ok" => false, "error" => %{"code" => "unauthorized"}} =
+             Jason.decode!(cross_body)
   end
 
   test "DocumentProfile over a deployed sidecar keeps one writer and fences an old activation" do
     gateway_url = System.fetch_env!(@url_var) |> String.trim_trailing("/")
-    token = System.fetch_env!(@token_var)
-    store = adapter(gateway_url, UUID.uuidv7(), token)
+    deployment_token = System.fetch_env!(@token_var)
+    realm_id = UUID.uuidv7()
+    assert {:ok, realm_secret} = create_realm(gateway_url, realm_id, deployment_token)
+    store = adapter(gateway_url, realm_id, realm_secret)
     log_id = UUID.uuidv7()
     lane = [lane: {SidecarLane, store}]
 
@@ -98,15 +113,45 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
     assert {:ok, %{writer_seq: 2}} = DocumentProfile.append(second, %{"n" => 2}, [])
   end
 
-  defp adapter(gateway_url, realm_id, bearer) do
-    CloudflareSidecar.new(gateway_url <> "/realms/" <> realm_id,
-      transport_options: @transport_options,
-      headers: [{"authorization", bearer_value(bearer)}]
-    )
+  defp create_realm(gateway_url, realm_id, deployment_token) do
+    case Httpc.request(
+           :post,
+           gateway_url <> "/realms/" <> realm_id,
+           [
+             {"content-type", "application/json"},
+             {"authorization", "Bearer " <> deployment_token}
+           ],
+           "{}",
+           @transport_options
+         ) do
+      {:ok, %{status: 201, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, %{"ok" => true, "realm_id" => ^realm_id, "realm_secret" => secret}}
+          when is_binary(secret) ->
+            {:ok, secret}
+
+          _response ->
+            # Never place a one-time realm secret in a failing assertion term.
+            {:error, :unexpected_create_response}
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:realm_create_failed, status}}
+
+      {:error, reason} ->
+        {:error, {:realm_create_transport_failed, reason}}
+
+      _response ->
+        {:error, :malformed_create_transport_response}
+    end
   end
 
-  defp bearer_value("Bearer " <> _rest = value), do: value
-  defp bearer_value(token), do: "Bearer " <> token
+  defp adapter(gateway_url, realm_id, realm_secret) do
+    CloudflareSidecar.new(gateway_url <> "/realms/" <> realm_id,
+      transport_options: @transport_options,
+      headers: [{"authorization", "Bearer " <> realm_secret}]
+    )
+  end
 
   defp plan(log_id, writer_id, entry_id, epoch) do
     %CommitPlan{

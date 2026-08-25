@@ -63,10 +63,21 @@ END;
 export const DOCUMENT_WRITER_ID_COLUMN_DDL =
   "ALTER TABLE logs ADD COLUMN document_writer_id TEXT";
 
+/** Realm existence and authorization, additive to the pinned proposal layout. */
+export const REALM_META_DDL = `CREATE TABLE realm_meta (
+  singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+  secret_hash BLOB NOT NULL CHECK (length(secret_hash) = 32),
+  created_at  TEXT NOT NULL
+) STRICT;`;
+
 function hasTable(sql: SqlStorage, name: string): boolean {
   return sql
     .exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name)
     .toArray().length > 0;
+}
+
+export function initRealmMetaSchema(sql: SqlStorage): void {
+  if (!hasTable(sql, "realm_meta")) sql.exec(REALM_META_DDL);
 }
 
 /** Apply the pinned layout, followed only by additive epoch and trigger DDL. */
@@ -83,4 +94,5 @@ export function initSchema(sql: SqlStorage): void {
 
   sql.exec(IMMUTABILITY_TRIGGERS);
   sql.exec(ENTRY_SIZE_TRIGGER);
+  initRealmMetaSchema(sql);
 }

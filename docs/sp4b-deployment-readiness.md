@@ -236,6 +236,12 @@ is not anchored to the name.
 
 ## 4b. ⭐ SP4b progress — 2026-08-24, against the real account
 
+**Realm authorization update (REALMAUTH-R4, 2026-08-25).** Realm creation and data access now
+have separate authorities: the deployment token authorizes only `POST /realms/{uuid}`, while the
+one-time returned realm secret authorizes that realm's sidecar, engine, and node paths. Local
+workers-pool tests cover uncreated, wrong-secret, deployment-token-on-realm, cross-realm, and
+right-secret arms; this note makes no new deployed-system claim.
+
 jes supplied an account API token on 2026-08-24 (stored outside every repository; read from the
 environment only). Measured the same day:
 

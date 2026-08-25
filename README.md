@@ -136,6 +136,8 @@ exhibits is a bug in one of them or a gap in the specification.
 The worker also contains a realm node: one Durable Object per realm that
 holds the realm's SQLite and manages a Cloudflare Container running the Elixir
 engine. Realm ids are opaque lowercase canonical UUIDs, ruled 2026-08-25 (1a).
+The deployment bearer authorizes only explicit `POST /realms/{uuid}` creation;
+that one-time response returns a realm secret which alone authorizes every route in that realm.
 The engine reaches its storage only through `http://storage.internal`,
 which a Worker-side outbound handler resolves from the platform-supplied
 container identity — nothing the engine sends can select another realm's
@@ -207,8 +209,8 @@ signatures; cross-log transactions.
 ## Status
 
 The library, the workalike, and the Cloudflare realm deployment are complete
-and green. The repository is waiting on a naming and placement policy
-decision for realms, and on the needs of the sibling libraries (`commonplace-doc`, `commonplace-doc-sync`, `commonplace-log-reducer`)
+and green. Realm naming, explicit creation, per-realm authorization, and placement
+were ruled 2026-08-25; the repository is waiting on the needs of the sibling libraries (`commonplace-doc`, `commonplace-doc-sync`, `commonplace-log-reducer`)
 that build on this one.
 
 ## License

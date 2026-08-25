@@ -1,8 +1,7 @@
 # Realm naming and placement — decision document
 
-**Status:** proposal for jes, 2026-08-25. Nothing here is built; every option below is one Sol
-round. The readiness document calls this "an owner's choice rather than an implementation
-detail", so this records what exists, what is open, and one recommendation per question.
+**Status:** ruled by jes, 2026-08-25. Q1 → 1a, Q2 → 2a, Q3 → 3a combined with 2a,
+Q4 → the recommendation, and Q5 → not now.
 
 ## What exists (measured on the deployed system, 2026-08-25)
 
@@ -35,6 +34,8 @@ already accepts UUIDs, so this is a naming convention plus a check that the id i
 
 ## Question 2 — who may create a realm, and how is one created?
 
+**Ruled 2026-08-25: 2a.**
+
 Today a realm exists the moment a request names it: `getByName` on an unseen id creates the DO,
 and the first `/create-log` creates a database. There is no "create realm" act and no refusal.
 
@@ -50,6 +51,8 @@ state.
 
 ## Question 3 — per-realm authorization
 
+**Ruled 2026-08-25: 3a combined with 2a.**
+
 Today one bearer token opens every realm. That is fine for a development account and wrong the
 day two tenants exist.
 
@@ -63,6 +66,8 @@ day two tenants exist.
 the right long-term shape but is explicitly out of 0.1 scope, and 3a does not preclude it.
 
 ## Question 4 — placement
+
+**Ruled 2026-08-25: recommendation accepted.**
 
 | Knob | Today | Note |
 |---|---|---|
@@ -79,7 +84,8 @@ than the platform's 500.
 
 ## Question 5 — sharding (§7.3)
 
-Not now. One realm database is the ruled default; nothing measured approaches a limit.
+**Ruled 2026-08-25: not now.** One realm database is the ruled default; nothing measured
+approaches a limit.
 
 ## What this document does not decide
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOCUMENT_WRITER_ID_COLUMN_DDL,
   IMMUTABILITY_TRIGGERS,
+  REALM_META_DDL,
   SCHEMA_DDL,
   initSchema,
 } from "../../src/realm/schema";
@@ -27,7 +28,7 @@ describe("realm section 7.2 schema on real DO SQLite", () => {
       const objects = new Map(
         sql.exec("SELECT name, type, sql FROM sqlite_master").toArray().map((row) => [String(row.name), row]),
       );
-      for (const table of ["logs", "entries", "writer_tips"]) {
+      for (const table of ["logs", "entries", "writer_tips", "realm_meta"]) {
         expect(objects.get(table)?.type).toBe("table");
         expect(String(objects.get(table)?.sql)).toContain("STRICT");
       }
@@ -39,6 +40,7 @@ describe("realm section 7.2 schema on real DO SQLite", () => {
       expect(columns).toContain("lease_epoch");
       expect(columns).toContain("document_writer_id");
       expect(IMMUTABILITY_TRIGGERS).toContain("entries are immutable");
+      expect(REALM_META_DDL).toContain("secret_hash BLOB NOT NULL");
     });
   });
 

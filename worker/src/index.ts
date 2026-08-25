@@ -1,5 +1,6 @@
 import type { RealmContainer } from "./realm/container";
 import type { RealmNode } from "./realm/node";
+import { REALM_CREATE_HEADER, REALM_ID_HEADER } from "./realm/realm_auth";
 
 export { CommonplaceLog } from "./commonplace-log-do";
 export { RealmContainer } from "./realm/container";
@@ -19,7 +20,7 @@ export interface Env {
 }
 
 /**
- * Authenticated realm gateway (docs/sp4b-deployment-readiness.md §5).
+ * Realm gateway with separate deployment-create and per-realm authorities.
  *
  * Every realm request is `/realms/{realm_id}` + a sidecar path, e.g.
  * `POST /realms/018f1000-0000-7000-8000-000000000001/commit`. The realm is
@@ -79,6 +80,32 @@ function realmStub(env: Env, realmId: string): DurableObjectStub {
   return env.REALM_CONTAINER.getByName(realmId);
 }
 
+const LOCATION_HINTS = new Set([
+  "wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me",
+]);
+
+type LocationHint = DurableObjectNamespaceGetDurableObjectOptions["locationHint"];
+
+function createRealmStub(env: Env, realmId: string, locationHint?: LocationHint): DurableObjectStub {
+  const namespace = env.REALM_NODE ?? env.REALM_CONTAINER;
+  const id = namespace.idFromName(realmId);
+  return namespace.get(id, locationHint === undefined ? undefined : { locationHint });
+}
+
+async function createBody(request: Request): Promise<{ locationHint?: LocationHint } | null> {
+  try {
+    const value: unknown = await request.json();
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (Object.keys(row).some((key) => key !== "location_hint")) return null;
+    if (row.location_hint === undefined) return {};
+    if (typeof row.location_hint !== "string" || !LOCATION_HINTS.has(row.location_hint)) return null;
+    return { locationHint: row.location_hint as LocationHint };
+  } catch {
+    return null;
+  }
+}
+
 export async function handleIngress(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
@@ -87,25 +114,44 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     return new Response("commonplace-log", { status: 200 });
   }
 
-  // A gateway with no configured token fails closed, for every request.
-  const expected = env.GATEWAY_TOKEN;
-  if (typeof expected !== "string" || expected.length === 0) {
-    return fail("gateway_not_configured", 503);
-  }
-
   const presented = bearerToken(request);
-  if (presented === null || !tokensEqual(presented, expected)) {
-    return fail("unauthorized", 401);
-  }
-
   const route = realmRoute(url.pathname);
   if (route === null) return fail("not_found", 404);
+
+  const isCreate = request.method === "POST" && route.sidecarPath === "/" &&
+    url.pathname === `${REALM_PREFIX}${route.realmId}`;
+
+  if (isCreate) {
+    const expected = env.GATEWAY_TOKEN;
+    if (typeof expected !== "string" || expected.length === 0) {
+      return fail("gateway_not_configured", 503);
+    }
+    if (presented === null || !tokensEqual(presented, expected)) return fail("unauthorized", 401);
+    const decoded = await createBody(request);
+    if (decoded === null) return fail("malformed_request", 400);
+
+    const target = new URL(request.url);
+    target.pathname = "/realm/create";
+    const headers = new Headers(request.headers);
+    headers.delete("authorization");
+    headers.set(REALM_CREATE_HEADER, "1");
+    headers.set(REALM_ID_HEADER, route.realmId);
+    const forwarded = new Request(target, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
+  }
+
+  // Realm routes are scoped in the DO. The gateway checks syntax only.
+  if (presented === null) return fail("unauthorized", 401);
 
   const target = new URL(request.url);
   target.pathname = route.sidecarPath;
   const forwarded = new Request(target, request);
-  // The sidecar has no auth of its own; do not carry the gateway secret into it.
-  forwarded.headers.delete("authorization");
+  forwarded.headers.delete(REALM_CREATE_HEADER);
+  forwarded.headers.delete(REALM_ID_HEADER);
   return await realmStub(env, route.realmId).fetch(forwarded);
 }
 

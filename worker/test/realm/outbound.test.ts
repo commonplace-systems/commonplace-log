@@ -12,7 +12,7 @@ function fakeEnv() {
       },
       get(durableObjectId) {
         return {
-          async fetch(request) {
+          async storageFetch(request) {
             selected.push({ durableObjectId, request });
             return Response.json({ ok: true, selected: durableObjectId.value }, { status: 207 });
           },
