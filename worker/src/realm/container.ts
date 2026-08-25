@@ -12,4 +12,16 @@ export class RealmContainer extends DurableObject {
     return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
       await handleRealmRequest(authorized, this.store));
   }
+
+  /**
+   * Platform-authenticated storage entrypoint, mirroring RealmNode.storageFetch:
+   * the wire a BEAM inside a Container speaks. Reachable only by Worker code
+   * holding a stub (the outbound handler, or a test-only ingress); never via
+   * the public fetch, which requires the realm secret.
+   */
+  async storageFetch(request: Request): Promise<Response> {
+    const forwarded = new Request(request);
+    forwarded.headers.delete("authorization");
+    return await handleRealmRequest(forwarded, this.store);
+  }
 }
