@@ -327,6 +327,41 @@ Until it does, the fence is verified by two *leases* on real storage (above), no
 by construction rather than merely unobserved. Also unverified: `storage_full`, container↔DO latency under real placement, and
 network failure under production scheduling.
 
+**⭐ DocumentProfile over the sidecar — 2026-08-25, jes's "first" (commits be09795, acb0127).**
+The realm DO now holds a single-lane document's **writer identity** beside its lease epoch
+(`/take-lease` mints it once and returns it with the epoch), because a container's disk is
+disposable and a fresh incarnation must *continue* the lane, not mint a second one.
+`DocumentProfile` works through a `Lane` behaviour (SQLite unchanged; Sidecar via
+`Engine.append/7` / `merge/5`, epoch verified inside the commit). Verified, in order: loopback
+double → real `wrangler dev` socket → the real deployment (`test/cloudflare_deployed_integration_test.exs`,
+"keeps one writer and fences an old activation").
+
+**The rollout-overlap experiment, run 03:17–03:19Z with real containers:**
+
+| t | Event | Observation |
+|---|---|---|
+| 03:17 | old incarnation `01a036ec…` serving; document created (epoch 1); control append | seq 1 |
+| 03:18:04 | `wrangler deploy` with a bumped build stamp: **new image digest pushed, application modified, changes applied** | incarnation **unchanged** |
+| 03:18:06 | append with an 85 s prepare→commit delay sent to the running incarnation | in flight |
+| 03:18–03:19 | seventeen `open` calls, each taking a new lease (epochs 2…18); incarnation polled every 5 s | **still `01a036ec…` throughout** — the rollout did not replace the running instance, grace period or not |
+| 03:19:31 | the delayed commit returns | **409 `writer_lease_fenced`**; frontier still seq 1 — nothing written |
+| 03:19:38 | append on the current activation | revision 2 |
+
+⇒ Two findings, one expected and one not:
+
+1. **The fence works with a real container in the loop.** A live incarnation whose activation has
+   been superseded — here by later `open`s of the same document — has its in-flight commit refused
+   at commit time, with nothing written. This is the case the fence exists for, observed on the
+   real platform rather than by two leases from a shell.
+2. **Rollout does not preempt a running DO-managed container.** The new image was pushed and
+   applied; the running instance kept serving for the whole window. On this platform one Durable
+   Object manages at most one container instance, and a replacement starts only when the current
+   one stops. ⇒ *"Two live incarnations of one realm"* cannot be produced by a rollout **by
+   construction**, so it is not an unobserved hazard; it is a state the platform does not offer.
+   What remains possible — and is now verified — is that a superseded activation, whether from a
+   restart or another opener, cannot write. §4's "two live incarnations" item closes as
+   *not reachable*, with the fence verified against the reachable case.
+
 Still unverified from §4: storage exhaustion, Container↔DO latency, real network failure under
 production scheduling, two live incarnations of one realm. Nothing about those changed.
 
