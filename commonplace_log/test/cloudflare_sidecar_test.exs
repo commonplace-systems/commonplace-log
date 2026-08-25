@@ -39,7 +39,11 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
   test "every callback emits the pinned request and parses the pinned response" do
     responses = [
       response(201, %{"ok" => true}),
-      response(200, %{"ok" => true, "lease_epoch" => 7}),
+      response(200, %{
+        "ok" => true,
+        "lease_epoch" => 7,
+        "writer_id" => "018f5e2a-8b3c-7d4e-9f10-123456789abd"
+      }),
       response(200, %{
         "ok" => true,
         "read_set" => %{
@@ -47,6 +51,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
           "format_version" => 1,
           "revision" => 3,
           "lease_epoch" => 7,
+          "document_writer_id" => "018f5e2a-8b3c-7d4e-9f10-123456789abd",
           "tips" => [%{"writer_id" => "alice", "last_seq" => 2, "last_entry_id" => "e2"}],
           "coordinates" => [
             %{"writer_id" => "alice", "writer_seq" => 2, "canonical_bytes" => @encoded_high_bytes}
@@ -91,13 +96,18 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
                created_at: "2026-08-23T00:00:00Z"
              })
 
-    assert {:ok, 7} = CloudflareSidecar.take_lease(store, "log-a")
+    assert {:ok,
+            %{
+              lease_epoch: 7,
+              writer_id: "018f5e2a-8b3c-7d4e-9f10-123456789abd"
+            }} = CloudflareSidecar.take_lease(store, "log-a")
 
     assert {:ok,
             %ReadSet{
               log_id: "log-a",
               revision: 3,
               lease_epoch: 7,
+              document_writer_id: "018f5e2a-8b3c-7d4e-9f10-123456789abd",
               tips: %{"alice" => %{seq: 2, entry_id: "e2"}},
               coordinates: %{{"alice", 2} => @high_bytes},
               entry_ids: %{"e2" => @high_bytes}
@@ -250,6 +260,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
             "format_version" => 1,
             "revision" => 0,
             "lease_epoch" => 0,
+            "document_writer_id" => nil,
             "tips" => [],
             "coordinates" => [],
             "entry_ids" => []

@@ -117,7 +117,7 @@ defmodule Commonplace.Log.Test.PersistenceContract do
 
       test "read_set is a coherent selective snapshot with revision and lease epoch", contract do
         assert :ok = create_log(contract)
-        assert {:ok, 1} = contract.module.take_lease(contract.store, @log_id)
+        assert {:ok, 1} = take_lease(contract)
         assert {:ok, 1} = contract.module.commit(contract.store, plan(0, 1, rows()))
 
         query = %{
@@ -151,8 +151,8 @@ defmodule Commonplace.Log.Test.PersistenceContract do
       test "leases are monotonic and epoch and revision failures stay distinct and write nothing",
            contract do
         assert :ok = create_log(contract)
-        assert {:ok, 1} = contract.module.take_lease(contract.store, @log_id)
-        assert {:ok, 2} = contract.module.take_lease(contract.store, @log_id)
+        assert {:ok, 1} = take_lease(contract)
+        assert {:ok, 2} = take_lease(contract)
         before = contract.logical_state.()
 
         assert {:error, :obsolete_epoch} =
@@ -348,6 +348,13 @@ defmodule Commonplace.Log.Test.PersistenceContract do
       end
 
       defp create_log(contract), do: contract.module.create_log(contract.store, @log_id, %{})
+
+      defp take_lease(contract) do
+        case contract.module.take_lease(contract.store, @log_id) do
+          {:ok, %{lease_epoch: epoch}} -> {:ok, epoch}
+          result -> result
+        end
+      end
 
       defp bound_log(contract) do
         %{module: contract.module, store: contract.store, log_id: @log_id}

@@ -21,6 +21,7 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
             metadata: metadata,
             revision: 0,
             lease_epoch: 0,
+            document_writer_id: nil,
             tips: %{},
             entries: %{},
             arrival_seq: 0
@@ -42,6 +43,21 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
           epoch = log.lease_epoch + 1
           state = put_in(state.logs[log_id], %{log | lease_epoch: epoch})
           {{:ok, epoch}, state}
+      end
+    end)
+  end
+
+  def take_document_lease(store, log_id) do
+    Agent.get_and_update(store, fn state ->
+      case Map.fetch(state.logs, log_id) do
+        :error ->
+          {{:error, :not_found}, state}
+
+        {:ok, log} ->
+          epoch = log.lease_epoch + 1
+          writer_id = log.document_writer_id || Commonplace.Log.UUID.uuidv7()
+          log = %{log | lease_epoch: epoch, document_writer_id: writer_id}
+          {{:ok, %{lease_epoch: epoch, writer_id: writer_id}}, put_in(state.logs[log_id], log)}
       end
     end)
   end
@@ -72,6 +88,7 @@ defmodule Commonplace.Log.Test.InMemoryPersistence do
          log_id: log_id,
          revision: log.revision,
          lease_epoch: log.lease_epoch,
+         document_writer_id: log.document_writer_id,
          tips: tips,
          coordinates: coordinate_rows,
          entry_ids: id_rows

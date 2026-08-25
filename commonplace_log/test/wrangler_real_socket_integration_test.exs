@@ -2,7 +2,8 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
   defmodule Commonplace.Log.WranglerRealSocketIntegrationTest do
     use ExUnit.Case, async: false
 
-    alias Commonplace.Log.{Engine, Jcs}
+    alias Commonplace.Log.{DocumentProfile, Engine, Jcs, UUID}
+    alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
     alias Commonplace.Log.Persistence.{CloudflareSidecar, CommitPlan, ReadSet}
     alias Commonplace.Log.Persistence.CloudflareSidecar.Httpc
 
@@ -157,13 +158,16 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
                  created_at: "2026-08-23T00:00:00Z"
                })
 
-      assert {:ok, 1} = CloudflareSidecar.take_lease(store, @log_id)
+      assert {:ok, %{lease_epoch: 1, writer_id: document_writer_id}} =
+               CloudflareSidecar.take_lease(store, @log_id)
+
       assert {:ok, 1} = CloudflareSidecar.commit(store, initial_plan())
 
       assert {:ok,
               %ReadSet{
                 revision: 1,
                 lease_epoch: 1,
+                document_writer_id: ^document_writer_id,
                 tips: %{@writer_id => %{seq: 1, entry_id: @entry_id}},
                 coordinates: %{{@writer_id, 1} => @wire_bytes},
                 entry_ids: %{@entry_id => @wire_bytes}
@@ -198,7 +202,8 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
                  expected_epoch: 1
                })
 
-      assert {:ok, 2} = CloudflareSidecar.take_lease(store, @log_id)
+      assert {:ok, %{lease_epoch: 2, writer_id: ^document_writer_id}} =
+               CloudflareSidecar.take_lease(store, @log_id)
 
       assert {:error, :obsolete_epoch} =
                CloudflareSidecar.commit(store, %CommitPlan{
@@ -211,6 +216,30 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
 
       assert {:error, {:writer_fork, %{writer_id: @writer_id, seq: 1}}} =
                Engine.merge(CloudflareSidecar, store, @log_id, [fork_entry()])
+    end
+
+    test "DocumentProfile continues one sidecar lane and fences the old activation", context do
+      store =
+        CloudflareSidecar.new(adapter_base_url(context.base_url),
+          transport_options: [timeout: 5_000, connect_timeout: 5_000]
+        )
+
+      log_id = UUID.uuidv7()
+      lane = [lane: {SidecarLane, store}]
+      assert {:ok, first} = DocumentProfile.create_log(log_id, lane)
+      assert {:ok, %{writer_seq: 1}} = DocumentProfile.append(first, %{"n" => 1}, [])
+      writer_id = first.writer_id
+
+      assert {:ok, second} = DocumentProfile.open_log(log_id, lane)
+      assert second.writer_id == writer_id
+      assert {:ok, before_frontier} = CloudflareSidecar.frontier(store, log_id)
+
+      assert {:error, {:writer_lease_fenced, %{}}} =
+               DocumentProfile.append(first, %{"must_not_write" => true}, [])
+
+      assert {:ok, after_frontier} = CloudflareSidecar.frontier(store, log_id)
+      assert after_frontier == before_frontier
+      assert {:ok, %{writer_seq: 2}} = DocumentProfile.append(second, %{"n" => 2}, [])
     end
 
     defp initial_plan do

@@ -82,10 +82,11 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   @impl true
   def take_lease(%__MODULE__{} = store, log_id) do
     post(store, "/take-lease", %{"log_id" => log_id}, 200, fn value ->
-      with :ok <- exact_keys(value, ["ok", "lease_epoch"]),
+      with :ok <- exact_keys(value, ["ok", "lease_epoch", "writer_id"]),
            true <- value["ok"] === true,
-           {:ok, epoch} <- positive_integer(value["lease_epoch"]) do
-        {:ok, epoch}
+           {:ok, epoch} <- positive_integer(value["lease_epoch"]),
+           {:ok, writer_id} <- lowercase_uuid(value["writer_id"]) do
+        {:ok, %{lease_epoch: epoch, writer_id: writer_id}}
       else
         false -> protocol("take-lease success has non-true ok")
         {:error, _reason} = error -> error
@@ -298,6 +299,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
              "format_version",
              "revision",
              "lease_epoch",
+             "document_writer_id",
              "tips",
              "coordinates",
              "entry_ids"
@@ -307,6 +309,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
          {:ok, _format_version} <- non_negative_integer(read_set["format_version"]),
          {:ok, revision} <- non_negative_integer(read_set["revision"]),
          {:ok, lease_epoch} <- non_negative_integer(read_set["lease_epoch"]),
+         {:ok, document_writer_id} <- nullable_lowercase_uuid(read_set["document_writer_id"]),
          {:ok, tips} <- parse_tips(read_set["tips"]),
          {:ok, coordinates} <- parse_coordinates(read_set["coordinates"]),
          {:ok, entry_ids} <- parse_entry_ids(read_set["entry_ids"]) do
@@ -315,6 +318,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
          log_id: log_id,
          revision: revision,
          lease_epoch: lease_epoch,
+         document_writer_id: document_writer_id,
          tips: tips,
          coordinates: coordinates,
          entry_ids: entry_ids
@@ -570,6 +574,17 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
   defp string(value) when is_binary(value), do: {:ok, value}
   defp string(_value), do: protocol("expected a string")
+
+  defp lowercase_uuid(value) when is_binary(value) do
+    if Regex.match?(~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/, value),
+      do: {:ok, value},
+      else: protocol("expected a lowercase UUID")
+  end
+
+  defp lowercase_uuid(_value), do: protocol("expected a lowercase UUID")
+
+  defp nullable_lowercase_uuid(nil), do: {:ok, nil}
+  defp nullable_lowercase_uuid(value), do: lowercase_uuid(value)
 
   defp non_negative_integer(value) when is_integer(value) and value >= 0, do: {:ok, value}
   defp non_negative_integer(_value), do: protocol("expected a non-negative integer")

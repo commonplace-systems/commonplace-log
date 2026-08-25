@@ -24,9 +24,21 @@ defmodule Commonplace.Log.Test.SidecarLoopback do
   end
 
   defp dispatch("/take-lease", module, store, payload) do
-    case module.take_lease(store, payload["log_id"]) do
-      {:ok, epoch} -> response(200, %{"ok" => true, "lease_epoch" => epoch})
-      error -> error_response(error)
+    result =
+      if function_exported?(module, :take_document_lease, 2),
+        do: module.take_document_lease(store, payload["log_id"]),
+        else: module.take_lease(store, payload["log_id"])
+
+    case result do
+      {:ok, %{lease_epoch: epoch, writer_id: writer_id}} ->
+        response(200, %{
+          "ok" => true,
+          "lease_epoch" => epoch,
+          "writer_id" => writer_id
+        })
+
+      error ->
+        error_response(error)
     end
   end
 
@@ -114,6 +126,7 @@ defmodule Commonplace.Log.Test.SidecarLoopback do
       "format_version" => 1,
       "revision" => read_set.revision,
       "lease_epoch" => read_set.lease_epoch,
+      "document_writer_id" => Map.get(read_set, :document_writer_id),
       "tips" =>
         Enum.map(read_set.tips, fn {writer_id, tip} ->
           %{"writer_id" => writer_id, "last_seq" => tip.seq, "last_entry_id" => tip.entry_id}

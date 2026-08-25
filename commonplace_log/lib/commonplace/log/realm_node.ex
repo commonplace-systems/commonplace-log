@@ -3,9 +3,10 @@ defmodule Commonplace.Log.RealmNode do
 
   use Plug.Router
 
-  alias Commonplace.Log.Engine
+  alias Commonplace.Log.{DocumentProfile, Engine, UUID}
+  alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.{CloudflareSidecar, LocalSQLite}
-  alias Commonplace.Log.RealmNode.Incarnation
+  alias Commonplace.Log.RealmNode.{DocumentHandles, Incarnation}
 
   plug(:match)
   plug(:dispatch)
@@ -18,6 +19,34 @@ defmodule Commonplace.Log.RealmNode do
 
   get "/v1/incarnation" do
     json(conn, 200, Map.put(Incarnation.current(), :ok, true))
+  end
+
+  post "/v1/documents/:log_id/create" do
+    with_document_store(conn, fn conn, store ->
+      case DocumentProfile.create_log(log_id, lane: {SidecarLane, store}) do
+        {:ok, handle} -> cache_document_handle(conn, log_id, handle, 201)
+        other -> result(conn, other)
+      end
+    end)
+  end
+
+  post "/v1/documents/:log_id/open" do
+    with_document_store(conn, fn conn, store ->
+      case DocumentProfile.open_log(log_id, lane: {SidecarLane, store}) do
+        {:ok, handle} -> cache_document_handle(conn, log_id, handle, 200)
+        other -> result(conn, other)
+      end
+    end)
+  end
+
+  post "/v1/documents/:log_id/append" do
+    with {:ok, request_body} <- decode_object(conn),
+         {:ok, entry_body} <- required_object(request_body, "body"),
+         {:ok, created_at} <- created_at(request_body) do
+      append_document(conn, log_id, entry_body, created_at)
+    else
+      {:error, reason} -> error(conn, 400, "invalid_entry", %{reason: reason})
+    end
   end
 
   post "/v1/logs/:log_id/create" do
@@ -108,6 +137,72 @@ defmodule Commonplace.Log.RealmNode do
     end
   end
 
+  defp with_document_store(conn, fun) do
+    case persistence_config() do
+      {CloudflareSidecar, options} when is_list(options) ->
+        {base_url, adapter_options} = Keyword.pop!(options, :base_url)
+        fun.(conn, CloudflareSidecar.new(base_url, adapter_options))
+
+      {CloudflareSidecar, %CloudflareSidecar{} = store} ->
+        fun.(conn, store)
+
+      _invalid ->
+        error(conn, 502, "configuration_error", %{
+          reason: "document routes require CloudflareSidecar persistence"
+        })
+    end
+  end
+
+  defp cache_document_handle(conn, log_id, handle, status) do
+    :ok = DocumentHandles.put(log_id, handle)
+    json(conn, status, %{ok: true, writer_id: handle.writer_id, lease_epoch: handle.lease})
+  end
+
+  defp append_document(conn, log_id, body, created_at) do
+    case DocumentHandles.fetch(log_id) do
+      {:ok, handle} ->
+        opts = [operation_id: UUID.uuidv7(), created_at: created_at]
+
+        with {:ok, prepared} <- DocumentProfile.prepare_append(handle, [body], opts),
+             :ok <- maybe_delay_document_commit(conn),
+             {:ok, receipt} <- DocumentProfile.commit_prepared(handle, prepared) do
+          json(conn, 200, %{ok: true, result: receipt})
+        else
+          {:error, {:writer_lease_fenced, _details}} = fenced ->
+            :ok = DocumentHandles.delete(log_id)
+            result(conn, fenced)
+
+          other ->
+            result(conn, other)
+        end
+
+      :error ->
+        error(conn, 409, "document_not_open", %{})
+    end
+  end
+
+  defp maybe_delay_document_commit(conn) do
+    if System.get_env("COMMONPLACE_REALM_TEST_LEVERS") == "1" do
+      case get_req_header(conn, "x-commonplace-test-commit-delay-ms") do
+        [value] -> sleep_delay(value)
+        _absent_or_repeated -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp sleep_delay(value) do
+    case Integer.parse(value) do
+      {milliseconds, ""} when milliseconds >= 0 ->
+        Process.sleep(min(milliseconds, 90_000))
+        :ok
+
+      _invalid ->
+        :ok
+    end
+  end
+
   defp persistence_config do
     Application.get_env(:commonplace_log, __MODULE__, [])
     |> Keyword.get_lazy(:persistence, fn ->
@@ -195,7 +290,15 @@ defmodule Commonplace.Log.RealmNode do
         "log_not_found" ->
           404
 
-        code when code in ["writer_fork", "writer_gap", "entry_id_collision", "stale_revision"] ->
+        code
+        when code in [
+               "writer_fork",
+               "writer_gap",
+               "entry_id_collision",
+               "stale_revision",
+               "writer_lease_fenced",
+               "document_not_open"
+             ] ->
           409
 
         code when code in ["invalid_entry", "invalid_json", "entry_too_large", "log_mismatch"] ->

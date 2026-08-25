@@ -78,6 +78,7 @@ defmodule Commonplace.Log.Persistence.LostAcknowledgementTest do
         "format_version" => 1,
         "revision" => read_set.revision,
         "lease_epoch" => read_set.lease_epoch,
+        "document_writer_id" => Map.get(read_set, :document_writer_id),
         "tips" =>
           Enum.map(read_set.tips, fn {writer_id, tip} ->
             %{

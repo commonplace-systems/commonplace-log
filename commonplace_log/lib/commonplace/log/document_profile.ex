@@ -65,22 +65,22 @@ defmodule Commonplace.Log.DocumentProfile do
   """
 
   alias Commonplace.Log.{Entry, Jcs}
+  alias Commonplace.Log.DocumentProfile.Lane
+  alias Commonplace.Log.DocumentProfile.Lane.SQLite, as: SQLiteLane
   alias Commonplace.LogStore.SQLite
-  alias Commonplace.LogStore.SQLite.Server
-
-  @registry Commonplace.LogStore.SQLite.Registry
 
   defmodule Handle do
     @moduledoc false
 
-    @enforce_keys [:log_id, :writer_id, :adapter, :store]
-    defstruct [:log_id, :writer_id, :adapter, :store, :retry_context, :lease]
+    @enforce_keys [:log_id, :writer_id, :adapter, :store, :lane]
+    defstruct [:log_id, :writer_id, :adapter, :store, :lane, :retry_context, :lease]
 
     @type t :: %__MODULE__{
             log_id: String.t(),
             writer_id: String.t(),
             adapter: module(),
-            store: GenServer.server(),
+            store: term(),
+            lane: module(),
             retry_context: term(),
             lease: non_neg_integer()
           }
@@ -133,9 +133,9 @@ defmodule Commonplace.Log.DocumentProfile do
   @doc "Explicitly create a Document log and return its single-lane handle."
   @spec create_log(String.t(), keyword()) :: {:ok, handle()} | error()
   def create_log(log_id, opts) when is_binary(log_id) and is_list(opts) do
-    with {:ok, adapter} <- adapter(opts),
-         :ok <- adapter.create_log(log_id) do
-      activate(adapter, log_id)
+    with {:ok, lane, lane_store} <- lane(opts),
+         :ok <- lane.create_log(log_id, lane_store) do
+      activate(lane, lane_store, log_id)
     end
     |> normalize_profile_error()
   end
@@ -143,9 +143,9 @@ defmodule Commonplace.Log.DocumentProfile do
   @doc "Open an existing single-lane Document log without creating storage."
   @spec open_log(String.t(), keyword()) :: {:ok, handle()} | error()
   def open_log(log_id, opts) when is_binary(log_id) and is_list(opts) do
-    with {:ok, adapter} <- adapter(opts),
-         {:ok, _frontier} <- adapter.frontier(log_id) do
-      activate(adapter, log_id)
+    with {:ok, lane, lane_store} <- lane(opts),
+         :ok <- lane.open_log(log_id, lane_store) do
+      activate(lane, lane_store, log_id)
     end
     |> normalize_profile_error()
   end
@@ -154,13 +154,13 @@ defmodule Commonplace.Log.DocumentProfile do
   @spec append(handle(), map(), keyword()) :: {:ok, map()} | error()
   def append(%Handle{} = handle, body, opts) when is_map(body) and is_list(opts) do
     with :ok <- validate_append_options(opts),
-         {:ok, frontier} <- handle.adapter.frontier(handle.log_id),
-         {:ok, writer_id} <- server_writer_id(handle.store),
+         {:ok, frontier} <- handle.lane.frontier(handle),
+         {:ok, writer_id} <- handle.lane.writer_id(handle),
          :ok <- validate_lane(frontier, handle.writer_id),
          :ok <- validate_bound_writer(writer_id, handle.writer_id),
          {:ok, result} <-
-           handle.adapter.append_with_epoch(
-             handle.log_id,
+           handle.lane.append_with_epoch(
+             handle,
              body,
              created_at(opts),
              handle.lease
@@ -176,8 +176,8 @@ defmodule Commonplace.Log.DocumentProfile do
       when is_list(bodies) and is_list(opts) do
     with {:ok, operation_id, created_at} <- validate_prepare_inputs(bodies, opts),
          {:ok, normalized_bodies} <- normalize_bodies(bodies),
-         {:ok, frontier} <- handle.adapter.frontier(handle.log_id),
-         {:ok, writer_id} <- server_writer_id(handle.store),
+         {:ok, frontier} <- handle.lane.frontier(handle),
+         {:ok, writer_id} <- handle.lane.writer_id(handle),
          :ok <- validate_lane(frontier, handle.writer_id),
          :ok <- validate_bound_writer(writer_id, handle.writer_id),
          {:ok, canonical_entries} <-
@@ -200,13 +200,7 @@ defmodule Commonplace.Log.DocumentProfile do
     with :ok <- validate_prepared_binding(handle, prepared),
          {:ok, canonical_entries} <- open_prepared(handle, prepared),
          {:ok, result} <-
-           safe_server_call(fn ->
-             Server.merge_with_epoch(
-               handle.store,
-               canonical_entries,
-               prepared.lease
-             )
-           end) do
+           handle.lane.merge_with_epoch(handle, canonical_entries, prepared.lease) do
       {:ok, Map.delete(result, :writer_id)}
     end
     |> normalize_profile_error()
@@ -222,59 +216,41 @@ defmodule Commonplace.Log.DocumentProfile do
     end
   end
 
-  defp activate(adapter, log_id) do
-    with {:ok, frontier} <- adapter.frontier(log_id),
-         {:ok, server} <- registered_server(log_id),
-         {:ok, writer_id} <- server_writer_id(server),
-         :ok <- validate_lane(frontier, writer_id),
-         {:ok, lease} <- safe_server_call(fn -> Server.take_lease(server) end) do
+  defp activate(lane, lane_store, log_id) do
+    with {:ok, activation} <- lane.activate(log_id, lane_store) do
       {:ok,
        %Handle{
          log_id: log_id,
-         writer_id: writer_id,
-         adapter: adapter,
-         store: server,
+         writer_id: activation.writer_id,
+         adapter: activation.adapter,
+         store: activation.store,
+         lane: lane,
          retry_context: :crypto.strong_rand_bytes(32),
-         lease: lease
+         lease: activation.lease
        }}
     end
   end
 
-  defp adapter(opts) do
-    case Keyword.get(opts, :adapter, SQLite) do
-      SQLite -> {:ok, SQLite}
-      unsupported -> {:error, {:storage, %{reason: {:unsupported_profile_adapter, unsupported}}}}
+  defp lane(opts) do
+    case Keyword.get(opts, :lane) do
+      nil ->
+        case Keyword.get(opts, :adapter, SQLite) do
+          SQLite ->
+            {:ok, SQLiteLane, nil}
+
+          unsupported ->
+            {:error, {:storage, %{reason: {:unsupported_profile_adapter, unsupported}}}}
+        end
+
+      {lane, store} when is_atom(lane) ->
+        {:ok, lane, store}
+
+      unsupported ->
+        {:error, {:storage, %{reason: {:unsupported_profile_lane, unsupported}}}}
     end
   end
 
-  defp registered_server(log_id) do
-    case Registry.lookup(@registry, log_id) do
-      [{server, _value}] -> {:ok, server}
-      [] -> {:error, {:storage, %{reason: :store_owner_unavailable}}}
-    end
-  end
-
-  defp server_writer_id(server), do: safe_server_call(fn -> Server.writer_id(server) end)
-
-  defp safe_server_call(fun) do
-    try do
-      case fun.() do
-        {:error, _code, _reason} = error -> error
-        {:error, _reason} = error -> error
-        result when is_binary(result) -> {:ok, result}
-        {:ok, _result} = ok -> ok
-      end
-    catch
-      :exit, reason -> {:error, {:storage, %{reason: {:server_exit, reason}}}}
-    end
-  end
-
-  defp validate_lane(%{writers: []}, _writer_id), do: :ok
-  defp validate_lane(%{writers: [%{writer_id: writer_id}]}, writer_id), do: :ok
-
-  defp validate_lane(%{writers: writers}, _writer_id) do
-    {:error, {:multiwriter_document_unsupported, %{writer_count: length(writers)}}}
-  end
+  defp validate_lane(frontier, writer_id), do: Lane.validate_lane(frontier, writer_id)
 
   defp validate_bound_writer(writer_id, writer_id), do: :ok
 
@@ -353,7 +329,7 @@ defmodule Commonplace.Log.DocumentProfile do
 
   defp read_lane(handle, %{seq: tip_seq}) do
     with {:ok, %{entries: entries, next_after_seq: nil}} <-
-           handle.adapter.read_writer(handle.log_id, handle.writer_id,
+           handle.lane.read_writer(handle,
              after_seq: 0,
              through_seq: tip_seq,
              limit: tip_seq
@@ -562,6 +538,9 @@ defmodule Commonplace.Log.DocumentProfile do
 
   defp normalize_profile_error({:error, :obsolete_epoch}),
     do: {:error, {:writer_lease_fenced, %{}}}
+
+  defp normalize_profile_error({:error, :not_found}),
+    do: {:error, {:log_not_found, %{}}}
 
   defp normalize_profile_error({:error, code, reason}) when is_binary(code) do
     protocol_code = if code == "entry_too_large", do: :entry_too_large, else: :invalid_entry

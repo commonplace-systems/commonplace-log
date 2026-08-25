@@ -10,8 +10,9 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
 
   use ExUnit.Case, async: false
 
+  alias Commonplace.Log.{DocumentProfile, UUID}
+  alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.{CloudflareSidecar, CommitPlan, ReadSet}
-  alias Commonplace.Log.UUID
 
   @url_var "COMMONPLACE_LOG_GATEWAY_URL"
   @token_var "COMMONPLACE_LOG_GATEWAY_TOKEN"
@@ -42,7 +43,7 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
                created_at: "2026-08-24T00:00:00Z"
              })
 
-    assert {:ok, epoch} = CloudflareSidecar.take_lease(realm_a, log_id)
+    assert {:ok, %{lease_epoch: epoch}} = CloudflareSidecar.take_lease(realm_a, log_id)
     assert {:ok, 1} = CloudflareSidecar.commit(realm_a, plan(log_id, writer_id, entry_id, epoch))
 
     # Positive control: presence in realm A, before any absence claim.
@@ -71,6 +72,28 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
              CloudflareSidecar.frontier(wrong_token, log_id)
 
     assert %{"ok" => false, "error" => %{"code" => "unauthorized"}} = Jason.decode!(body)
+  end
+
+  test "DocumentProfile over a deployed sidecar keeps one writer and fences an old activation" do
+    gateway_url = System.fetch_env!(@url_var) |> String.trim_trailing("/")
+    token = System.fetch_env!(@token_var)
+    store = adapter(gateway_url, "document-profile", token)
+    log_id = UUID.uuidv7()
+    lane = [lane: {SidecarLane, store}]
+
+    assert {:ok, first} = DocumentProfile.create_log(log_id, lane)
+    assert {:ok, %{writer_seq: 1}} = DocumentProfile.append(first, %{"n" => 1}, [])
+    writer_id = first.writer_id
+    assert {:ok, second} = DocumentProfile.open_log(log_id, lane)
+    assert second.writer_id == writer_id
+    assert {:ok, before_frontier} = CloudflareSidecar.frontier(store, log_id)
+
+    assert {:error, {:writer_lease_fenced, %{}}} =
+             DocumentProfile.append(first, %{"must_not_write" => true}, [])
+
+    assert {:ok, after_frontier} = CloudflareSidecar.frontier(store, log_id)
+    assert after_frontier == before_frontier
+    assert {:ok, %{writer_seq: 2}} = DocumentProfile.append(second, %{"n" => 2}, [])
   end
 
   defp adapter(gateway_url, realm_id, bearer) do

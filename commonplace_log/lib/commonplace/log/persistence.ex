@@ -9,7 +9,8 @@ defmodule Commonplace.Log.Persistence do
   canonical bytes itself. Parsing and domain classification never move to
   the adapter side.
 
-  A read set also carries the durable lease epoch observed in that snapshot.
+  A read set also carries the durable lease epoch and, where the persistence
+  service owns a Document lane, its durable writer identity observed in that snapshot.
   `take_lease/2` atomically advances that epoch and returns the new value.
   Every commit supplies both its expected revision and expected epoch; revision
   mismatch is retryable `:stale_revision`, while an obsolete writer is rejected
@@ -48,6 +49,7 @@ defmodule Commonplace.Log.Persistence do
             log_id: String.t(),
             revision: non_neg_integer(),
             lease_epoch: non_neg_integer(),
+            document_writer_id: String.t() | nil,
             tips: %{optional(String.t()) => tip()},
             coordinates: %{{String.t(), pos_integer()} => binary()},
             entry_ids: %{optional(String.t()) => binary()}
@@ -57,6 +59,7 @@ defmodule Commonplace.Log.Persistence do
     defstruct log_id: nil,
               revision: 0,
               lease_epoch: 0,
+              document_writer_id: nil,
               tips: %{},
               coordinates: %{},
               entry_ids: %{}
@@ -136,7 +139,9 @@ defmodule Commonplace.Log.Persistence do
 
   @doc "Atomically advance a log's durable lease epoch and return the new epoch."
   @callback take_lease(store(), log_id :: String.t()) ::
-              {:ok, new_epoch :: pos_integer()} | {:error, term()}
+              {:ok, new_epoch :: pos_integer()}
+              | {:ok, %{lease_epoch: pos_integer(), writer_id: String.t()}}
+              | {:error, term()}
 
   @callback read_set(store(), log_id :: String.t(), read_query()) ::
               {:ok, ReadSet.t()} | {:error, term()}

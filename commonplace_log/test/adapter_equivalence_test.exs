@@ -198,11 +198,11 @@ defmodule Commonplace.Log.AdapterEquivalenceTest do
   test "epoch-bound merge is fenced identically by all three adapters", stores do
     assert {:ok, 1} = LocalSQLite.take_lease(stores.sqlite, @log_id)
     assert {:ok, 1} = InMemoryPersistence.take_lease(stores.memory, @log_id)
-    assert {:ok, 1} = CloudflareSidecar.take_lease(stores.sidecar, @log_id)
+    assert {:ok, %{lease_epoch: 1}} = CloudflareSidecar.take_lease(stores.sidecar, @log_id)
 
     assert {:ok, 2} = LocalSQLite.take_lease(stores.sqlite, @log_id)
     assert {:ok, 2} = InMemoryPersistence.take_lease(stores.memory, @log_id)
-    assert {:ok, 2} = CloudflareSidecar.take_lease(stores.sidecar, @log_id)
+    assert {:ok, %{lease_epoch: 2}} = CloudflareSidecar.take_lease(stores.sidecar, @log_id)
 
     entry = entry(1, entry_id(1), nil)
 

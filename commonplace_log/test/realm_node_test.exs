@@ -4,11 +4,17 @@ defmodule Commonplace.Log.RealmNodeTest do
   import Plug.Conn
   import Plug.Test
 
-  alias Commonplace.Log.{RealmNode, UUID}
+  alias Commonplace.Log.{DocumentProfile, RealmNode, UUID}
+  alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
+  alias Commonplace.Log.Persistence.CloudflareSidecar
+  alias Commonplace.Log.RealmNode.DocumentHandles
+  alias Commonplace.Log.Test.{InMemoryPersistence, SidecarLoopback}
 
   @writer_id "018f5e2a-8b3c-7d4e-9f10-123456789abd"
 
   setup do
+    DocumentHandles.clear()
+
     data_dir =
       Path.join(System.tmp_dir!(), "realm-node-#{System.unique_integer([:positive])}")
 
@@ -171,6 +177,122 @@ defmodule Commonplace.Log.RealmNodeTest do
     assert Process.whereis(Commonplace.Log.RealmNode.HTTP) == nil
   end
 
+  test "document create, append, and open use the durable sidecar writer lane", context do
+    store = configure_sidecar()
+
+    assert %{"ok" => true, "writer_id" => writer_id, "lease_epoch" => 1} =
+             request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+
+    assert %{"ok" => true, "result" => %{"inserted" => 1, "present" => 0}} =
+             request(
+               :post,
+               "/v1/documents/#{context.log_id}/append",
+               %{"body" => %{"n" => 1}, "created_at" => "2026-08-25T12:00:00Z"},
+               200
+             )
+
+    assert %{"ok" => true, "writer_id" => ^writer_id, "lease_epoch" => 2} =
+             request(:post, "/v1/documents/#{context.log_id}/open", %{}, 200)
+
+    assert %{"ok" => true} =
+             request(
+               :post,
+               "/v1/documents/#{context.log_id}/append",
+               %{"body" => %{"n" => 2}},
+               200
+             )
+
+    assert {:ok, %{writers: [%{writer_id: ^writer_id, seq: 2}]}} =
+             CloudflareSidecar.frontier(store, context.log_id)
+  end
+
+  test "a fenced cached document handle is dropped and maps to 409 without a write", context do
+    store = configure_sidecar()
+    request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+
+    assert {:ok, _new_incarnation} =
+             DocumentProfile.open_log(context.log_id, lane: {SidecarLane, store})
+
+    assert %{
+             "ok" => false,
+             "error" => %{"code" => "writer_lease_fenced", "details" => %{}}
+           } =
+             request(
+               :post,
+               "/v1/documents/#{context.log_id}/append",
+               %{"body" => %{"must_not_write" => true}},
+               409
+             )
+
+    assert :error = DocumentHandles.fetch(context.log_id)
+    assert {:ok, %{writers: []}} = CloudflareSidecar.frontier(store, context.log_id)
+  end
+
+  test "the dev lever delays between prepare and commit and exposes an obsolete incarnation",
+       context do
+    store = configure_sidecar()
+    request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+    previous = System.get_env("COMMONPLACE_REALM_TEST_LEVERS")
+    System.put_env("COMMONPLACE_REALM_TEST_LEVERS", "1")
+    on_exit(fn -> restore_env("COMMONPLACE_REALM_TEST_LEVERS", previous) end)
+
+    append =
+      Task.async(fn ->
+        request_with_headers(
+          :post,
+          "/v1/documents/#{context.log_id}/append",
+          %{"body" => %{"delayed" => true}},
+          [{"x-commonplace-test-commit-delay-ms", "150"}],
+          409
+        )
+      end)
+
+    Process.sleep(50)
+
+    assert {:ok, _new_incarnation} =
+             DocumentProfile.open_log(context.log_id, lane: {SidecarLane, store})
+
+    assert %{"error" => %{"code" => "writer_lease_fenced"}} = Task.await(append, 1_000)
+    assert {:ok, %{writers: []}} = CloudflareSidecar.frontier(store, context.log_id)
+  end
+
+  test "the delay header is ignored unless the dev lever is exactly one", context do
+    _store = configure_sidecar()
+    request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+    previous = System.get_env("COMMONPLACE_REALM_TEST_LEVERS")
+    System.put_env("COMMONPLACE_REALM_TEST_LEVERS", "true")
+    on_exit(fn -> restore_env("COMMONPLACE_REALM_TEST_LEVERS", previous) end)
+
+    started = System.monotonic_time(:millisecond)
+
+    assert %{"ok" => true} =
+             request_with_headers(
+               :post,
+               "/v1/documents/#{context.log_id}/append",
+               %{"body" => %{"not_delayed" => true}},
+               [{"x-commonplace-test-commit-delay-ms", "1000"}],
+               200
+             )
+
+    assert System.monotonic_time(:millisecond) - started < 700
+  end
+
+  defp configure_sidecar do
+    {:ok, base} = InMemoryPersistence.start_link()
+
+    store =
+      CloudflareSidecar.new("https://loopback.example",
+        transport: SidecarLoopback,
+        transport_options: {InMemoryPersistence, base}
+      )
+
+    Application.put_env(:commonplace_log, RealmNode, persistence: {CloudflareSidecar, store})
+    store
+  end
+
+  defp restore_env(name, nil), do: System.delete_env(name)
+  defp restore_env(name, value), do: System.put_env(name, value)
+
   defp request(method, path, nil, expected_status) do
     conn = RealmNode.call(conn(method, path), [])
     assert conn.status == expected_status
@@ -180,6 +302,19 @@ defmodule Commonplace.Log.RealmNodeTest do
   defp request(method, path, body, expected_status) do
     conn = conn(method, path, Jason.encode!(body))
     conn = RealmNode.call(put_req_header(conn, "content-type", "application/json"), [])
+    assert conn.status == expected_status
+    Jason.decode!(conn.resp_body)
+  end
+
+  defp request_with_headers(method, path, body, headers, expected_status) do
+    conn = conn(method, path, Jason.encode!(body))
+
+    conn =
+      Enum.reduce([{"content-type", "application/json"} | headers], conn, fn {name, value}, acc ->
+        put_req_header(acc, name, value)
+      end)
+
+    conn = RealmNode.call(conn, [])
     assert conn.status == expected_status
     Jason.decode!(conn.resp_body)
   end

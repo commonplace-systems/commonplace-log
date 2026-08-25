@@ -10,6 +10,7 @@ defmodule CommonplaceLog.Application do
     children =
       [
         {Commonplace.Log.RealmNode.Incarnation, incarnation},
+        Commonplace.Log.RealmNode.DocumentHandles,
         {Registry, keys: :unique, name: Commonplace.LogStore.SQLite.Registry},
         {DynamicSupervisor,
          strategy: :one_for_one, name: Commonplace.LogStore.SQLite.DynamicSupervisor}
