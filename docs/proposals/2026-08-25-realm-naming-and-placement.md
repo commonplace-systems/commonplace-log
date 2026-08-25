@@ -20,6 +20,8 @@ detail", so this records what exists, what is open, and one recommendation per q
 
 ## Question 1 — what is a realm id?
 
+**Ruled 2026-08-25 (1a): realm ids are opaque lowercase canonical UUIDs.**
+
 | Option | Shape | Cost | Consequence |
 |---|---|---|---|
 | **1a. Opaque UUID, minted by whoever creates the realm** | `getByName(uuid)` | none | Unguessable, no rename problem, no meaning to leak. A directory above the log maps tenant → realm ids. |

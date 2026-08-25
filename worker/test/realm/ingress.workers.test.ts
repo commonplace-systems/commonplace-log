@@ -3,10 +3,9 @@ import { describe, expect, it } from "vitest";
 import worker, { handleIngress, type Env } from "../../src/index";
 
 const TOKEN = "test-gateway-token";
-let realmSequence = 0;
 
 function realmName(): string {
-  return `ingress-${Date.now()}-${realmSequence++}`;
+  return crypto.randomUUID();
 }
 
 function fetchGateway(path: string, init: RequestInit = {}, token: string | null = TOKEN) {
@@ -101,9 +100,11 @@ describe("realm ingress", () => {
   });
 
   it("returns 404 for malformed realm ids and unknown top-level paths", async () => {
+    const uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     for (const path of [
       "/realms/", "/realms", "/realms//commit", "/realms/bad%20id/commit", "/realms/a:b/commit",
-      `/realms/${"x".repeat(129)}/commit`, "/realms/../commit",
+      `/realms/${"x".repeat(129)}/commit`, "/realms/../commit", `/realms/${uuid.toUpperCase()}/commit`,
+      "/realms/acme-1/commit", `/realms/${uuid}-trailing/commit`,
     ]) {
       const response = await fetchGateway(path, { method: "POST", body: "{}" });
       expect(response.status, path).toBe(404);

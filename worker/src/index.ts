@@ -22,8 +22,9 @@ export interface Env {
  * Authenticated realm gateway (docs/sp4b-deployment-readiness.md §5).
  *
  * Every realm request is `/realms/{realm_id}` + a sidecar path, e.g.
- * `POST /realms/acme-1/commit`. The realm is derived ONLY from the URL path and
- * the request is forwarded to `REALM_NODE.getByName(realm_id)` in production,
+ * `POST /realms/018f1000-0000-7000-8000-000000000001/commit`. The realm is
+ * derived ONLY from the URL path and the request is forwarded to
+ * `REALM_NODE.getByName(realm_id)` in production,
  * with the `/realms/{realm_id}` prefix stripped; method, headers, body and query
  * pass through untouched. The container-free test configuration deliberately
  * omits that binding and uses `REALM_CONTAINER` instead.
@@ -33,7 +34,9 @@ export interface Env {
  * the client sends. A BEAM process inside a Container never talks to this route.
  */
 
-const REALM_ID = /^[A-Za-z0-9._-]{1,128}$/;
+// REALMID-R3: jes ruled question 1 as option 1a on 2026-08-25; see
+// docs/proposals/2026-08-25-realm-naming-and-placement.md. Realm ids are opaque.
+const REALM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REALM_PREFIX = "/realms/";
 
 function fail(code: string, status: number): Response {

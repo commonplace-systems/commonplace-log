@@ -24,17 +24,19 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
   @wire_bytes <<0, 127, 128, 254, 255>>
   @transport_options [timeout: 15_000, connect_timeout: 10_000]
 
-  test "a log committed in realm isolation-a is present there and absent from isolation-b" do
+  test "a log committed in realm A is present there and absent from realm B" do
     gateway_url = System.fetch_env!(@url_var) |> String.trim_trailing("/")
     token = System.fetch_env!(@token_var)
 
     log_id = UUID.uuidv7()
     writer_id = UUID.uuidv7()
     entry_id = UUID.uuidv7()
+    realm_a_id = UUID.uuidv7()
+    realm_b_id = UUID.uuidv7()
 
-    realm_a = adapter(gateway_url, "isolation-a", token)
-    realm_b = adapter(gateway_url, "isolation-b", token)
-    wrong_token = adapter(gateway_url, "isolation-a", "Bearer obviously-wrong-token")
+    realm_a = adapter(gateway_url, realm_a_id, token)
+    realm_b = adapter(gateway_url, realm_b_id, token)
+    wrong_token = adapter(gateway_url, realm_a_id, "Bearer obviously-wrong-token")
 
     # Realm A: create, lease, commit one entry, then read the frontier back.
     assert :ok =
@@ -77,7 +79,7 @@ defmodule Commonplace.Log.CloudflareDeployedIntegrationTest do
   test "DocumentProfile over a deployed sidecar keeps one writer and fences an old activation" do
     gateway_url = System.fetch_env!(@url_var) |> String.trim_trailing("/")
     token = System.fetch_env!(@token_var)
-    store = adapter(gateway_url, "document-profile", token)
+    store = adapter(gateway_url, UUID.uuidv7(), token)
     log_id = UUID.uuidv7()
     lane = [lane: {SidecarLane, store}]
 
