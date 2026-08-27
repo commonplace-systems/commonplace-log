@@ -48,7 +48,13 @@ mkdir -p "$S" || exit 70
 # ⚠️ HONEST LIMIT (cell's): the stamp is per-SECOND, so two invocations inside
 #   one second collide. The guarantee is "distinct per second", not "distinct
 #   per invocation". LATEST is a convenience symlink and is NOT the record.
-RUN="$S/$(date -u +%Y%m%dT%H%M%SZ)"
+# Run dirs are PREFIXED so a census can glob `run-*/` and exclude LATEST. The
+# first version had no prefix, and the very check demonstrating this feature
+# double-counted: `*/invocation` matched the LATEST symlink as well as its
+# target, inflating the count by one — and always by the NEWEST run, which is
+# the one a census is most likely to be reasoning about. `find` did not follow
+# the symlink and disagreed, which is the only reason it was caught.
+RUN="$S/run-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN" || exit 70
 ln -sfn "$RUN" "$S/LATEST" 2>/dev/null || true
 {
