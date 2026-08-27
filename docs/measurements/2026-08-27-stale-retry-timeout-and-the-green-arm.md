@@ -159,13 +159,21 @@ it cannot answer *how many*.
 - **It is blind to a BEAM that never compiled.** `mix test --self-test` is refused at option
   parsing: a BEAM starts, burns ~4.5 s, and `_build` never moves. A bare `elixir foo.exs` is a
   full BEAM and compiles nothing at all. Neither is visible, ever.
-- **It cannot be used to enumerate runs, and the reason is worse than overwriting.** Two full
-  suites ran in this repo that day; `_build`'s second-newest file was two days old, because both
-  wrote the same `.mix_test_failures` path. But the general form is sharper: **`_build` mtimes
-  record per-artifact compilation events, not runs.** Which files a run touches depends on what
-  changed since the last one, so the set of surviving timestamps is a fact about the *diff*, not
-  about the runs — and the number of survivors is **not monotone** in the number of runs. Run
-  boundaries are not recoverable from it even in principle.
+- **It cannot be used to enumerate runs, and the axis is *did the tree change*.** `_build`
+  mtimes record per-artifact **compilation events**, not runs. On an already-compiled tree
+  `mix test` compiles nothing and rewrites essentially one marker (`.mix/.mix_test_failures`),
+  so **N runs collapse to 1 for any N**. Two suites ran in this repo that day and `_build`'s
+  second-newest file was two days old — but that 2→1 is not the worst case. Elsewhere three
+  known runs on an unchanged tree left **zero** surviving artifacts, while a door whose tree had
+  moved across 13 commits kept 64, all of them compilation output. The survivor count is a fact
+  about the *diff*, not about the runs, and it is not monotone in the number of runs.
+  ⇒ **An unchanged tree is exactly the state of a re-run gate — so the case where you most want
+  the count is the case where the instrument collapses hardest.** Run boundaries are not
+  recoverable from it even in principle.
+- **A large corpus count does not make it a better witness.** "corpus 752, non-empty" proves
+  `find` is not blind. It says nothing about the subject: the artifact that actually
+  discriminates a test run is a *single marker file*, and the rest is older build output no test
+  run touches.
 - **A positive control on it validates less than it looks like.** "The instrument detected a run
   I can independently evidence" validates *detection of the most recent run*, not *detection of
   runs* — structurally the one case it cannot see, because the event that validates it is the
