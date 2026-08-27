@@ -185,6 +185,26 @@ RFC-stated key order reproduced those bytes exactly
 | `019-entry-v2-operation-id` | Complete v2 entry with `operation_id`; key order is `body` < `created_at` < `entry_id` < `log_id` < `operation_id` < `prev_entry_id` < `version` < `writer_id` < `writer_seq` | Hand-derived ASCII key order against RFC 8785 §3.2.3; primitive spellings copied from case 016, `operation_id` serialized as the single JSON string `"operation-123"`, and the canonical text concatenated by hand without consulting either canonicalizer under test; hex is the lowercase byte encoding of that text |
 | `999-deliberate-mismatch` | **Intentionally wrong expected bytes** (unsorted `{"b":2,"a":1}` instead of correct `{"a":1,"b":2}`) — the red-demonstration case, see above | Wrongness constructed and verified at derivation time: stored bytes differ from the hand-derived correct canonical form |
 
+### ⚠️ Everything below is a LEDGER, NOT A STATUS PAGE — do not "correct" it
+
+Each dated section records what was measured **at that time**, and later sections
+supersede earlier ones in sequence. ⛔ **A figure below that disagrees with the
+corpus on disk is almost certainly a correct historical record, not a stale
+claim.** Check whether a later section already supersedes it before touching
+anything.
+
+Worked example, 2026-08-27: the Amendment 2 section states 21 canonical and 35
+invalid directories; disk holds 20 and 36. That is not an error — the ENTRYV2-R7
+section immediately after it records the change to 20/36. Editing the first
+figure to agree with disk would have destroyed the evidence of the transition
+and left the file saying two runs produced the same counts, which they did not.
+
+⭐ **A document organised as a ledger of dated measurements and a document
+carrying a stale figure are INDISTINGUISHABLE FROM A GREP** — both show a number
+that disagrees with today. Only the surrounding structure separates them, and
+the repair for the second destroys the first. ⇒ **A measurement rewritten to
+match today stops being evidence.** Add a new dated section instead.
+
 ### Sanity checks run at seeding (2026-08-21, node v24.13.1)
 
 1. Every `expected.hex` round-trips `xxd -r -p` → `xxd -p` unchanged, and its
