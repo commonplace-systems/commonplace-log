@@ -177,12 +177,33 @@ it cannot answer *how many*.
   invocations** — including across a *full-suite* run, which does not reset it. Its mtime is the
   last writer; its contents are many runs.
 
+  **The mechanism, read from ExUnit's own source** (`ex_unit/lib/ex_unit/failures_manifest.ex`,
+  1.18.4) rather than inferred from the bytes:
+
+  ```elixir
+  put_test(manifest, %Test{state: {ignored, _}}) when ignored in [:skipped, :excluded]
+    -> manifest                                    # never added
+  put_test(manifest, %Test{state: nil} = test)
+    -> Map.delete(manifest, {test.module, test.name})   # a PASS removes the entry
+  put_test(manifest, %Test{state: {failed, _}} = test) when failed in [:failed, :invalid]
+    -> Map.put(...)                                # only these populate
+  ```
+
+  ⇒ **An entry is removed only when that test runs and passes.** A test that does not run keeps
+  its entry indefinitely — which is exactly the third entry here:
+  `BrokenSidecarLaneEpochTest` is defined inside
+  `case System.get_env("PERSISTENCE_CONTRACT_MUTATION")`, so **it is not compiled at all under a
+  plain `mix test`**. It entered the manifest during a mutation run, where it is red by design,
+  and nothing since has been able to clear it. (It is one of the env-gated arms
+  `scripts/check_gated_arms.sh` exists to inventory.)
+
   What this repo's file establishes about the categories, and no more:
   - failures populate the set (both of the day's failures are there);
   - `@moduletag skip:` tests do **not** — this run had 2 skipped and neither appears;
-  - whether `--exclude`d or setup-invalid tests populate it is **not** established here (this
-    repo configures no exclusions), and elsewhere a green run with 41 exclusions produced a
-    41-entry map that a merge across earlier runs explains equally well.
+  - `--exclude`d tests are never added either (source, above) — so a large map on a green run
+    is stale `failed`/`invalid` entries for tests that are not being re-run, not a record of
+    exclusions. Excluding a failing test *freezes* its entry: the exclusion prevents the run
+    that would clear it.
 
   So neither size nor arity tells you whether a suite passed.
 
