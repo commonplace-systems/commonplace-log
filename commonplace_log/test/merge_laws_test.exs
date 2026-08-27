@@ -94,6 +94,14 @@ defmodule Commonplace.Log.MergeLawsTest do
     end
   end
 
+  # ⚠️ BOTH PROPERTIES BELOW HAVE HIT ExUnit's 60,000 ms WHOLE-TEST CEILING (2026-08-27).
+  # If you are here because one of them timed out: the stacktraces terminated in SQLite
+  # OPEN/CONFIGURE via open_replica!/2, NOT in merge logic, and the box carried an
+  # unwatched periodic `mix run` doing disk work at the time. Before raising @cases or
+  # adding a @tag timeout, read docs/measurements/2026-08-27-stale-retry-timeout-and-the-green-arm.md — it records
+  # why a whole-suite pass/fail plus a whole-box memory line CANNOT tell "this property is
+  # marginal against 60 s" apart from "opening a replica is slow while something else does
+  # I/O", and names the per-test instrument the question actually needs.
   @tag :tmp_dir
   property "associativity", %{tmp_dir: tmp_dir} do
     check all(fixture <- compatible_fixture(), max_runs: @cases, initial_seed: 510_503) do
@@ -149,6 +157,8 @@ defmodule Commonplace.Log.MergeLawsTest do
     end
   end
 
+  # See the timeout note above the "associativity" property and
+  # docs/measurements/2026-08-27-stale-retry-timeout-and-the-green-arm.md
   @tag :tmp_dir
   property "stale-retry safety", %{tmp_dir: tmp_dir} do
     check all(scenario <- stale_scenario(), max_runs: @cases, initial_seed: 510_505) do
