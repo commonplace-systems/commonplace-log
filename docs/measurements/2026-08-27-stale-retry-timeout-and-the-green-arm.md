@@ -147,6 +147,17 @@ process.** The artifact is the verdict, not the process's absence.
 - `docs/measurements/2026-08-26-wal-growth.md` — the WAL plateaus at ~4.14 MB rather than
   growing, so it is not a candidate explanation for the I/O above.
 
+## The runner
+
+`commonplace_log/scripts/box_sampled_run.sh` — the instrument these measurements came
+from, moved out of a session scratchpad and into the repo, because a script that exists
+only in scrollback is the class of artifact this whole document is about. It carries the
+action-stub, refuses without a slot token, takes `SERVE_PID` rather than a hard-coded pid
+(a wrong pid reads as a healthy small process, so unset reports **UNKNOWN**, never `0`),
+and samples per-process disk I/O beside memory — the grain the SQLite-open hypothesis
+above actually needs. All three arms are demonstrated from the checked-in copy: no token
+→ 76, forced floor → 75, green stubbed → 0 with zero BEAMs started.
+
 ## Status of this document
 
 ⚠️ **This tree is not gated.** The last full suite run against it is the one recorded
