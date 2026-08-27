@@ -19,8 +19,16 @@ jobs:
 
     # A green job certifies the Elixir reference suite and formatting, the
     # TypeScript workalike suite, cross-runtime byte equality on the fixed
-    # corpus, and the bounded seeded fuzz below. It does not certify any
-    # Cloudflare deployment; no deployment exists yet.
+    # corpus, and the bounded seeded fuzz below.
+    #
+    # WHAT IT DOES NOT CERTIFY, stated because a green tick reads as "all of
+    # it" and these are invisible in every number the suites print:
+    #   * the gated arms named in commonplace_log/test/GATED_ARMS.txt. Check 1
+    #     pins that SET so a new one cannot appear silently; nothing here RUNS
+    #     them. They need a real wrangler dev socket or a real deployment, and
+    #     they are run by hand — see the readiness doc.
+    #   * the Cloudflare deployment itself. It exists (readiness doc 4b), but
+    #     no job here touches it; every claim about it was run by hand.
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -57,20 +65,28 @@ jobs:
         working-directory: worker
         run: npm ci
 
-      - name: Check 1 of 5 - Elixir tests
+      # Runs FIRST and costs no BEAM: it names the arms this job does NOT
+      # exercise. A module wrapped in a column-0 `if System.get_env(...) do`
+      # is absent from every number `mix test` prints, so a green job below
+      # says nothing about it.
+      - name: Check 1 of 6 - gated-arm inventory matches its manifest
+        working-directory: commonplace_log
+        run: bash scripts/check_gated_arms.sh
+
+      - name: Check 2 of 6 - Elixir tests
         working-directory: commonplace_log
         run: mix test
 
-      - name: Check 2 of 5 - Elixir formatting
+      - name: Check 3 of 6 - Elixir formatting
         working-directory: commonplace_log
         run: mix format --check-formatted
 
-      - name: Check 3 of 5 - worker tests
+      - name: Check 4 of 6 - worker tests
         working-directory: worker
         run: npm test
 
-      - name: Check 4 of 5 - fixed cross-runtime conformance
+      - name: Check 5 of 6 - fixed cross-runtime conformance
         run: bash conformance/check.sh
 
-      - name: Check 5 of 5 - seeded cross-runtime fuzz (500 cases)
+      - name: Check 6 of 6 - seeded cross-runtime fuzz (500 cases)
         run: bash conformance/fuzz.sh 500 20260823
