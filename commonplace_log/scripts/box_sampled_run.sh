@@ -34,6 +34,31 @@ set -uo pipefail
 S="${OUT_DIR:-${TMPDIR:-/tmp}/commonplace-log-boxrun}"
 mkdir -p "$S" || exit 70
 
+# cell, 2026-08-27: A UNIQUE PATH PER INVOCATION, AND THE HEADER WRITTEN BEFORE
+# THE ACTION STARTS. This script used FIXED output paths, so every run destroyed
+# the record of the one before it — the same defect it documents in `_build`, in
+# its own outputs. It bit exactly once and expensively: the unslotted 18:47 run
+# was found only because its `quiet.log` still existed, and this script's own
+# 19:13 run overwrote it forty minutes later. A manual `cp` is the only reason
+# that evidence survived at all.
+#
+# `RUN` is stamped BEFORE the slot check, so a run that REFUSES still leaves a
+# record naming what was attempted and when — which is the property `_build`
+# lacks and the reason an early-refused invocation is invisible to it.
+# ⚠️ HONEST LIMIT (cell's): the stamp is per-SECOND, so two invocations inside
+#   one second collide. The guarantee is "distinct per second", not "distinct
+#   per invocation". LATEST is a convenience symlink and is NOT the record.
+RUN="$S/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$RUN" || exit 70
+ln -sfn "$RUN" "$S/LATEST" 2>/dev/null || true
+{
+  echo "# $(date -u +%Y-%m-%dT%H:%M:%SZ) box_sampled_run.sh"
+  echo "# argv:      $*"
+  echo "# repo HEAD: $(git -C /home/jes/commonplace-log rev-parse --short HEAD 2>/dev/null || echo UNKNOWN)"
+  echo "# SERVE_PID: ${SERVE_PID:-unset}   STUB: ${QUIET_RUN_STUB_ACTION:-0}"
+} > "$RUN/invocation"
+S="$RUN"
+
 # ============================================================================
 # log, 2026-08-27, AFTER WALKING INTO IT: FOR A GATE THAT GUARDS AN ACTION, THE
 # RED ARM IS CHEAP AND THE GREEN ARM *IS* THE ACTION.
