@@ -159,23 +159,29 @@ it cannot answer *how many*.
 - **It is blind to a BEAM that never compiled.** `mix test --self-test` is refused at option
   parsing: a BEAM starts, burns ~4.5 s, and `_build` never moves. A bare `elixir foo.exs` is a
   full BEAM and compiles nothing at all. Neither is visible, ever.
-- **On an unchanged tree it is blind to runs that PASS. Measured here, both halves.** The two
-  suites in this repo that day ran on a tree with **zero** commits to `lib/` or `test/` between
-  them, so neither compiled anything:
+- **`.mix_test_failures` is written on EVERY run; its SIZE encodes the outcome, its EXISTENCE
+  does not.** Decoded without starting a BEAM, it is an Erlang external term `{1, %{}}` — a
+  version tag and a *failure map*. A green run writes it at **10 bytes** (empty map); a red run
+  writes the same structure with the failing test names in it.
 
   ```
-  18:47:28-18:50:02  315 tests, 0 failures   GREEN  ->  _build files written: 0
-  19:13:29-19:17:49  315 tests, 2 failures   RED    ->  _build files written: 1
-                                                        .mix/.mix_test_failures, 505 bytes,
-                                                        naming "stale-retry" and "associativity"
-  corpus control: 752 files. Bare timestamps (a `UTC` suffix errors under bfs).
+  this repo, 19:13:29-19:17:49  315 tests, 2 failures  ->  505 bytes, map arity 3
+                                    83 68 02 61 01 74 00 00 00 03 …
+  elsewhere, green runs                                ->   10 bytes, map arity 0
+                                    83 68 02 61 01 74 00 00 00 00
   ```
 
-  ⇒ `.mix_test_failures` is a **failure record**: with nothing to compile and nothing to
-  report, a passing run leaves no trace at all. **So `_build` is most blind exactly when
-  everything went green** — which is the state anyone clearing themselves is usually in. An
-  earlier claim in this file that the later run *overwrote* the earlier one's marker was wrong:
-  the green run never wrote one.
+  ⇒ `stat -c %s` on that file is a free, BEAM-free, retroactive read of **whether the last suite
+  in a tree passed**. Bounds: it reports the *last* run only, says nothing about how many ran,
+  and the encoding is ExUnit-version-dependent — a forensic read, not a contract to gate on.
+
+  ⚠️ **A claim published in this file and now retracted:** I wrote that the green 18:47 run left
+  no marker at all, inferring from "zero `_build` files with mtimes in 18:45–18:52". That
+  measurement is real but **cannot distinguish "never written" from "written, then re-stamped by
+  the later run"** — and the second is what happened, since the marker is unconditional. My
+  original description (the 19:13 run overwrote the 18:47 run's marker) was correct; the
+  correction was not. *Absence has more than one cause, and a window query cannot see an
+  artifact that a later write re-stamped out of the window.*
 
 - **It cannot be used to enumerate runs, and the axis is *did the tree change*.** `_build`
   mtimes record per-artifact **compilation events**, not runs. On an already-compiled tree
