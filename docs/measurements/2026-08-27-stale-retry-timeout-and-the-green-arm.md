@@ -67,6 +67,20 @@ instrument and **not** an answer:
 - 33 contiguous samples (19:13:52–19:15:36Z) saw `suites=2`. The window was **not
   exclusive**. The instrument counts mix-test BEAMs globally and cannot attribute them.
 
+  **Attributed afterwards, and the attribution corrects this instrument rather than
+  supporting the hypothesis:** they were ~13 invocations of `mix test --self-test`, each
+  ~4.5 s, which `mix` *refused* before running a single test. So the second "suite" was
+  never a suite. ⇒ ⛔ **The counter answers "is a mix-test cmdline present", not "is a
+  suite running", and this report called it `suites`.** A brief refusing `mix` and a
+  250-second suite are the same observation to it.
+
+  Meanwhile the two loads that *were* real in the window are both invisible to it: a
+  scratch-clone `mix deps.get` (cmdline carries `deps.get`, not `mix test`) and a periodic
+  `mix run` state-render cron on a `timeout 2400` doing disk-heavy work over another repo.
+  ⇒ ⭐ **A suite counter is not a load counter, and for an I/O hypothesis it is the wrong
+  instrument in both directions at once — it counted something that was not load and
+  missed the things that were.**
+
 ⇒ This points at I/O contention on SQLite open rather than a slow property. It is not
 established.
 
