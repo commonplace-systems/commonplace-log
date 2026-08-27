@@ -159,29 +159,33 @@ it cannot answer *how many*.
 - **It is blind to a BEAM that never compiled.** `mix test --self-test` is refused at option
   parsing: a BEAM starts, burns ~4.5 s, and `_build` never moves. A bare `elixir foo.exs` is a
   full BEAM and compiles nothing at all. Neither is visible, ever.
-- **`.mix_test_failures` is written on EVERY run; its SIZE encodes the outcome, its EXISTENCE
-  does not.** Decoded without starting a BEAM, it is an Erlang external term `{1, %{}}` — a
-  version tag and a *failure map*. A green run writes it at **10 bytes** (empty map); a red run
-  writes the same structure with the failing test names in it.
+- **`.mix_test_failures` is written on EVERY run, and its contents are the `--failed` re-run
+  set — NOT an outcome signal.** Decoded here without starting a BEAM, it is an Erlang term
+  `{1, %{...}}`: a version tag and a map. What this repo's marker actually contains, from the
+  run recorded above (315 tests, **2** failures, 2 skipped):
 
   ```
-  this repo, 19:13:29-19:17:49  315 tests, 2 failures  ->  505 bytes, map arity 3
-                                    83 68 02 61 01 74 00 00 00 03 …
-  elsewhere, green runs                                ->   10 bytes, map arity 0
-                                    83 68 02 61 01 74 00 00 00 00
+  83 68 02 61 01 74 00 00 00 03      map arity 3   <- THREE entries, TWO failures
+    MergeLawsTest  "property associativity"                    <- failed
+    MergeLawsTest  "property stale-retry safety"               <- failed
+    BrokenSidecarLaneEpochTest
+      "test obsolete sidecar lane authority writes nothing"    <- DID NOT FAIL
   ```
 
-  ⇒ `stat -c %s` on that file is a free, BEAM-free, retroactive read of **whether the last suite
-  in a tree passed**. Bounds: it reports the *last* run only, says nothing about how many ran,
-  and the encoding is ExUnit-version-dependent — a forensic read, not a contract to gate on.
+  ⇒ **The arity is not the failure count.** A green run with nothing excluded writes a 10-byte
+  `{1, %{}}`; a *green* run elsewhere with 41 excluded tests wrote 8727 bytes. So neither the
+  size nor the arity tells you whether the suite passed — both are the size of the re-run set,
+  which mixes failed with excluded/invalid.
 
-  ⚠️ **A claim published in this file and now retracted:** I wrote that the green 18:47 run left
-  no marker at all, inferring from "zero `_build` files with mtimes in 18:45–18:52". That
-  measurement is real but **cannot distinguish "never written" from "written, then re-stamped by
-  the later run"** — and the second is what happened, since the marker is unconditional. My
-  original description (the 19:13 run overwrote the 18:47 run's marker) was correct; the
-  correction was not. *Absence has more than one cause, and a window query cannot see an
-  artifact that a later write re-stamped out of the window.*
+  **What it is good for:** an mtime, and a free BEAM-free look at *which tests ExUnit would
+  re-run*. **What it is not:** a pass/fail signal, a count of failures, or a contract — the
+  encoding is ExUnit-version-dependent. Read the names, not the bytes.
+
+  ⚠️ **Two claims published in this file and retracted:** first, that the green 18:47 run left no
+  marker (it left one; the 19:13 run re-stamped it — "zero mtimes in the window" cannot separate
+  *never written* from *re-stamped out of the window*); then, that the marker's size encodes the
+  outcome (it does not — the entry above is the counterexample from this repo's own file). Both
+  times I inferred a mechanism from a measurement that did not reach it.
 
 - **It cannot be used to enumerate runs, and the axis is *did the tree change*.** `_build`
   mtimes record per-artifact **compilation events**, not runs. On an already-compiled tree
