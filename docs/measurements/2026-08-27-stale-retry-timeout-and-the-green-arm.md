@@ -159,6 +159,24 @@ it cannot answer *how many*.
 - **It is blind to a BEAM that never compiled.** `mix test --self-test` is refused at option
   parsing: a BEAM starts, burns ~4.5 s, and `_build` never moves. A bare `elixir foo.exs` is a
   full BEAM and compiles nothing at all. Neither is visible, ever.
+- **On an unchanged tree it is blind to runs that PASS. Measured here, both halves.** The two
+  suites in this repo that day ran on a tree with **zero** commits to `lib/` or `test/` between
+  them, so neither compiled anything:
+
+  ```
+  18:47:28-18:50:02  315 tests, 0 failures   GREEN  ->  _build files written: 0
+  19:13:29-19:17:49  315 tests, 2 failures   RED    ->  _build files written: 1
+                                                        .mix/.mix_test_failures, 505 bytes,
+                                                        naming "stale-retry" and "associativity"
+  corpus control: 752 files. Bare timestamps (a `UTC` suffix errors under bfs).
+  ```
+
+  ⇒ `.mix_test_failures` is a **failure record**: with nothing to compile and nothing to
+  report, a passing run leaves no trace at all. **So `_build` is most blind exactly when
+  everything went green** — which is the state anyone clearing themselves is usually in. An
+  earlier claim in this file that the later run *overwrote* the earlier one's marker was wrong:
+  the green run never wrote one.
+
 - **It cannot be used to enumerate runs, and the axis is *did the tree change*.** `_build`
   mtimes record per-artifact **compilation events**, not runs. On an already-compiled tree
   `mix test` compiles nothing and rewrites essentially one marker (`.mix/.mix_test_failures`),
