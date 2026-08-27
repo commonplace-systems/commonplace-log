@@ -134,6 +134,23 @@ echo "MODE: $ACTION_DESC"
 # in the message — refuses correctly and NAMES THE WRONG NUMBER when either
 # moves. That is the two-edit defect, and I had it here fifteen minutes after
 # citing it at another door. One constant, referenced everywhere.
+# ⚠️ WHICH OF THIS SCRIPT'S TWO REFUSALS IS NAMING-BLIND, STATED RATHER THAN
+# DISCOVERED (biscuit/cell, 2026-08-27): A PROCESS-COUNT GATE MUST NAME WHAT IT
+# COUNTS AND IS BLIND TO EVERYTHING IT DID NOT NAME; A RESOURCE GATE IS BLIND TO
+# NOTHING THAT CONSUMES THE RESOURCE.
+#   the `suites != 0` refusal   NAMING-BLIND. Keyed on a `mix test` cmdline, so
+#                               `elixir foo.exs`, `mix run`, `deps.get` and a
+#                               resident serve all pass it. Its blindness can
+#                               only FAIL TO REFUSE, never refuse wrongly — it
+#                               is a herd-decorrelation check, not the safety one.
+#   the memory refusal          THE SAFETY GATE. `available` moves for every
+#                               consumer whether or not a matcher recognises it.
+# ⛔ Do not promote the suites arm to the safety gate. It would inherit the
+#   blindness and lose nothing else's coverage.
+#
+# ⚠️ AND NEITHER ARM CLOSES THE SAMPLING BLINDNESS: both are read ONCE, before
+#   the run. A pre-flight cannot see a BEAM that lives between two reads — which
+#   is why this script samples throughout instead of taking a before/after pair.
 SUITE_COST=500; FLOOR=1500
 jitter=$(( RANDOM % 25 ))
 echo "HERD BACKOFF: sleeping ${jitter}s before the pre-flight, to decorrelate from any door that cleared the same condition at the same instant."
