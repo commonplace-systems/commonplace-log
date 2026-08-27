@@ -51,11 +51,21 @@ emit() {
   local f count vars
   while IFS= read -r -d "" f; do
     uncommented "$f" > "$scratch"
-    grep -qE '^(if|case) System.get_env' "$scratch" || grep -qE '@moduletag[[:space:]]+(:skip|skip:)' "$scratch" || continue
+    # `unless` added 2026-08-27 and DEMONSTRATED RED before landing, per markdown:
+    # BEFORE WIDENING AN INSTRUMENT, ASK WHETHER THE WIDENING CAN FIRE. An alternation is
+    # the cheapest possible edit, reads as coverage, and neither `bash -n` nor a green run
+    # can tell you it is inert — only the red arm can.
+    #
+    # ⛔ DECLARED GAP: `cond` is deliberately NOT in this alternation. `cond do` takes no
+    # subject, so the keyword and the `System.get_env` call are NEVER on one line and a
+    # line-based selector cannot see a cond-wrapped module whatever alternation you add.
+    # Adding it would be a branch that cannot fire — a gate that cannot go red, inside the
+    # fix for a gate that returned a clean zero. A cond-gated module is invisible here.
+    grep -qE '^(if|case|unless) System.get_env' "$scratch" || grep -qE '@moduletag[[:space:]]+(:skip|skip:)' "$scratch" || continue
     count=$(grep -c '^[[:space:]]*test "' "$scratch")
     vars=$(grep -o 'System.get_env("[A-Z_][A-Z_]*")\|@[a-z_]*_var "[A-Z_][A-Z_]*"' "$scratch" \
            | grep -o '"[A-Z_][A-Z_]*"' | tr -d '"' | sort -u | tr '\n' ' ')
-    if grep -qE '^(if|case) System.get_env' "$scratch"; then
+    if grep -qE '^(if|case|unless) System.get_env' "$scratch"; then
       printf '%s\tconditionally-compiled\t%s\t%s\n' "$f" "$count" "${vars% }"
     else
       printf '%s\tmoduletag-skip\t%s\t%s\n' "$f" "$count" "${vars% }"
