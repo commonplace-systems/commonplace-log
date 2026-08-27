@@ -63,14 +63,35 @@ emit() {
   done < <(corpus)
 }
 
-# POSITIVE CONTROL. An empty inventory has two causes — nothing is gated, or
-# the scan saw nothing — and they print identically. Prove the corpus is
-# non-empty before believing any verdict drawn from it.
+# CONTROL 1 (necessary, NOT sufficient). An empty inventory has two causes —
+# nothing is gated, or the scan saw nothing — and they print identically.
 corpus_size=$(corpus | tr -dc "\0" | wc -c)
 if [ "$corpus_size" -eq 0 ]; then
   echo "GATED ARMS: REFUSE — scanned 0 test files. The corpus is empty, so an"
   echo "empty inventory would prove nothing. Check the glob and the working directory."
   exit 70
+fi
+
+# CONTROL 2, and it is the one that matters. boss-clod, 2026-08-27, after
+# biscuit's scanner reported "0 gated modules, 10 files scanned" with a gated
+# module sitting in a subdirectory: A NON-EMPTINESS CONTROL DETECTS A SCANNER
+# THAT READ NOTHING; IT CANNOT DETECT ONE READING THE WRONG POPULATION. Ten
+# top-level files existed, so "did I scan anything" answered yes while "did I
+# scan everything" answered no — which is exactly the glob defect above, and
+# Control 1 would NOT have caught it here either (26 top-level files exist).
+#
+# So enumerate the corpus a SECOND, INDEPENDENT WAY — the git index rather
+# than the filesystem — and refuse when they disagree. Two enumerations of one
+# population that must agree; a disagreement means one of them is wrong and
+# neither verdict is trustworthy.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git_size=$(git ls-files -- "test/*_test.exs" "test/**/*_test.exs" | sort -u | wc -l)
+  if [ "$git_size" -ne "$corpus_size" ]; then
+    echo "GATED ARMS: REFUSE — corpus disagreement: find sees ${corpus_size} test file(s),"
+    echo "the git index sees ${git_size}. One enumeration is wrong, so no verdict drawn"
+    echo "from either is trustworthy. (An untracked or ignored test file will do this.)"
+    exit 70
+  fi
 fi
 
 emit > "$actual"
