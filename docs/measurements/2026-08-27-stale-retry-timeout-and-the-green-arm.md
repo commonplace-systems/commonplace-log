@@ -172,10 +172,19 @@ it cannot answer *how many*.
       "test obsolete sidecar lane authority writes nothing"    <- DID NOT FAIL
   ```
 
-  ⇒ **The arity is not the failure count.** A green run with nothing excluded writes a 10-byte
-  `{1, %{}}`; a *green* run elsewhere with 41 excluded tests wrote 8727 bytes. So neither the
-  size nor the arity tells you whether the suite passed — both are the size of the re-run set,
-  which mixes failed with excluded/invalid.
+  ⇒ **The arity is not this run's failure count**, and the file is not this run's result. The
+  third entry appears in neither of the day's two runs' output, so the manifest **merges across
+  invocations** — including across a *full-suite* run, which does not reset it. Its mtime is the
+  last writer; its contents are many runs.
+
+  What this repo's file establishes about the categories, and no more:
+  - failures populate the set (both of the day's failures are there);
+  - `@moduletag skip:` tests do **not** — this run had 2 skipped and neither appears;
+  - whether `--exclude`d or setup-invalid tests populate it is **not** established here (this
+    repo configures no exclusions), and elsewhere a green run with 41 exclusions produced a
+    41-entry map that a merge across earlier runs explains equally well.
+
+  So neither size nor arity tells you whether a suite passed.
 
   **What it is good for:** an mtime, and a free BEAM-free look at *which tests ExUnit would
   re-run*. **What it is not:** a pass/fail signal, a count of failures, or a contract — the
