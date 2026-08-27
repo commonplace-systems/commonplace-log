@@ -1,2 +1,3 @@
 test/cloudflare_deployed_integration_test.exs	moduletag-skip	2	COMMONPLACE_LOG_GATEWAY_TOKEN COMMONPLACE_LOG_GATEWAY_URL
+test/persistence_contract_anti_vacuity_test.exs	conditionally-compiled	1	PERSISTENCE_CONTRACT_MUTATION
 test/wrangler_real_socket_integration_test.exs	conditionally-compiled	2	RUN_WRANGLER_INTEGRATION WRANGLER_INTEGRATION_RED_ARM

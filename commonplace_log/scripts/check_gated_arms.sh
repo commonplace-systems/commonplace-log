@@ -14,27 +14,64 @@
 # It fails when the set of gated modules differs from the manifest, so a new
 # gated module cannot appear without someone writing down how it is run.
 #
+# Corpus and pattern defects found by commonplace-markdown (2026-08-27) and
+# fixed here, each measured against this tree:
+#   1. `test/*.exs` globs TOP LEVEL ONLY. Not live here today (26 of 26 test
+#      files are top level) but silent and permanent the moment anyone adds
+#      test/sub/foo_test.exs: the scan finds nothing and reports OK forever.
+#      Now a recursive find.
+#   2. `@moduletag skip` did not match `@moduletag :skip`, the ordinary Elixir
+#      form. Measured: 0 hits on a module carrying it. Both forms now match.
+#   3. A commented-out gate could be counted. Comments are stripped first.
+# And a positive control, reached independently by markdown, log-reducer and
+# biscuit: "there are no gated modules" and "I scanned nothing" print the same
+# empty inventory, so the script refuses when its corpus is empty.
+#
 # Usage:  bash scripts/check_gated_arms.sh [--update]
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 70
 manifest=test/GATED_ARMS.txt
 actual=$(mktemp) || exit 70
-trap 'rm -f "$actual"' EXIT
+scratch=$(mktemp) || exit 70
+trap 'rm -f "$actual" "$scratch"' EXIT
+
+# Every test file, at any depth. `-print0`/`read -d` so a path with a space
+# cannot split a filename into two corpus entries.
+corpus() {
+  find test -name '*_test.exs' -type f -print0 | sort -z
+}
+
+# A file with its comment lines removed, so a commented-out gate is not counted.
+uncommented() {
+  sed 's/[[:space:]]*#.*$//' "$1"
+}
 
 emit() {
   local f count vars
-  for f in $(grep -rl -e '^if System.get_env' -e '@moduletag skip' test/*.exs 2>/dev/null | sort); do
-    count=$(grep -c '^[[:space:]]*test "' "$f")
-    vars=$(grep -o 'System.get_env("[A-Z_][A-Z_]*")\|@[a-z_]*_var "[A-Z_][A-Z_]*"' "$f" \
+  while IFS= read -r -d "" f; do
+    uncommented "$f" > "$scratch"
+    grep -qE '^(if|case) System.get_env' "$scratch" || grep -qE '@moduletag[[:space:]]+(:skip|skip:)' "$scratch" || continue
+    count=$(grep -c '^[[:space:]]*test "' "$scratch")
+    vars=$(grep -o 'System.get_env("[A-Z_][A-Z_]*")\|@[a-z_]*_var "[A-Z_][A-Z_]*"' "$scratch" \
            | grep -o '"[A-Z_][A-Z_]*"' | tr -d '"' | sort -u | tr '\n' ' ')
-    if grep -q '^if System.get_env' "$f"; then
+    if grep -qE '^(if|case) System.get_env' "$scratch"; then
       printf '%s\tconditionally-compiled\t%s\t%s\n' "$f" "$count" "${vars% }"
     else
       printf '%s\tmoduletag-skip\t%s\t%s\n' "$f" "$count" "${vars% }"
     fi
-  done
+  done < <(corpus)
 }
+
+# POSITIVE CONTROL. An empty inventory has two causes — nothing is gated, or
+# the scan saw nothing — and they print identically. Prove the corpus is
+# non-empty before believing any verdict drawn from it.
+corpus_size=$(corpus | tr -dc "\0" | wc -c)
+if [ "$corpus_size" -eq 0 ]; then
+  echo "GATED ARMS: REFUSE — scanned 0 test files. The corpus is empty, so an"
+  echo "empty inventory would prove nothing. Check the glob and the working directory."
+  exit 70
+fi
 
 emit > "$actual"
 
@@ -58,7 +95,7 @@ MSG
   exit 65
 fi
 
-echo "GATED ARMS: OK — $(wc -l < "$manifest") gated module(s), matching the manifest."
+echo "GATED ARMS: OK — $(wc -l < "$manifest") gated module(s) over $corpus_size test file(s), matching the manifest."
 echo "None of these run under a plain \`mix test\`. Run them explicitly:"
 echo "  RUN_WRANGLER_INTEGRATION=1 COMMONPLACE_LOG_WORKER_DIR=../worker mix test test/wrangler_real_socket_integration_test.exs"
 echo "  COMMONPLACE_LOG_GATEWAY_URL=<url> COMMONPLACE_LOG_GATEWAY_TOKEN=<token> mix test test/cloudflare_deployed_integration_test.exs"
