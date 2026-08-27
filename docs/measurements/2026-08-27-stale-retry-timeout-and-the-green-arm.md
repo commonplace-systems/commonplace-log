@@ -147,6 +147,38 @@ process.** The artifact is the verdict, not the process's absence.
 - `docs/measurements/2026-08-26-wal-growth.md` — the WAL plateaus at ~4.14 MB rather than
   growing, so it is not a candidate explanation for the I/O above.
 
+## If you are trying to attribute box activity to a window: what `_build` can and cannot tell you
+
+Recorded here because the next person investigating a timeout at this repo will reach for
+`_build` mtimes to ask "was anything else running", and four separate defects in that
+instrument were established against ground truth on 2026-08-27.
+
+**`_build` answers *did something compile since time T*.** It does not answer *what ran*, and
+it cannot answer *how many*.
+
+- **It is blind to a BEAM that never compiled.** `mix test --self-test` is refused at option
+  parsing: a BEAM starts, burns ~4.5 s, and `_build` never moves. A bare `elixir foo.exs` is a
+  full BEAM and compiles nothing at all. Neither is visible, ever.
+- **It cannot be used to enumerate runs, and the reason is worse than overwriting.** Two full
+  suites ran in this repo that day; `_build`'s second-newest file was two days old, because both
+  wrote the same `.mix_test_failures` path. But the general form is sharper: **`_build` mtimes
+  record per-artifact compilation events, not runs.** Which files a run touches depends on what
+  changed since the last one, so the set of surviving timestamps is a fact about the *diff*, not
+  about the runs — and the number of survivors is **not monotone** in the number of runs. Run
+  boundaries are not recoverable from it even in principle.
+- **A positive control on it validates less than it looks like.** "The instrument detected a run
+  I can independently evidence" validates *detection of the most recent run*, not *detection of
+  runs* — structurally the one case it cannot see, because the event that validates it is the
+  event that overwrote the earlier evidence. It does not damage a since-T claim: an overwrite can
+  only move T forward.
+- **`find` here is `bfs`, not GNU findutils.** It rejects a timezone suffix on `-newermt`, and
+  under `2>/dev/null` that error is indistinguishable from an honest empty result. Run the
+  **positive** control first — it is the only one whose failure announces itself.
+
+⇒ The instrument that would actually answer "what ran and when" is an **invocation log**: a
+header written inside the redirect *before* the command is invoked, so the record exists however
+early the process dies. Nothing in this repo writes one.
+
 ## The runner
 
 `commonplace_log/scripts/box_sampled_run.sh` — the instrument these measurements came
