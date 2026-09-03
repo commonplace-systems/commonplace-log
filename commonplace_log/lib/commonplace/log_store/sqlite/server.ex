@@ -100,6 +100,16 @@ defmodule Commonplace.LogStore.SQLite.Server do
   @doc false
   def tail_local(server, opts), do: GenServer.call(server, {:tail_local, opts})
 
+  @doc "The one log this server owns, so a caller can refuse a mismatched request."
+  @spec log_id(server()) :: String.t()
+  def log_id(server), do: GenServer.call(server, :log_id)
+
+  @doc false
+  def read_set(server, query), do: GenServer.call(server, {:read_set, query})
+
+  @doc false
+  def commit(server, plan), do: GenServer.call(server, {:commit, plan})
+
   @impl true
   def init(opts) do
     data_dir = Keyword.fetch!(opts, :data_dir)
@@ -200,6 +210,21 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   def handle_call({:tail_local, opts}, _from, state) do
     {:reply, LocalSQLite.tail_local(state.store, state.log_id, opts), state}
+  end
+
+  def handle_call(:log_id, _from, state) do
+    {:reply, state.log_id, state}
+  end
+
+  def handle_call({:read_set, query}, _from, state) do
+    {:reply, LocalSQLite.read_set(state.store, state.log_id, query), state}
+  end
+
+  # Serialized like every other write. The plan carries its own expected revision
+  # and epoch, which LocalSQLite.commit/2 checks, so routing it here adds the
+  # process serialization without weakening the CAS.
+  def handle_call({:commit, plan}, _from, state) do
+    {:reply, LocalSQLite.commit(state.store, plan), state}
   end
 
   @impl true

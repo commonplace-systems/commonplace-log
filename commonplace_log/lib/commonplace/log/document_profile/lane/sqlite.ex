@@ -4,6 +4,7 @@ defmodule Commonplace.Log.DocumentProfile.Lane.SQLite do
   @behaviour Commonplace.Log.DocumentProfile.Lane
 
   alias Commonplace.Log.DocumentProfile.Lane
+  alias Commonplace.Log.Persistence.SQLiteServer
   alias Commonplace.LogStore.SQLite, as: SQLiteStore
   alias Commonplace.LogStore.SQLite.Server
 
@@ -32,7 +33,11 @@ defmodule Commonplace.Log.DocumentProfile.Lane.SQLite do
          log_id: log_id,
          writer_id: writer_id,
          lease: lease,
-         adapter: SQLiteStore,
+         # A `Persistence` module, not a `LogStore`: `handle.adapter` must mean
+         # the same kind of thing on both lanes for the adapter-generic helpers
+         # (`Frontier.frontier_value/1`, `Frontier.read_through/3`) to be callable
+         # from a handle at all.
+         adapter: SQLiteServer,
          store: server
        }}
     end
