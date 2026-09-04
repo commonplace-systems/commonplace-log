@@ -1,0 +1,132 @@
+# `BACKUP-1` — design: an append-only R2 backup walked under the read capability
+
+**Status:** `BACKUP-1a` deliverable (commonplace-plan row 845). Design only — `1b` builds the loop,
+`1c` rehearses the restore. Measured at `d0aff782eed27ad1c40f594c135942bd1c1c8b1f`, deployed as
+worker `etag 8cb2680e…` with `prov:source-sha=d0aff782…`.
+
+---
+
+## 1. The inventory, measured — and the finding it produced
+
+⭐⭐ **THE FIRST FINDING IS THAT REALMS CAN BE COUNTED AND CANNOT BE NAMED.**
+
+`[measured 2026-09-04 14:2xZ · GET /accounts/d5c4856e…/workers/durable_objects/namespaces/<id>/objects]`
+
+| namespace | objects | with stored data |
+|---|---|---|
+| `commonplace-log_CommonplaceLog` | 0 | 0 |
+| `commonplace-log_RealmContainer` | 4 | 3 |
+| `commonplace-log_RealmNode` | **38** | **38** |
+
+⛔ **The listing returns exactly two fields per object — `id` and `hasStoredData`. There is no name.**
+Realms are addressed by `namespace.idFromName(realmId)` (`worker/src/index.ts:91`) and
+`getByName(realmId)` (`:77`), and `idFromName` is a **one-way** derivation: the hex id cannot be
+turned back into the realm id. ⇒ **Nothing in the platform or in `worker/src` can list the realms
+that exist.** (`worker/src` contains no registry, index or catalog: the single `list` hit is
+`indexOf`; control — `frontier` appears 24 times, so the search was not blind.)
+
+⚠️ **AND THE MEASUREMENT ITSELF NEARLY LIED, in a way worth recording:** `?limit=3` and `?limit=10`
+return `success:false, 10077 limit is too low` — and a caller that reads `result` from that response
+gets `None` and prints *"0 objects"*. ⛔ **A refused request and an empty namespace are the same
+observable unless you read `success`.** The 38 above comes from a call that returned `success:true`.
+
+⇒ ⭐⭐ **CONSEQUENCE FOR THE DESIGN, and it is the whole shape of it: A BACKUP CAN ONLY WALK REALMS
+IT WAS TOLD ABOUT. There is no discovery. So the registry is not a convenience — it is the only
+thing standing between "backed up everything" and "backed up everything I happened to know".**
+
+✅ **AND THE COUNT IS THE REGISTRY'S CONTROL.** The DO objects listing cannot name realms, but it can
+COUNT them. ⇒ **Every run asserts `registry entries == RealmNode objects with stored data`, and
+refuses loudly when the registry is smaller.** ⛔ **Without that, a realm created by a path that
+forgets to register is invisible to the backup and to every check of the backup — the failure is
+silent at both ends.** ⭐ **Two independent enumerations, in different systems, that must agree.**
+
+---
+
+## 2. Where the backup runs — **a SECOND Worker, and the argument is measured, not aesthetic**
+
+**Option A — a Cron Trigger on the existing `commonplace-log` Worker.** Cheapest to write: the DO
+bindings already exist.
+⛔⛔ **REJECTED, on a blast radius measured today:** `worker/wrangler.jsonc` carries a `containers`
+block whose build context is `../commonplace_log`, and its Dockerfile is `COPY config` + `COPY lib`.
+⇒ **`wrangler deploy` on this Worker BUILDS AND ROLLS OUT THE BEAM IMAGE.** On 2026-09-04 that
+deploy moved `commonplace-log-realm` from **v5 to v6 across 7 live instances**.
+⭐ **So every iteration of the backup — every fix to a loop bug, every layout tweak — would roll the
+live storage engine.** ⇒ **The backup's change cadence would become the live engine's rollout
+cadence, which is the opposite of what a durability feature should cost.**
+⚠️ Second, smaller: a `scheduled()` handler that throws, loops, or exhausts CPU shares a deployment
+with the live serving path.
+
+**Option B — a second Worker `commonplace-log-backup` (RECOMMENDED).** Its own script, its own
+deploy, its own R2 binding, its own cron. It reaches realms through a Durable Object binding that
+names the other script's namespace (`durable_objects.bindings[].script_name = "commonplace-log"`),
+so it talks to the SAME realms without owning them.
+✅ **Blast radius: a backup bug cannot roll the container, cannot redeploy the live script, and
+cannot take the serving path down.** ✅ **Its deploys are `worker/`-only and carry no image.**
+⛔ **Cost, stated rather than hidden:** a second script to keep in sync with the realm HTTP surface —
+**the same "stub of a surface you do not own" drift that `bin/sidecar-stub` carries.** ⇒ **Mitigation
+is the one already proven: the backup Worker records the `commonplace-log` sha its expectations were
+written against, and a check compares that pin to the deployed `prov:source-sha`.**
+
+---
+
+## 3. Object layout in R2 — append-only, idempotent by construction
+
+```
+<realm_id>/<writer_id>/<seq padded to 12>.json    one entry per object, written ONCE, never updated
+<realm_id>/frontier.json                          per-writer tips, written LAST in a run
+_runs/<run_id>.json                               the run log (BACKUP-1b)
+```
+⭐ **Append-only is not a policy here, it is a property of the data:** entries are content-addressed
+(`entry_id` UUIDv7) and chained per writer (`prev_entry_id`), so an entry at `(realm, writer, seq)`
+is immutable. **Re-running the loop re-derives the same key with the same bytes.** ⇒ **A second run
+appends zero objects — which is `1b`'s idempotence arm, and it is checkable by counting.**
+⭐ **`frontier.json` LAST is the commit point:** a run that dies mid-walk leaves entries without an
+advanced frontier, and the next run simply resumes. ⛔ **Never write the frontier first — that turns
+a partial backup into one that claims completeness.**
+
+---
+
+## 4. Custody of read capabilities
+
+**Who mints:** `STORE-3b` makes `/realm/read-capability` a **write-authenticated** route, so only the
+holder of a realm's write secret can mint its read capability. That is the realm's creator —
+`commonplace-next`'s create flow. ⇒ ⭐ **The backup never holds a write secret and therefore cannot
+write, mint, or revoke anything. Its authority is exactly four routes: `/frontier`, `/read-set`,
+`/read-writer`, `/tail-local`** (`worker/src/realm/realm_auth.ts:94`).
+
+**Where it lives:** a KV namespace keyed by `realm_id`, written ONCE by the minter at realm creation,
+bound **read-only** to the backup Worker. ⛔ **Never in R2** (R2 holds the backup, and a backup that
+contains the credentials for the thing it backs up is a single object that is both the data and the
+key to it). ⛔ **Never in a message, a row, or a repo** — `STORE-3b`'s rule, unchanged.
+✅ **This one object serves BOTH custody and enumeration** — it is the registry of §1, and the DO
+object count is its control.
+⚠️ **Open, and named rather than assumed:** the KV write happens in `commonplace-next`'s create flow,
+which is not this round's repo. **`1b` cannot walk a realm created before that write exists**, and
+`STORE-3b`'s R3/R4 already establish that pre-existing realms can be minted for retroactively.
+
+**Revocation:** minting again revokes the prior capability. ⇒ **A revoked capability must stop that
+realm's backup with a NAMED error in the run log, never silently** — a realm that stops being backed
+up looks exactly like a realm with no new entries.
+
+---
+
+## 5. Restore — an operator act, not the backup's
+
+Replay is per writer, in `seq` order, through the **write** routes into a fresh realm. ⇒ **It needs a
+write secret, which the backup does not have and must not have.**
+⛔ **So restore is an OPERATOR act, deliberately.** The backup Worker has no code path that can write
+to a realm; that is the property that makes a compromised backup unable to corrupt the live store.
+⭐ **`1c` is the arc's exit condition and its assertion is written down now, before `1b` is built:**
+a realm with N entries across W writers is backed up, a FRESH realm is restored from R2, and
+`/frontier` of the restored realm equals the original's per-writer tips **with every `entry_id`
+identical**. ⛔ **`entry_id`s, not counts** — equal counts is the comparison a broken restore passes.
+⭐ ***A backup nobody has restored is not a backup.***
+
+---
+
+## 6. What this round did NOT do
+
+⛔ No change to `READ_ROUTES`, no new auth surface, no write route touched. No cron trigger, no
+binding, no deploy. **One R2 bucket `commonplace-log-backup` created** (recorded in `boss-clod`
+`cf-records/commonplace-log-backup.md` with its removal path RUN, not merely written), **and no data
+in it** — the rehearsal object was deleted and the listing shown both ways.
