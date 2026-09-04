@@ -67,7 +67,9 @@ export const DOCUMENT_WRITER_ID_COLUMN_DDL =
 export const REALM_META_DDL = `CREATE TABLE realm_meta (
   singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
   secret_hash BLOB NOT NULL CHECK (length(secret_hash) = 32),
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  read_secret_hash BLOB CHECK (read_secret_hash IS NULL OR length(read_secret_hash) = 32),
+  read_created_at TEXT
 ) STRICT;`;
 
 function hasTable(sql: SqlStorage, name: string): boolean {
@@ -78,6 +80,24 @@ function hasTable(sql: SqlStorage, name: string): boolean {
 
 export function initRealmMetaSchema(sql: SqlStorage): void {
   if (!hasTable(sql, "realm_meta")) sql.exec(REALM_META_DDL);
+
+  // STORE-3b. The read capability is ADDITIVE and NULLABLE, applied the same way `initSchema`
+  // applies `lease_epoch` below: PRAGMA the columns, ALTER only what is missing.
+  //
+  // ⛔ NULLABLE IS THE WHOLE DESIGN, NOT A CONVENIENCE. `RealmAuth.create` throws `RealmExists`
+  // and there is no second create, so a realm that already exists can NEVER be re-created to
+  // acquire a column added as NOT NULL. A read capability minted only at create time would be
+  // unavailable to every realm that exists today -- including the one BACKUP-1 is a gate for.
+  // ⇒ The column is added to live tables and left NULL, and `/realm/read-capability` fills it
+  // later under the write secret. That is what makes "issuable for a realm that already exists"
+  // a property of the schema rather than a promise in a brief.
+  const columns = sql.exec("PRAGMA table_info(realm_meta)").toArray();
+  if (!columns.some((column) => column.name === "read_secret_hash")) {
+    sql.exec("ALTER TABLE realm_meta ADD COLUMN read_secret_hash BLOB");
+  }
+  if (!columns.some((column) => column.name === "read_created_at")) {
+    sql.exec("ALTER TABLE realm_meta ADD COLUMN read_created_at TEXT");
+  }
 }
 
 /** Apply the pinned layout, followed only by additive epoch and trigger DDL. */
