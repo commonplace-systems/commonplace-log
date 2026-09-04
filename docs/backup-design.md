@@ -130,3 +130,44 @@ identical**. ⛔ **`entry_id`s, not counts** — equal counts is the comparison 
 binding, no deploy. **One R2 bucket `commonplace-log-backup` created** (recorded in `boss-clod`
 `cf-records/commonplace-log-backup.md` with its removal path RUN, not merely written), **and no data
 in it** — the rehearsal object was deleted and the listing shown both ways.
+
+---
+
+## 7. CORRECTION — what §4 said, what is true, and how the difference was found
+
+⛔ **§4 above was written as: *"minted at realm creation by the write-secret holder… the only place
+the write secret is in hand."* THAT SENTENCE IS WRONG, and it is left standing above rather than
+edited, because a design doc that silently self-heals is a record nobody can audit.**
+
+**What is true** `[measured at c4b3a4d, worker/src/realm/realm_auth.ts]`:
+```
+create(realmId)        generates the secret, stores only its HASH, and RETURNS the plaintext once
+                       (:188) ⇒ the write secret LEAVES the DO, to the gateway/creator
+mintReadCapability()   TAKES NO ARGUMENT. It never reads, verifies or receives the write secret.
+                       Its guards are storedHash !== null and storedReadHash === null.
+```
+⇒ ⭐⭐ **THE AUTHORITY TO MINT IS *BEING INSIDE THE DO*, NOT HOLDING THE SECRET.** The write-secret
+framing is true of the HTTP route — `/realm/read-capability` sits behind `authorize() === "write"` —
+and the sentence generalised a route's guard into a property of the operation.
+
+✅ **The correction makes the design STRICTLY BETTER, which is why it is not merely an erratum:** the
+registry write mints in the create branch with the write secret **never an input**, so no code path
+in `BACKUP-1b-i` touches, copies or stores it. **What the write-secret framing was trying to buy is
+bought by locality instead.**
+
+**How it was found:** the sentence was written from the ROUTE TABLE. It was checked by reading the
+IMPLEMENTATION it was a claim about, because the round that depends on it was about to be built on
+it. ⭐ ***A claim written from one artifact is not evidence about a different one.***
+
+## 8. `1b-i` as built — and the DEPLOY ORDER it forces
+
+`registerRealm()` reports a `RegistryOutcome` in the create response: `registered` ·
+`already_minted` · `registry_write_failed` — and **`no_registry_bound` is a 503 REFUSAL, not a 201**
+(plan row 855: a 201 over an unregistered realm is the system ANSWERING instead of DECLINING).
+⛔ **The binding is checked BEFORE `create` runs.** Refusing after would leave an ORPHAN: a realm
+that exists, is unregistered, and whose write secret the caller never received.
+
+⛔⛔ **THEREFORE A DEPLOY ORDER, AND IT IS NOT OPTIONAL: THE KV NAMESPACE AND THE `REALM_REGISTRY`
+BINDING MUST EXIST BEFORE THIS CODE DEPLOYS. Deployed without them, REALM CREATION STOPS.**
+⭐ **Measured, not reasoned: binding it in `wrangler.test.jsonc` is what took 20 red arms in
+`http.workers.test.ts` back to green. The test corpus reproduced the outage in miniature.**

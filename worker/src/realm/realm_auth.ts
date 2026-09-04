@@ -1,5 +1,7 @@
 import { initRealmMetaSchema } from "./schema";
 
+import { RealmRegistry, RegistryOutcome } from "./registry";
+
 export const REALM_CREATE_HEADER = "x-commonplace-realm-create";
 export const REALM_ID_HEADER = "x-commonplace-realm-id";
 
@@ -170,22 +172,57 @@ export class RealmAuth {
   }
 }
 
-function fail(code: string, status: number): Response {
-  return Response.json({ ok: false, error: { code } }, { status });
+/**
+ * ⭐ `details` is OPTIONAL and ADDITIVE: every existing arm asserts `error.code` and is unaffected.
+ * It exists because of BACKUP-1a's own finding against this codebase's neighbour -- `uuid-malformed`
+ * names WHAT is wrong and not WHERE, and it cost two wrong guesses before the field was found. An
+ * error that can name its subject should.
+ */
+function fail(code: string, status: number, details?: Record<string, string>): Response {
+  return Response.json(
+    { ok: false, error: details === undefined ? { code } : { code, details } },
+    { status },
+  );
 }
 
 export async function handlePublicRealmRequest(
   request: Request,
   auth: RealmAuth,
   authorized: (request: Request) => Promise<Response>,
+  registry?: RealmRegistry,
+  // ⛔ DEFAULT IS THE SAFE ONE. A caller that forgets this flag gets the REFUSAL, not the silent
+  // 201 -- the unsafe behaviour has to be asked for by name.
+  allowUnboundRegistry = false,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (path === "/realm/create" && request.headers.get(REALM_CREATE_HEADER) === "1") {
     const realmId = request.headers.get(REALM_ID_HEADER);
     if (realmId === null) return fail("malformed_request", 400);
     try {
+      // ⛔⛔ THE BINDING IS CHECKED *BEFORE* THE REALM IS CREATED, AND THE ORDER IS THE POINT.
+      // An unbound registry is a DEPLOY-TIME fact (a missing `wrangler.jsonc` binding), so this
+      // refusal is not about this request -- it is about the deployment. ⇒ Refusing AFTER `create`
+      // would leave an ORPHAN: a realm that exists, is unregistered, and whose write secret the
+      // caller never received, so nobody can reach it and nothing can back it up. Refusing FIRST
+      // creates nothing. (plan row 855: a 201 over an unregistered realm is the silent-underreport
+      // shape -- the system answering instead of declining.)
+      if (registry === undefined && !allowUnboundRegistry) {
+        return fail("registry_not_bound", 503, {
+          binding: "REALM_REGISTRY",
+          detail: "realm creation is disabled while the registry binding is absent",
+        });
+      }
+
       const secret = await auth.create(realmId);
-      return Response.json({ ok: true, realm_id: realmId, realm_secret: secret }, { status: 201 });
+      // ⭐ MINT AND REGISTER IN THE SAME ACT. The authority to mint is BEING INSIDE THIS DO --
+      // `mintReadCapability()` takes no argument and never sees the write secret (BACKUP-1a's
+      // premise correction, plan row 854). ⛔ The capability is NOT returned over the wire: it
+      // goes to the registry and nowhere else, so the gateway never holds a read capability.
+      const registered = await registerRealm(auth, registry, realmId);
+      return Response.json(
+        { ok: true, realm_id: realmId, realm_secret: secret, registry: registered },
+        { status: 201 },
+      );
     } catch (error) {
       if (error instanceof RealmExists) return fail("realm_exists", 409);
       throw error;
@@ -232,4 +269,42 @@ export async function handlePublicRealmRequest(
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
   return await authorized(forwarded);
+}
+
+
+/**
+ * Mint this realm's read capability and hand it to the registry, reporting WHICH outcome occurred.
+ *
+ * ⛔⛔ NOTHING HERE IS SILENT, AND THAT IS THE WHOLE DESIGN. A realm that exists but is not
+ * registered is invisible to the backup; if this returned `void` and swallowed a failure, the
+ * create would look identical in all four cases and the gap would surface only as a backup that
+ * was quietly short. ⇒ The outcome rides in the 201 body.
+ *
+ * ⛔ The realm is NOT unwound on a registry failure. The caller already holds a write secret for a
+ * realm that exists; failing the response would leave them unable to reach it. A missing registry
+ * row is recoverable (retroactive mint + register, BACKUP-1b-iii); a lost write secret is not.
+ */
+async function registerRealm(
+  auth: RealmAuth,
+  registry: RealmRegistry | undefined,
+  realmId: string,
+): Promise<RegistryOutcome> {
+  if (registry === undefined) return "no_registry_bound";
+
+  let capability: string;
+  try {
+    capability = await auth.mintReadCapability();
+  } catch (error) {
+    // ⭐ A capability already exists, so this realm's was minted by someone else and this create
+    // cannot know its value. NAMED, never treated as success.
+    if (error instanceof ReadCapabilityExists) return "already_minted";
+    throw error;
+  }
+
+  try {
+    await registry.put(realmId, capability);
+  } catch {
+    return "registry_write_failed";
+  }
+  return "registered";
 }

@@ -10,6 +10,14 @@
       { "name": "REALM_CONTAINER", "class_name": "RealmContainer" }
     ]
   },
+  // ⛔ BOUND IN TESTS BECAUSE IT IS BOUND IN PRODUCTION. BACKUP-1b-i makes realm creation REFUSE
+  // (503 registry_not_bound) when this binding is absent, so leaving it out here would either hide
+  // that refusal behind a test-only lever or turn 20 existing arms red for a reason that is not
+  // theirs. ⭐ The corollary is a DEPLOY ORDER, not a test detail: the KV namespace and this
+  // binding must exist BEFORE 1b-i's code is deployed, or realm creation stops.
+  "kv_namespaces": [
+    { "binding": "REALM_REGISTRY", "id": "backup-1b-i-test-registry" }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["CommonplaceLog"] },
     { "tag": "v2", "new_sqlite_classes": ["RealmContainer"] }

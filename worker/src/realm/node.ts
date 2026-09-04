@@ -3,11 +3,16 @@ import { containerFetchWithCapacityMapping } from "./capacity";
 import { handleRealmRequest } from "./http";
 import { storageInternal } from "./outbound";
 import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
+import { kvRegistry } from "./registry";
 import { RealmStore } from "./store";
 
 interface Env {
   REALM_NODE: DurableObjectNamespace<RealmNode>;
   REALM_TEST_LEVERS?: string;
+  // ⛔ OPTIONAL IN THE TYPE, NEVER OPTIONAL IN PRODUCTION. When it is absent the create response
+  // says `registry: "no_registry_bound"` rather than succeeding quietly -- an unbound registry is
+  // a realm the backup will never see, and it must be visible at the moment it happens.
+  REALM_REGISTRY?: KVNamespace;
 }
 
 /** One Container-managing Durable Object and SQLite sidecar per realm. */
@@ -25,7 +30,8 @@ export class RealmNode extends Container<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
-      await this.fetchAuthorized(authorized));
+      await this.fetchAuthorized(authorized),
+      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1");
   }
 
   /** Platform-authenticated storage entrypoint used only by the Container outbound handler. */

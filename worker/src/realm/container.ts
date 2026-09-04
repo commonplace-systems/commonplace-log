@@ -1,16 +1,24 @@
 import { DurableObject } from "cloudflare:workers";
 import { handleRealmRequest } from "./http";
 import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
+import { kvRegistry } from "./registry";
 import { RealmStore } from "./store";
 
 /** One SQLite-backed Durable Object per realm, containing many named logs. */
-export class RealmContainer extends DurableObject {
+interface Env {
+  // See node.ts: optional in the type, never optional in production.
+  REALM_REGISTRY?: KVNamespace;
+  REALM_TEST_LEVERS?: string;
+}
+
+export class RealmContainer extends DurableObject<Env> {
   private readonly store = new RealmStore(this.ctx.storage.sql, this.ctx.storage);
   private readonly auth = new RealmAuth(this.ctx.storage.sql, this.ctx.storage);
 
   override async fetch(request: Request): Promise<Response> {
     return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
-      await handleRealmRequest(authorized, this.store));
+      await handleRealmRequest(authorized, this.store),
+      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1");
   }
 
   /**

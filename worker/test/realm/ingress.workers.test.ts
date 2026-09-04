@@ -42,7 +42,16 @@ describe("realm ingress", () => {
       const created = await createRealm(realm, hint);
       expect(created).toEqual({
         status: 201,
-        json: { ok: true, realm_id: realm, realm_secret: expect.stringMatching(/^[0-9a-f]{64}$/) },
+        // ⭐ `registry` is ASSERTED, not tolerated. BACKUP-1b-i adds it to the create contract, and
+        // an expectation edited merely to admit a new key would stop testing the body's shape --
+        // the face-3 failure, where the check moves with the thing it checks. This edit ADDS a
+        // claim: the gateway create path must report that the realm was registered.
+        json: {
+          ok: true,
+          realm_id: realm,
+          realm_secret: expect.stringMatching(/^[0-9a-f]{64}$/),
+          registry: "registered",
+        },
       });
       const second = await createRealm(realm);
       expect(second).toEqual({ status: 409, json: { ok: false, error: { code: "realm_exists" } } });
