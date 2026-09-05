@@ -72,3 +72,17 @@ An invocation snapshots each log frontier independently. This is not a cross-log
 transaction or a point-in-time realm snapshot. Newly created logs can appear in
 a later run. Overlapping runs may stop with a checkpoint conflict and retry later.
 There is no retention/deletion, registry repair, or restore implementation here.
+
+The explicit key decision is [design §10](../../docs/backup-design.md#10-decision-derived-backup-keys-are-sensitive-metadata-backup-keys-1):
+derived keys stay; contents AND listings require roster-level confidentiality.
+Do not paste live inventories, manifests or run payloads into channels, tickets
+or reports. Fixture-only evidence is labelled as such.
+
+`check-backup-boundary.sh` checks hashes of the complete reviewed production
+source set using `scripts/backup-output-review.json`. It fails on changed code or
+new modules. Before updating hashes, review all output paths: only realm reads
+and R2 writes; scheduled errors may expose a fixed code and opaque run ID only.
+Do not refresh hashes merely to pass the check. This is an integrity/review gate,
+not a proof about arbitrary future code, manual exports or provider telemetry.
+The tool prints its test/fixture/operator exclusions. No access-policy change or
+deployment is performed by this check.

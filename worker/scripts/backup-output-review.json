@@ -1,0 +1,8 @@
+{
+  "reviewed_base": "7c9d9ca16b418ac7c218e5827540d3fed3c8d7a8",
+  "review": "Read index.ts and run.ts in full. Realm reads send query selectors; manifest, frontier and run payloads are persisted only by BACKUP.put. Scheduled entry returns no payload and errors with a fixed code plus opaque run ID. Review output paths before changing these hashes.",
+  "sha256": {
+    "index.ts": "f5132275f31c31310b5d7906c94b3a10024a7abb828861755c0e13aefa4fba82",
+    "run.ts": "12eef614aeb8265e30af4c02533b161d586269ba7e4e2f0e35fe401d3f021815"
+  }
+}

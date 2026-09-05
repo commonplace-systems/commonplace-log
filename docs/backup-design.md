@@ -224,3 +224,73 @@ restriction, not a claim that Workers KV bindings have a platform read-only mode
 The run explicitly reports `registered_realms_only`: pre-registry realms are not
 backfilled here, and production registry/DO-count reconciliation remains 1b-iii.
 Restore verification remains 1c; this round does not certify a usable restore.
+
+## 10. Decision: derived backup keys are sensitive metadata (BACKUP-KEYS-1)
+
+At log base `7c9d9ca`, choose **B: retain derived keys, classify listings as
+sensitive, and enforce review of production output paths** (planner ruling
+29918). This is an explicit choice rather than the previous default. The backup
+Worker remains undeployed; this decision does not authorize deployment or change
+any bucket access policy.
+
+A fixture-only reproduction uses commonplace-next Identity and Membership at
+`94abc915604cf93ee6c604d33bc2e14ae2d61441`. Ten literal Elixir-produced vectors
+validate the hash, UUID stamping and discriminated form before the membership
+probe. An independently supplied Python membership chain provides another
+control. The backup itself produces a local listing; a guessed fixture member
+and generation match it, while another member and another generation do not.
+The working oracle is the finding. This confirms a guessed membership, not an
+ability to enumerate unknown members or prove current membership: old cells can
+remain after membership changes. The organization, candidate member and generation
+must be known or guessed. The IDs also disclose document identities, because the
+document caller uses document_id as log_id.
+
+Both costs inform the choice:
+
+- **A, keyed/opaque log segments:** protects an index-only disclosure when the
+  mapping secret is unavailable. It adds persistent mapping/key custody and a
+  recovery dependency. Contrary to the brief's original claim, losing the mapping
+  need not cause duplication: a fail-closed implementation stops with a named
+  outage until the mapping is recovered. Generating a replacement silently is the
+  failure that would duplicate objects. A simple random realm prefix with raw log
+  IDs would not conceal the log IDs at all. Opaque entry keys also do not conceal
+  an unmodified manifest's log_ids from a reader of that manifest.
+- **B, retained derivation:** keeps key identity reproducible without an extra
+  mapping and preserves the tested zero-append repeat behavior. It leaves a real
+  confidentiality cost: a copied index alone can confirm guesses and disclose a
+  document inventory. Calling that index harmless would be wrong, even if the
+  same authorized bucket reader can also retrieve more sensitive document bytes.
+
+B is selected for this implementation because it preserves the existing recovery
+model and adds no secret that must survive alongside backups. This is not a claim
+that confidentiality is less important than durability, or that A cannot be made
+reliable. A remains appropriate if a future requirement explicitly permits index
+access while forbidding identity disclosure; that would require a designed,
+recoverable mapping and a review of manifest disclosure too.
+
+**Custody:** bucket contents AND listings must be handled as sensitive as the
+membership roster and document inventory. Never paste a live index, manifest or
+run payload into a channel, ticket, or run report. Synthetic fixtures are explicitly
+identified and may appear in tests and evidence. Boss owns the corresponding
+`cf-records/commonplace-log-backup.md` entry and any access-policy change; this
+round requests that record and makes no Cloudflare call. No effective production
+access policy was measured here. Deployment remains separately held.
+
+**Mechanism and limits:** `check-backup-boundary.sh` now invokes a SHA256 integrity
+gate over the entire reviewed production backup source set. The reviewed output
+paths are realm read queries and R2 writes; the scheduled entry returns no payload
+and can report a fixed failure code with an opaque run ID. No manifest, inventory
+or run payload is emitted to console, an HTTP response or another binding. Any
+code edit or new module fails until its output paths are reviewed and the recorded
+hashes are deliberately updated. The test injects both direct and aliased debug
+outputs and an extra module; the gate rejects them, and passes after restoration.
+This is a review gate over known code, not semantic analysis of arbitrary code.
+Hash updates require review, not mechanical regeneration.
+
+A static check on the worker's source cannot prevent an operator copying a
+manifest out by hand. Tests, fixture artifacts, operator exports and provider
+telemetry are outside this gate and are printed as exclusions by the tool.
+Platform logging and human disclosure therefore remain custody obligations, not
+properties this gate proves. Earlier sections and the brief remain historical;
+this section corrects the assumption that identifier-free credentials imply
+identifier-free backup metadata.

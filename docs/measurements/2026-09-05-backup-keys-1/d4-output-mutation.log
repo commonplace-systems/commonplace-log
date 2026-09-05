@@ -1,0 +1,3 @@
+D4 covers the complete production backup source set; excludes tests, fixture artifacts, operator exports and provider telemetry.
+D4 FAIL: unreviewed source or missing module: run.ts
+An output path may have changed. Before updating hashes, review every output: only realm READ requests and R2 writes are allowed; scheduled errors may include only fixed codes and an opaque run ID. No manifest, inventory or run payload to console, HTTP responses, external requests or extra bindings. Do not refresh hashes merely to clear this gate.

@@ -1,0 +1,11 @@
+{
+  "repository": "commonplace-systems/commonplace-next",
+  "commit": "94abc915604cf93ee6c604d33bc2e14ae2d61441",
+  "blobs": {
+    "lib/commonplace_next/organization/identity.ex": "a01d4b87d8ae1edd213d4c91c0c25fb5236f57de",
+    "lib/commonplace_next/organization/membership.ex": "21663e7ef0feb7038df675d4300b02effc56cf68",
+    "lib/commonplace_next/organization/editor_placement.ex": "e893877281da1266293f8b436438eed3281cd8ab",
+    "lib/commonplace_next/cell/supervisor.ex": "d83105c5a02ee3340cc75bdeb6dfb150d81bbf42",
+    "test/commonplace_next/organization/facet_stability_test.exs": "d034d5cf3cf0357ee78b6156a4ddbf2aff4e5328"
+  }
+}

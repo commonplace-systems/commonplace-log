@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-base="${1:-b75ac47afe03a78c809b0e3c91b87f790f1598b8}"
+base="${1:-7c9d9ca16b418ac7c218e5827540d3fed3c8d7a8}"
+python3 scripts/check-backup-output.py
 python3 - <<'PY'
 from pathlib import Path
 import re

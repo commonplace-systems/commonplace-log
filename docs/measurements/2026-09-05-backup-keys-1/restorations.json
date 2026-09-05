@@ -1,0 +1,5 @@
+{
+  "fixture_sha256": "fbe37d38529c40e60d27e36800823a877e59531dfe5e3753382d428382cad5d8",
+  "production_run_sha256": "12eef614aeb8265e30af4c02533b161d586269ba7e4e2f0e35fe401d3f021815",
+  "restoration": "byte equality asserted immediately after restoring each file"
+}

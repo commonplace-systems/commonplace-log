@@ -1,0 +1,281 @@
+diff --git a/docs/backup-design.md b/docs/backup-design.md
+index ecdf3e1..762b8be 100644
+--- a/docs/backup-design.md
++++ b/docs/backup-design.md
+@@ -224,3 +224,73 @@ restriction, not a claim that Workers KV bindings have a platform read-only mode
+ The run explicitly reports `registered_realms_only`: pre-registry realms are not
+ backfilled here, and production registry/DO-count reconciliation remains 1b-iii.
+ Restore verification remains 1c; this round does not certify a usable restore.
++
++## 10. Decision: derived backup keys are sensitive metadata (BACKUP-KEYS-1)
++
++At log base `7c9d9ca`, choose **B: retain derived keys, classify listings as
++sensitive, and enforce review of production output paths** (planner ruling
++29918). This is an explicit choice rather than the previous default. The backup
++Worker remains undeployed; this decision does not authorize deployment or change
++any bucket access policy.
++
++A fixture-only reproduction uses commonplace-next Identity and Membership at
++`94abc915604cf93ee6c604d33bc2e14ae2d61441`. Ten literal Elixir-produced vectors
++validate the hash, UUID stamping and discriminated form before the membership
++probe. An independently supplied Python membership chain provides another
++control. The backup itself produces a local listing; a guessed fixture member
++and generation match it, while another member and another generation do not.
++The working oracle is the finding. This confirms a guessed membership, not an
++ability to enumerate unknown members or prove current membership: old cells can
++remain after membership changes. The organization, candidate member and generation
++must be known or guessed. The IDs also disclose document identities, because the
++document caller uses document_id as log_id.
++
++Both costs inform the choice:
++
++- **A, keyed/opaque log segments:** protects an index-only disclosure when the
++  mapping secret is unavailable. It adds persistent mapping/key custody and a
++  recovery dependency. Contrary to the brief's original claim, losing the mapping
++  need not cause duplication: a fail-closed implementation stops with a named
++  outage until the mapping is recovered. Generating a replacement silently is the
++  failure that would duplicate objects. A simple random realm prefix with raw log
++  IDs would not conceal the log IDs at all. Opaque entry keys also do not conceal
++  an unmodified manifest's log_ids from a reader of that manifest.
++- **B, retained derivation:** keeps key identity reproducible without an extra
++  mapping and preserves the tested zero-append repeat behavior. It leaves a real
++  confidentiality cost: a copied index alone can confirm guesses and disclose a
++  document inventory. Calling that index harmless would be wrong, even if the
++  same authorized bucket reader can also retrieve more sensitive document bytes.
++
++B is selected for this implementation because it preserves the existing recovery
++model and adds no secret that must survive alongside backups. This is not a claim
++that confidentiality is less important than durability, or that A cannot be made
++reliable. A remains appropriate if a future requirement explicitly permits index
++access while forbidding identity disclosure; that would require a designed,
++recoverable mapping and a review of manifest disclosure too.
++
++**Custody:** bucket contents AND listings must be handled as sensitive as the
++membership roster and document inventory. Never paste a live index, manifest or
++run payload into a channel, ticket, or run report. Synthetic fixtures are explicitly
++identified and may appear in tests and evidence. Boss owns the corresponding
++`cf-records/commonplace-log-backup.md` entry and any access-policy change; this
++round requests that record and makes no Cloudflare call. No effective production
++access policy was measured here. Deployment remains separately held.
++
++**Mechanism and limits:** `check-backup-boundary.sh` now invokes a SHA256 integrity
++gate over the entire reviewed production backup source set. The reviewed output
++paths are realm read queries and R2 writes; the scheduled entry returns no payload
++and can report a fixed failure code with an opaque run ID. No manifest, inventory
++or run payload is emitted to console, an HTTP response or another binding. Any
++code edit or new module fails until its output paths are reviewed and the recorded
++hashes are deliberately updated. The test injects both direct and aliased debug
++outputs and an extra module; the gate rejects them, and passes after restoration.
++This is a review gate over known code, not semantic analysis of arbitrary code.
++Hash updates require review, not mechanical regeneration.
++
++A static check on the worker's source cannot prevent an operator copying a
++manifest out by hand. Tests, fixture artifacts, operator exports and provider
++telemetry are outside this gate and are printed as exclusions by the tool.
++Platform logging and human disclosure therefore remain custody obligations, not
++properties this gate proves. Earlier sections and the brief remain historical;
++this section corrects the assumption that identifier-free credentials imply
++identifier-free backup metadata.
+diff --git a/worker/backup/README.md b/worker/backup/README.md
+index b8b946f..456a4a8 100644
+--- a/worker/backup/README.md
++++ b/worker/backup/README.md
+@@ -72,3 +72,17 @@ An invocation snapshots each log frontier independently. This is not a cross-log
+ transaction or a point-in-time realm snapshot. Newly created logs can appear in
+ a later run. Overlapping runs may stop with a checkpoint conflict and retry later.
+ There is no retention/deletion, registry repair, or restore implementation here.
++
++The explicit key decision is [design §10](../../docs/backup-design.md#10-decision-derived-backup-keys-are-sensitive-metadata-backup-keys-1):
++derived keys stay; contents AND listings require roster-level confidentiality.
++Do not paste live inventories, manifests or run payloads into channels, tickets
++or reports. Fixture-only evidence is labelled as such.
++
++`check-backup-boundary.sh` checks hashes of the complete reviewed production
++source set using `scripts/backup-output-review.json`. It fails on changed code or
++new modules. Before updating hashes, review all output paths: only realm reads
++and R2 writes; scheduled errors may expose a fixed code and opaque run ID only.
++Do not refresh hashes merely to pass the check. This is an integrity/review gate,
++not a proof about arbitrary future code, manual exports or provider telemetry.
++The tool prints its test/fixture/operator exclusions. No access-policy change or
++deployment is performed by this check.
+diff --git a/worker/scripts/backup-output-review.json b/worker/scripts/backup-output-review.json
+new file mode 100644
+index 0000000..79fc64f
+--- /dev/null
++++ b/worker/scripts/backup-output-review.json
+@@ -0,0 +1,8 @@
++{
++  "reviewed_base": "7c9d9ca16b418ac7c218e5827540d3fed3c8d7a8",
++  "review": "Read index.ts and run.ts in full. Realm reads send query selectors; manifest, frontier and run payloads are persisted only by BACKUP.put. Scheduled entry returns no payload and errors with a fixed code plus opaque run ID. Review output paths before changing these hashes.",
++  "sha256": {
++    "index.ts": "f5132275f31c31310b5d7906c94b3a10024a7abb828861755c0e13aefa4fba82",
++    "run.ts": "12eef614aeb8265e30af4c02533b161d586269ba7e4e2f0e35fe401d3f021815"
++  }
++}
+diff --git a/worker/scripts/check-backup-boundary.sh b/worker/scripts/check-backup-boundary.sh
+index b961381..1eae39f 100644
+--- a/worker/scripts/check-backup-boundary.sh
++++ b/worker/scripts/check-backup-boundary.sh
+@@ -1,7 +1,8 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
+ cd "$(dirname "$0")/.."
+-base="${1:-b75ac47afe03a78c809b0e3c91b87f790f1598b8}"
++base="${1:-7c9d9ca16b418ac7c218e5827540d3fed3c8d7a8}"
++python3 scripts/check-backup-output.py
+ python3 - <<'PY'
+ from pathlib import Path
+ import re
+diff --git a/worker/scripts/check-backup-output.py b/worker/scripts/check-backup-output.py
+new file mode 100644
+index 0000000..518d7cd
+--- /dev/null
++++ b/worker/scripts/check-backup-output.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++"""Integrity gate for the reviewed production output paths; not a dataflow proof."""
++import argparse
++import hashlib
++import json
++from pathlib import Path
++
++worker = Path(__file__).resolve().parent.parent
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument('--backup-dir', type=Path, default=worker / 'backup')
++args = parser.parse_args()
++review = json.loads((worker / 'scripts/backup-output-review.json').read_text())
++expected = review['sha256']
++actual = {}
++errors = []
++for path in args.backup_dir.rglob('*'):
++    name = path.relative_to(args.backup_dir).as_posix()
++    if path.is_symlink():
++        errors.append(f'symlink is unreviewed: {name}')
++    elif path.is_file() and path.suffix != '.md':
++        actual[name] = hashlib.sha256(path.read_bytes()).hexdigest()
++for name in sorted(set(expected) | set(actual)):
++    if expected.get(name) != actual.get(name):
++        errors.append(f'unreviewed source or missing module: {name}')
++print('D4 covers the complete production backup source set; excludes tests, fixture artifacts, operator exports and provider telemetry.')
++if errors:
++    for error in errors:
++        print('D4 FAIL:', error)
++    print('An output path may have changed. Before updating hashes, review every output: only realm READ requests and R2 writes are allowed; scheduled errors may include only fixed codes and an opaque run ID. No manifest, inventory or run payload to console, HTTP responses, external requests or extra bindings. Do not refresh hashes merely to clear this gate.')
++    raise SystemExit(1)
++print(f'D4 PASS: {len(actual)} production modules match the reviewed bucket-only artifact output paths.')
+diff --git a/worker/test/backup-output-boundary.test.ts b/worker/test/backup-output-boundary.test.ts
+new file mode 100644
+index 0000000..6640be4
+--- /dev/null
++++ b/worker/test/backup-output-boundary.test.ts
+@@ -0,0 +1,30 @@
++import { mkdtempSync, cpSync, appendFileSync, writeFileSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { spawnSync } from "node:child_process";
++import { fileURLToPath } from "node:url";
++import { expect, it } from "vitest";
++
++it("D4: reviewed output paths pass; debug manifest, aliased sink and new module fail", () => {
++  const root = mkdtempSync(join(tmpdir(), "backup-output-control-"));
++  const script = fileURLToPath(new URL("../scripts/check-backup-output.py", import.meta.url));
++  const source = fileURLToPath(new URL("../backup/", import.meta.url));
++  const run = () => spawnSync("python3", [script, "--backup-dir", root], { encoding: "utf8" });
++  try {
++    cpSync(source, root, { recursive: true });
++    expect(run().status).toBe(0);
++    for (const mutation of ['\nconsole.log("manifest", {log_ids: ["fixture-only"]});\n', '\nconst output = console.log; output("fixture-only");\n']) {
++      cpSync(source, root, { recursive: true });
++      appendFileSync(join(root, "run.ts"), mutation);
++      const red = run();
++      expect(red.status).toBe(1);
++      expect(red.stdout).toContain("An output path may have changed");
++      console.info("D4 injected fixture output rejected", red.stdout.trim());
++    }
++    cpSync(source, root, { recursive: true });
++    writeFileSync(join(root, "debug.js"), 'console.log("fixture-only")');
++    expect(run().status).toBe(1);
++    rmSync(join(root, "debug.js"));
++    expect(run().status).toBe(0);
++  } finally { rmSync(root, { recursive: true, force: true }); }
++});
+diff --git a/worker/test/backup/backup.workers.test.ts b/worker/test/backup/backup.workers.test.ts
+index a56f858..e706554 100644
+--- a/worker/test/backup/backup.workers.test.ts
++++ b/worker/test/backup/backup.workers.test.ts
+@@ -2,6 +2,7 @@ import { env, SELF, listDurableObjectIds, runInDurableObject, createScheduledCon
+ import { beforeEach, describe, expect, it } from "vitest";
+ import { runBackup, type BackupEnv } from "../../backup/run";
+ import worker from "../../backup/index";
++import { derive, editor, knownOrg, known } from "./identity-fixture";
+ import { RealmStore } from "../../src/realm/store";
+ 
+ declare module "cloudflare:test" {
+@@ -73,6 +74,29 @@ beforeEach(async () => {
+ });
+ 
+ describe("BACKUP-1b-ii", () => {
++  it("D1: fixture listing confirms guessed membership after known Elixir controls", async () => {
++    for (const [facet, expected] of Object.entries(known)) {
++      expect(await derive(knownOrg, facet), `known Elixir vector ${facet}`).toBe(expected);
++    }
++    expect(await derive(knownOrg, "session_cell", "s1")).toBe("5de31f25-9992-7d83-838a-dfb4754ca968");
++    // Independent Python chain supplied by plan #29918, not generated by this helper.
++    expect(await editor("acme", "alice", 1)).toBe("c56aa08b-7079-71a3-ad99-1992ce98549e");
++    const { realm, write } = await createRealm();
++    const cell = await editor("fixture-org-backup-keys", "fixture-member-alice", 1);
++    await addLog(realm, write, cell);
++    await append(realm, write, cell, "fixture-writer", 1);
++    const run = await runBackup(env);
++    expect(run.outcome).toBe("complete");
++    const keys = await listing(realm);
++    // Observe only key names, never document bytes, when testing the guessed membership.
++    const listedLogs = new Set(keys.filter((key) => key.endsWith("/frontier.json"))
++      .map((key) => decodeURIComponent(key.split("/")[1] ?? "")));
++    expect(listedLogs.has(await editor("fixture-org-backup-keys", "fixture-member-alice", 1))).toBe(true);
++    expect(listedLogs.has(await editor("fixture-org-backup-keys", "fixture-member-bob", 1))).toBe(false);
++    expect(listedLogs.has(await editor("fixture-org-backup-keys", "fixture-member-alice", 2))).toBe(false);
++    console.info("D1 fixture only: known Elixir vectors=10; independent chain=1; guessed member present=true; wrong member=false; wrong generation=false");
++  });
++
+   it("empty log ID stops backup explicitly and differs from an absent pagination cursor", async () => {
+     const { realm, write, read } = await createRealm();
+     await addLog(realm, write, "");
+diff --git a/worker/test/backup/identity-fixture.ts b/worker/test/backup/identity-fixture.ts
+new file mode 100644
+index 0000000..0a24793
+--- /dev/null
++++ b/worker/test/backup/identity-fixture.ts
+@@ -0,0 +1,32 @@
++// Fixture-only reimplementation of commonplace-next Identity/Membership at
++// 94abc915604cf93ee6c604d33bc2e14ae2d61441. Never import into production.
++const namespace = "commonplace-next.organization.";
++async function digest(input: string): Promise<Uint8Array> {
++  return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input)));
++}
++const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
++export async function derive(org: string, facet: string, discriminator?: string): Promise<string> {
++  const bytes = (await digest(`${namespace}${facet}:${org}${discriminator === undefined ? "" : `:${discriminator}`}`)).slice(0, 16);
++  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70;
++  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
++  const id = hex(bytes);
++  return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
++}
++export async function editor(org: string, member: string, generation: number): Promise<string> {
++  const epoch = hex(await digest(`commonplace-next.organization.membership.${org}:${member}:${generation}`));
++  return derive(org, "editor_cell", epoch);
++}
++// Literal Elixir-produced vectors from facet_stability_test.exs at the pinned
++// source; that test records these as captured before facet retirement at b1842e1.
++export const knownOrg = "01990000-0000-7000-8000-00000000000a";
++export const known = {
++  authority_cell: "8bdd039d-1f22-75b7-bb02-eefa76a9bbac",
++  editor_cell: "1d916912-ca42-7fb4-bacf-966bcd8237fb",
++  editor_root_directory: "410901ed-9546-7b05-9845-87a5e9bcd0e3",
++  owner_membership: "785b246c-0795-7d27-9f4b-be99152e5d42",
++  root_directory: "c40583de-df2d-7970-a6c3-199586a801b7",
++  seed_document: "429abb11-7d19-7c2a-9bbf-ad5c1fde7d8a",
++  session_cell: "5dcc7035-54b0-7ba9-8363-5d240beb9ee7",
++  space: "754e1ce2-cd6e-7d37-b32b-3c664453ecb7",
++  workspace_cell: "3d949c46-8d39-735a-ac4a-5cb79ba39904",
++};
