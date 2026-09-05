@@ -21,10 +21,12 @@
 /** The registry's write side. Implemented over KV in production; a fake in tests. */
 export interface RealmRegistry {
   put(realmId: string, readCapability: string): Promise<void>;
+  delete(realmId: string): Promise<void>;
 }
 
 /**
- * What happened to the registration, ALWAYS reported in the create response.
+ * Registry outcomes: registration is ALWAYS reported in the create response;
+ * removal failures are reported in the error response (successful removal is empty 204).
  *
  * ⭐⭐ EVERY OUTCOME IS NAMED AND NONE IS SILENT. A realm that is created but not registered is
  * exactly the state the count control exists to catch, and the caller learns it at the moment it
@@ -34,12 +36,17 @@ export type RegistryOutcome =
   | "registered"
   | "no_registry_bound"
   | "already_minted"
-  | "registry_write_failed";
+  | "registry_write_failed"
+  | "deleted"
+  | "registry_delete_failed";
 
 /** Adapt a KV namespace to the registry interface; `undefined` when the binding is absent. */
 export function kvRegistry(kv: KVNamespace | undefined): RealmRegistry | undefined {
   if (kv === undefined) return undefined;
   return {
+    async delete(realmId) {
+      await kv.delete(realmId);
+    },
     async put(realmId, readCapability) {
       await kv.put(realmId, JSON.stringify({
         realm_id: realmId,

@@ -185,6 +185,15 @@ function fail(code: string, status: number, details?: Record<string, string>): R
   );
 }
 
+/** Both lifecycle operations must hold the DO input gate through their external KV await.
+ * Otherwise recreation can register while an older removal is awaiting KV, and that
+ * removal can erase the new live realm's row. Ordinary requests need no extra gate.
+ */
+export function isRealmLifecycleRequest(request: Request): boolean {
+  const path = new URL(request.url).pathname;
+  return path === "/realm/create" || (request.method === "DELETE" && path === "/");
+}
+
 export async function handlePublicRealmRequest(
   request: Request,
   auth: RealmAuth,
@@ -193,6 +202,7 @@ export async function handlePublicRealmRequest(
   // ⛔ DEFAULT IS THE SAFE ONE. A caller that forgets this flag gets the REFUSAL, not the silent
   // 201 -- the unsafe behaviour has to be asked for by name.
   allowUnboundRegistry = false,
+  wipeStorage?: () => Promise<void>,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (path === "/realm/create" && request.headers.get(REALM_CREATE_HEADER) === "1") {
@@ -232,9 +242,25 @@ export async function handlePublicRealmRequest(
   // The create endpoint is gateway-internal and never opens with a realm secret.
   if (path === "/realm/create") return fail("not_found", 404);
 
+  const isRemoval = request.method === "DELETE" && path === "/";
   const result = await auth.authorize(request);
-  if (result === "not_found") return fail("not_found", 404);
+  // Only exact removal may answer at all after the realm's auth tables are gone.
+  if (result === "not_found" && !isRemoval) return fail("not_found", 404);
   if (result === "unauthorized") return fail("unauthorized", 401);
+
+  // ⛔⛔ AN UNAUTHENTICATED REMOVAL HAS NO SIDE EFFECT. Reaching here with `not_found` means the
+  // realm's auth table is absent, so NOTHING was proved about the caller -- `authorize` returned
+  // before comparing any secret. The state the caller asked for ALREADY HOLDS, so 204 is honest and
+  // the request must touch nothing on the way out.
+  // ⚠️ THIS IS NARROWER THAN IT LOOKS AND THE DIFFERENCE IS THE POINT: 204 here and a registry
+  // delete here are ONE CODE PATH, and the second sentence is "any caller who guesses a realm id
+  // can erase its registry row". An ORPHAN row is the safer of the two states -- it is VISIBLE to
+  // `BACKUP-1b-iii`'s reconciliation, which removes rows whose DO reads not_found under the
+  // Worker's OWN binding, rather than sweepable by an unauthenticated guess.
+  // ⏳ COST, STATED: until 1b-iii lands an orphan row is unclearable in band. The in-band repair
+  // would be a gateway-authenticated operator retry, and that lane is a STOP boundary in this
+  // round -- so it is 1b-iii's design question, not this branch's. (plan row 941/941-bis.)
+  if (result === "not_found") return new Response(null, { status: 204 });
 
   // ⭐ STORE-3b's ONE DECISION POINT, and it lives HERE rather than at either caller. This function
   // is called from BOTH `realm/node.ts` and `realm/container.ts`; a scope check placed in a caller
@@ -264,6 +290,32 @@ export async function handlePublicRealmRequest(
     return fail("method_not_allowed", 405);
   }
 
+  if (isRemoval) {
+    // The gateway overwrites this from the canonical route, never from client headers.
+    // It survives SQL deletion so a retry can remove an orphan registry row.
+    const realmId = request.headers.get(REALM_ID_HEADER);
+    if (realmId === null || realmId.length === 0) return fail("malformed_request", 400);
+    if (registry === undefined && !allowUnboundRegistry) {
+      return fail("registry_not_bound", 503, { binding: "REALM_REGISTRY" });
+    }
+    if (wipeStorage === undefined) return fail("removal_not_configured", 503);
+
+    // Registry FIRST then storage failure leaves a LIVE AND UNREGISTERED realm:
+    // reachable with its capability, absent from the backup inventory and invisible
+    // to every check OF that inventory. It manufactures the BACKUP-1b-iii
+    // reconciliation hole. Reverse failure is benign and self-announcing: storage
+    // gone, an orphan registry row, and the count control reads one too many.
+    await wipeStorage(); // The DO supplies state.storage.deleteAll(); await it FIRST.
+    const outcome: RegistryOutcome = await unregisterRealm(registry, realmId);
+    if (outcome === "registry_delete_failed") {
+      return Response.json(
+        { ok: false, error: { code: outcome }, registry: outcome },
+        { status: 503 },
+      );
+    }
+    return new Response(null, { status: 204 });
+  }
+
   const forwarded = new Request(request);
   forwarded.headers.delete("authorization");
   forwarded.headers.delete(REALM_CREATE_HEADER);
@@ -271,6 +323,19 @@ export async function handlePublicRealmRequest(
   return await authorized(forwarded);
 }
 
+
+async function unregisterRealm(
+  registry: RealmRegistry | undefined,
+  realmId: string,
+): Promise<RegistryOutcome> {
+  if (registry === undefined) return "no_registry_bound";
+  try {
+    await registry.delete(realmId);
+    return "deleted";
+  } catch {
+    return "registry_delete_failed";
+  }
+}
 
 /**
  * Mint this realm's read capability and hand it to the registry, reporting WHICH outcome occurred.
