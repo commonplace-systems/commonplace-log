@@ -8,6 +8,12 @@
   "compatibility_flags": ["nodejs_compat"],
   // Development deployment only. This must be "" or absent in every other deployment.
   "vars": { "REALM_TEST_LEVERS": "1" },
+  // BACKUP-1b-i: the realm registry. Created 2026-09-05 by boss-clod under the deploy order at
+  // commonplace-plan docs/plans/orders/2026-09-05-BACKUP-1b-i-deploy-order.md.
+  // Every VALUE in this namespace is a realm read capability: the id may be recorded, no value may.
+  "kv_namespaces": [
+    { "binding": "REALM_REGISTRY", "id": "98aa81a3f3e644d6a6893eeefdd779d5" }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "COMMONPLACE_LOG", "class_name": "CommonplaceLog" },
