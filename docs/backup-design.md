@@ -267,6 +267,8 @@ that confidentiality is less important than durability, or that A cannot be made
 reliable. A remains appropriate if a future requirement explicitly permits index
 access while forbidding identity disclosure; that would require a designed,
 recoverable mapping and a review of manifest disclosure too.
+The random-prefix and unchanged-manifest gaps are defects in how the brief
+specified A, not reasons to prefer B over a correctly specified opaque scheme.
 
 **Custody:** bucket contents AND listings must be handled as sensitive as the
 membership roster and document inventory. Never paste a live index, manifest or
