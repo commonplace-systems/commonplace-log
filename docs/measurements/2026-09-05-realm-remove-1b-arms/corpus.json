@@ -1,0 +1,16 @@
+{
+  "79edae4a565976e3c9a363902165548b72dc584d": {
+    "realm_ts_files": 11,
+    "registry_lines": 51,
+    "read_routes": "\"/frontier\",\n  \"/read-set\",\n  \"/read-writer\",\n  \"/tail-local\",",
+    "deleteAll_occurrences": 0,
+    "public_handler_call_sites": 2
+  },
+  "HEAD": {
+    "realm_ts_files": 13,
+    "registry_lines": 58,
+    "read_routes": "\"/frontier\",\n  \"/read-set\",\n  \"/read-writer\",\n  \"/tail-local\",",
+    "deleteAll_occurrences": 3,
+    "public_handler_call_sites": 2
+  }
+}

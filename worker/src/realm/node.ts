@@ -2,7 +2,7 @@ import { Container } from "@cloudflare/containers";
 import { containerFetchWithCapacityMapping } from "./capacity";
 import { handleRealmRequest } from "./http";
 import { storageInternal } from "./outbound";
-import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
+import { handlePublicRealmRequest, isRealmLifecycleRequest, RealmAuth } from "./realm_auth";
 import { kvRegistry } from "./registry";
 import { RealmStore } from "./store";
 
@@ -29,9 +29,12 @@ export class RealmNode extends Container<Env> {
   private readonly auth = new RealmAuth(this.ctx.storage.sql, this.ctx.storage);
 
   override async fetch(request: Request): Promise<Response> {
-    return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
+    const dispatch = () => handlePublicRealmRequest(request, this.auth, async (authorized) =>
       await this.fetchAuthorized(authorized),
-      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1");
+      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1",
+      () => this.ctx.storage.deleteAll());
+    if (isRealmLifecycleRequest(request)) return await this.ctx.blockConcurrencyWhile(dispatch);
+    return await dispatch();
   }
 
   /** Platform-authenticated storage entrypoint used only by the Container outbound handler. */

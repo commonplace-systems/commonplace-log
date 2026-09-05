@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { handleRealmRequest } from "./http";
-import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
+import { handlePublicRealmRequest, isRealmLifecycleRequest, RealmAuth } from "./realm_auth";
 import { kvRegistry } from "./registry";
 import { RealmStore } from "./store";
 
@@ -16,9 +16,12 @@ export class RealmContainer extends DurableObject<Env> {
   private readonly auth = new RealmAuth(this.ctx.storage.sql, this.ctx.storage);
 
   override async fetch(request: Request): Promise<Response> {
-    return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
+    const dispatch = () => handlePublicRealmRequest(request, this.auth, async (authorized) =>
       await handleRealmRequest(authorized, this.store),
-      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1");
+      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1",
+      () => this.ctx.storage.deleteAll());
+    if (isRealmLifecycleRequest(request)) return await this.ctx.blockConcurrencyWhile(dispatch);
+    return await dispatch();
   }
 
   /**

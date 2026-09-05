@@ -15,6 +15,9 @@ function fakeRegistry(failing = false): RealmRegistry & { entries: Map<string, s
       if (failing) throw new Error("KV unavailable");
       entries.set(realmId, readCapability);
     },
+    async delete(realmId) {
+      entries.delete(realmId);
+    },
   };
 }
 

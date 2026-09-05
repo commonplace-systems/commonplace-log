@@ -1,0 +1,29 @@
+diff --git a/worker/test/realm/delete_all.workers.test.ts b/worker/test/realm/delete_all.workers.test.ts
+index 035bcbb..9500cba 100644
+--- a/worker/test/realm/delete_all.workers.test.ts
++++ b/worker/test/realm/delete_all.workers.test.ts
+@@ -63,7 +63,10 @@ function tableCount(sql: SqlStorage, name: string): number {
+   const rows = [
+     ...sql.exec("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name = ?", name),
+   ];
+-  return Number(rows[0].n);
++  expect(rows).toHaveLength(1);
++  const row = rows[0];
++  if (row === undefined) throw new Error("table-count query returned no row");
++  return Number(row.n);
+ }
+ 
+ describe("REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value?", () => {
+@@ -96,7 +99,11 @@ describe("REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value?", () =
+       // POSITIVE CONTROL — both tables exist and the row is readable.
+       expect(tableCount(sql, "realm_meta")).toBe(1);
+       expect(tableCount(sql, "probe")).toBe(1);
+-      expect([...sql.exec("SELECT v FROM probe WHERE k = 'a'")][0].v).toBe("alpha");
++      const probeRows = [...sql.exec("SELECT v FROM probe WHERE k = 'a'")];
++      expect(probeRows).toHaveLength(1);
++      const probeRow = probeRows[0];
++      if (probeRow === undefined) throw new Error("positive-control probe row is absent");
++      expect(probeRow.v).toBe("alpha");
+ 
+       await storage.deleteAll();
+ 

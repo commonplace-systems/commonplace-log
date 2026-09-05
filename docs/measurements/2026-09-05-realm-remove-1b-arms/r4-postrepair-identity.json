@@ -1,0 +1,18 @@
+{
+  "head": "629efde171f8305dbdb8e607c23ccecc7fc9ab95",
+  "command": [
+    "npx",
+    "vitest",
+    "run",
+    "test/realm/realm_remove.workers.test.ts",
+    "-t",
+    "R4: registry failure",
+    "--reporter=verbose"
+  ],
+  "rc": {
+    "mutation": 1,
+    "restored": 0
+  },
+  "restored_source_sha256": "c5c4ec1159c1fc4d88a47d1ab29e304b56d91dab50fb5bd6e6ab3dc28be97d63",
+  "unchanged_repaired_test_sha256": "118ec16f8c9f1dae25e161838eee18735843f3e6fa65772394bc52fe60084785"
+}

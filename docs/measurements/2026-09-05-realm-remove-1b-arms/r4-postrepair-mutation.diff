@@ -1,0 +1,13 @@
+diff --git a/worker/src/realm/realm_auth.ts b/worker/src/realm/realm_auth.ts
+index 7ea2f78..4f2d7ba 100644
+--- a/worker/src/realm/realm_auth.ts
++++ b/worker/src/realm/realm_auth.ts
+@@ -260,7 +260,7 @@ export async function handlePublicRealmRequest(
+   // ⏳ COST, STATED: until 1b-iii lands an orphan row is unclearable in band. The in-band repair
+   // would be a gateway-authenticated operator retry, and that lane is a STOP boundary in this
+   // round -- so it is 1b-iii's design question, not this branch's. (plan row 941/941-bis.)
+-  if (result === "not_found") return new Response(null, { status: 204 });
++  // Verification mutation: remove the inert not_found return.
+ 
+   // ⭐ STORE-3b's ONE DECISION POINT, and it lives HERE rather than at either caller. This function
+   // is called from BOTH `realm/node.ts` and `realm/container.ts`; a scope check placed in a caller

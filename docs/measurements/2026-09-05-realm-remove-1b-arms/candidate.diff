@@ -1,0 +1,766 @@
+diff --git a/worker/src/index.ts b/worker/src/index.ts
+index 5ae0723..4dfd470 100644
+--- a/worker/src/index.ts
++++ b/worker/src/index.ts
+@@ -152,6 +152,10 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
+   const forwarded = new Request(target, request);
+   forwarded.headers.delete(REALM_CREATE_HEADER);
+   forwarded.headers.delete(REALM_ID_HEADER);
++  if (request.method === "DELETE" && url.pathname === `${REALM_PREFIX}${route.realmId}`) {
++    // Trusted identity for removal/retry even after the DO's SQL auth metadata is gone.
++    forwarded.headers.set(REALM_ID_HEADER, route.realmId);
++  }
+   return await realmStub(env, route.realmId).fetch(forwarded);
+ }
+ 
+diff --git a/worker/src/realm/container.ts b/worker/src/realm/container.ts
+index 44c50e6..c72d359 100644
+--- a/worker/src/realm/container.ts
++++ b/worker/src/realm/container.ts
+@@ -1,6 +1,6 @@
+ import { DurableObject } from "cloudflare:workers";
+ import { handleRealmRequest } from "./http";
+-import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
++import { handlePublicRealmRequest, isRealmLifecycleRequest, RealmAuth } from "./realm_auth";
+ import { kvRegistry } from "./registry";
+ import { RealmStore } from "./store";
+ 
+@@ -16,9 +16,12 @@ export class RealmContainer extends DurableObject<Env> {
+   private readonly auth = new RealmAuth(this.ctx.storage.sql, this.ctx.storage);
+ 
+   override async fetch(request: Request): Promise<Response> {
+-    return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
++    const dispatch = () => handlePublicRealmRequest(request, this.auth, async (authorized) =>
+       await handleRealmRequest(authorized, this.store),
+-      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1");
++      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1",
++      () => this.ctx.storage.deleteAll());
++    if (isRealmLifecycleRequest(request)) return await this.ctx.blockConcurrencyWhile(dispatch);
++    return await dispatch();
+   }
+ 
+   /**
+diff --git a/worker/src/realm/node.ts b/worker/src/realm/node.ts
+index f9dda25..3aad3b7 100644
+--- a/worker/src/realm/node.ts
++++ b/worker/src/realm/node.ts
+@@ -2,7 +2,7 @@ import { Container } from "@cloudflare/containers";
+ import { containerFetchWithCapacityMapping } from "./capacity";
+ import { handleRealmRequest } from "./http";
+ import { storageInternal } from "./outbound";
+-import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
++import { handlePublicRealmRequest, isRealmLifecycleRequest, RealmAuth } from "./realm_auth";
+ import { kvRegistry } from "./registry";
+ import { RealmStore } from "./store";
+ 
+@@ -29,9 +29,12 @@ export class RealmNode extends Container<Env> {
+   private readonly auth = new RealmAuth(this.ctx.storage.sql, this.ctx.storage);
+ 
+   override async fetch(request: Request): Promise<Response> {
+-    return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
++    const dispatch = () => handlePublicRealmRequest(request, this.auth, async (authorized) =>
+       await this.fetchAuthorized(authorized),
+-      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1");
++      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1",
++      () => this.ctx.storage.deleteAll());
++    if (isRealmLifecycleRequest(request)) return await this.ctx.blockConcurrencyWhile(dispatch);
++    return await dispatch();
+   }
+ 
+   /** Platform-authenticated storage entrypoint used only by the Container outbound handler. */
+diff --git a/worker/src/realm/realm_auth.ts b/worker/src/realm/realm_auth.ts
+index 0dd0d0c..7ea2f78 100644
+--- a/worker/src/realm/realm_auth.ts
++++ b/worker/src/realm/realm_auth.ts
+@@ -185,6 +185,15 @@ function fail(code: string, status: number, details?: Record<string, string>): R
+   );
+ }
+ 
++/** Both lifecycle operations must hold the DO input gate through their external KV await.
++ * Otherwise recreation can register while an older removal is awaiting KV, and that
++ * removal can erase the new live realm's row. Ordinary requests need no extra gate.
++ */
++export function isRealmLifecycleRequest(request: Request): boolean {
++  const path = new URL(request.url).pathname;
++  return path === "/realm/create" || (request.method === "DELETE" && path === "/");
++}
++
+ export async function handlePublicRealmRequest(
+   request: Request,
+   auth: RealmAuth,
+@@ -193,6 +202,7 @@ export async function handlePublicRealmRequest(
+   // ⛔ DEFAULT IS THE SAFE ONE. A caller that forgets this flag gets the REFUSAL, not the silent
+   // 201 -- the unsafe behaviour has to be asked for by name.
+   allowUnboundRegistry = false,
++  wipeStorage?: () => Promise<void>,
+ ): Promise<Response> {
+   const path = new URL(request.url).pathname;
+   if (path === "/realm/create" && request.headers.get(REALM_CREATE_HEADER) === "1") {
+@@ -232,10 +242,26 @@ export async function handlePublicRealmRequest(
+   // The create endpoint is gateway-internal and never opens with a realm secret.
+   if (path === "/realm/create") return fail("not_found", 404);
+ 
++  const isRemoval = request.method === "DELETE" && path === "/";
+   const result = await auth.authorize(request);
+-  if (result === "not_found") return fail("not_found", 404);
++  // Only exact removal may answer at all after the realm's auth tables are gone.
++  if (result === "not_found" && !isRemoval) return fail("not_found", 404);
+   if (result === "unauthorized") return fail("unauthorized", 401);
+ 
++  // ⛔⛔ AN UNAUTHENTICATED REMOVAL HAS NO SIDE EFFECT. Reaching here with `not_found` means the
++  // realm's auth table is absent, so NOTHING was proved about the caller -- `authorize` returned
++  // before comparing any secret. The state the caller asked for ALREADY HOLDS, so 204 is honest and
++  // the request must touch nothing on the way out.
++  // ⚠️ THIS IS NARROWER THAN IT LOOKS AND THE DIFFERENCE IS THE POINT: 204 here and a registry
++  // delete here are ONE CODE PATH, and the second sentence is "any caller who guesses a realm id
++  // can erase its registry row". An ORPHAN row is the safer of the two states -- it is VISIBLE to
++  // `BACKUP-1b-iii`'s reconciliation, which removes rows whose DO reads not_found under the
++  // Worker's OWN binding, rather than sweepable by an unauthenticated guess.
++  // ⏳ COST, STATED: until 1b-iii lands an orphan row is unclearable in band. The in-band repair
++  // would be a gateway-authenticated operator retry, and that lane is a STOP boundary in this
++  // round -- so it is 1b-iii's design question, not this branch's. (plan row 941/941-bis.)
++  if (result === "not_found") return new Response(null, { status: 204 });
++
+   // ⭐ STORE-3b's ONE DECISION POINT, and it lives HERE rather than at either caller. This function
+   // is called from BOTH `realm/node.ts` and `realm/container.ts`; a scope check placed in a caller
+   // would leave the other lane unscoped, and the two lanes would disagree with nothing to notice.
+@@ -264,6 +290,32 @@ export async function handlePublicRealmRequest(
+     return fail("method_not_allowed", 405);
+   }
+ 
++  if (isRemoval) {
++    // The gateway overwrites this from the canonical route, never from client headers.
++    // It survives SQL deletion so a retry can remove an orphan registry row.
++    const realmId = request.headers.get(REALM_ID_HEADER);
++    if (realmId === null || realmId.length === 0) return fail("malformed_request", 400);
++    if (registry === undefined && !allowUnboundRegistry) {
++      return fail("registry_not_bound", 503, { binding: "REALM_REGISTRY" });
++    }
++    if (wipeStorage === undefined) return fail("removal_not_configured", 503);
++
++    // Registry FIRST then storage failure leaves a LIVE AND UNREGISTERED realm:
++    // reachable with its capability, absent from the backup inventory and invisible
++    // to every check OF that inventory. It manufactures the BACKUP-1b-iii
++    // reconciliation hole. Reverse failure is benign and self-announcing: storage
++    // gone, an orphan registry row, and the count control reads one too many.
++    await wipeStorage(); // The DO supplies state.storage.deleteAll(); await it FIRST.
++    const outcome: RegistryOutcome = await unregisterRealm(registry, realmId);
++    if (outcome === "registry_delete_failed") {
++      return Response.json(
++        { ok: false, error: { code: outcome }, registry: outcome },
++        { status: 503 },
++      );
++    }
++    return new Response(null, { status: 204 });
++  }
++
+   const forwarded = new Request(request);
+   forwarded.headers.delete("authorization");
+   forwarded.headers.delete(REALM_CREATE_HEADER);
+@@ -272,6 +324,19 @@ export async function handlePublicRealmRequest(
+ }
+ 
+ 
++async function unregisterRealm(
++  registry: RealmRegistry | undefined,
++  realmId: string,
++): Promise<RegistryOutcome> {
++  if (registry === undefined) return "no_registry_bound";
++  try {
++    await registry.delete(realmId);
++    return "deleted";
++  } catch {
++    return "registry_delete_failed";
++  }
++}
++
+ /**
+  * Mint this realm's read capability and hand it to the registry, reporting WHICH outcome occurred.
+  *
+diff --git a/worker/src/realm/registry.ts b/worker/src/realm/registry.ts
+index 9011245..89ddf93 100644
+--- a/worker/src/realm/registry.ts
++++ b/worker/src/realm/registry.ts
+@@ -21,10 +21,12 @@
+ /** The registry's write side. Implemented over KV in production; a fake in tests. */
+ export interface RealmRegistry {
+   put(realmId: string, readCapability: string): Promise<void>;
++  delete(realmId: string): Promise<void>;
+ }
+ 
+ /**
+- * What happened to the registration, ALWAYS reported in the create response.
++ * Registry outcomes: registration is ALWAYS reported in the create response;
++ * removal failures are reported in the error response (successful removal is empty 204).
+  *
+  * ⭐⭐ EVERY OUTCOME IS NAMED AND NONE IS SILENT. A realm that is created but not registered is
+  * exactly the state the count control exists to catch, and the caller learns it at the moment it
+@@ -34,12 +36,17 @@ export type RegistryOutcome =
+   | "registered"
+   | "no_registry_bound"
+   | "already_minted"
+-  | "registry_write_failed";
++  | "registry_write_failed"
++  | "deleted"
++  | "registry_delete_failed";
+ 
+ /** Adapt a KV namespace to the registry interface; `undefined` when the binding is absent. */
+ export function kvRegistry(kv: KVNamespace | undefined): RealmRegistry | undefined {
+   if (kv === undefined) return undefined;
+   return {
++    async delete(realmId) {
++      await kv.delete(realmId);
++    },
+     async put(realmId, readCapability) {
+       await kv.put(realmId, JSON.stringify({
+         realm_id: realmId,
+diff --git a/worker/test/realm/delete_all.workers.test.ts b/worker/test/realm/delete_all.workers.test.ts
+new file mode 100644
+index 0000000..035bcbb
+--- /dev/null
++++ b/worker/test/realm/delete_all.workers.test.ts
+@@ -0,0 +1,129 @@
++// REALM-REMOVE-1a — the load-bearing premise, MEASURED rather than quoted.
++//
++// The Cloudflare control plane has no DELETE for a Durable Object instance (two endpoints, both
++// GET), so the only per-realm removal mechanism is `state.storage.deleteAll()` from INSIDE the
++// object. Cloudflare's storage docs say deleteAll "removes the entire contents of a Durable
++// Object's private SQLite database, including both SQL data and key-value data" -- but that is a
++// docs sentence, and this Worker keeps the realm in SQL (`realm_meta`), not in the KV side.
++//
++// ⭐ If deleteAll cleared only the key-value half, `realm_meta` would survive, `authorize()` would
++// still find the stored hash, and a "removed" realm would still authenticate. That is the failure
++// this file exists to rule out.
++//
++// ⛔ EVERY ARM CARRIES ITS POSITIVE CONTROL IN THE SAME TEST BODY: the pre-delete assertion runs
++// against the same object, so "gone after" cannot be confused with "never there".
++import { env, runInDurableObject } from "cloudflare:test";
++import { describe, expect, it } from "vitest";
++import { REALM_CREATE_HEADER, RealmAuth, handlePublicRealmRequest } from "../../src/realm/realm_auth";
++import { initRealmMetaSchema } from "../../src/realm/schema";
++
++let sequence = 0;
++
++async function withRealm<T>(
++  fn: (ctx: {
++    auth: RealmAuth;
++    storage: DurableObjectStorage;
++    sql: SqlStorage;
++    create: () => Promise<Response>;
++    call: (secret: string) => Promise<Response>;
++  }) => Promise<T>,
++): Promise<T> {
++  const realmId = `deleteall-${Date.now()}-${sequence++}`;
++  const stub = env.COMMONPLACE_LOG.get(env.COMMONPLACE_LOG.idFromName(realmId));
++  return await runInDurableObject(stub, async (_instance, state) => {
++    const sql = state.storage.sql;
++    initRealmMetaSchema(sql);
++    const auth = new RealmAuth(sql, state.storage);
++    const inner = async () => Response.json({ ok: true, reached: true }, { status: 200 });
++    const create = () =>
++      handlePublicRealmRequest(
++        new Request("https://realm.invalid/realm/create", {
++          method: "POST",
++          headers: { [REALM_CREATE_HEADER]: "1", "x-commonplace-realm-id": realmId },
++        }),
++        auth,
++        inner,
++        undefined,
++        true, // allowUnboundRegistry: this file measures storage, not registration
++      );
++    const call = (secret: string) =>
++      handlePublicRealmRequest(
++        new Request("https://realm.invalid/frontier", {
++          method: "POST",
++          headers: { authorization: `Bearer ${secret}` },
++        }),
++        auth,
++        inner,
++      );
++    return await fn({ auth, storage: state.storage, sql, create, call });
++  });
++}
++
++function tableCount(sql: SqlStorage, name: string): number {
++  const rows = [
++    ...sql.exec("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name = ?", name),
++  ];
++  return Number(rows[0].n);
++}
++
++describe("REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value?", () => {
++  it("D1 removes the realm: a write capability that authorised before reads not_found after", async () => {
++    await withRealm(async ({ auth, storage, create, call }) => {
++      const created = await create();
++      expect(created.status).toBe(201);
++      const secret = (await created.json<{ realm_secret: string }>()).realm_secret;
++
++      // POSITIVE CONTROL — the realm is really there before the act.
++      expect(await auth.authorize(bearer(secret))).toBe("write");
++      expect((await call(secret)).status).toBe(200);
++
++      await storage.deleteAll();
++
++      // THE MEASUREMENT. `not_found` (not `unauthorized`) is the discriminator: it means the
++      // stored hash is GONE, not that a wrong secret was presented.
++      expect(await auth.authorize(bearer(secret))).toBe("not_found");
++      expect((await call(secret)).status).toBe(404);
++    });
++  });
++
++  it("D2 drops the SQL TABLE itself, not merely its rows", async () => {
++    await withRealm(async ({ sql, storage, create }) => {
++      expect((await create()).status).toBe(201);
++
++      sql.exec("CREATE TABLE probe (k TEXT PRIMARY KEY, v TEXT)");
++      sql.exec("INSERT INTO probe (k, v) VALUES ('a', 'alpha')");
++
++      // POSITIVE CONTROL — both tables exist and the row is readable.
++      expect(tableCount(sql, "realm_meta")).toBe(1);
++      expect(tableCount(sql, "probe")).toBe(1);
++      expect([...sql.exec("SELECT v FROM probe WHERE k = 'a'")][0].v).toBe("alpha");
++
++      await storage.deleteAll();
++
++      // ⭐ Table COUNT, not row count: rows-gone-tables-kept would still be a real database
++      // holding a realm's shape, and this arm would pass on a partial delete if it counted rows.
++      expect(tableCount(sql, "realm_meta")).toBe(0);
++      expect(tableCount(sql, "probe")).toBe(0);
++    });
++  });
++
++  it("D3 is not a mock: the same object is usable again afterwards, so removal is not corruption", async () => {
++    await withRealm(async ({ sql, auth, storage, create }) => {
++      expect((await create()).status).toBe(201);
++      await storage.deleteAll();
++      expect(await auth.authorize(bearer("whatever"))).toBe("not_found");
++
++      // Recreating the schema in the SAME object works ⇒ `hasStoredData` false is a clean slate,
++      // which is what BACKUP-1c's create-and-destroy rehearsal needs the object to be.
++      initRealmMetaSchema(sql);
++      expect(tableCount(sql, "realm_meta")).toBe(1);
++    });
++  });
++});
++
++function bearer(secret: string): Request {
++  return new Request("https://realm.invalid/frontier", {
++    method: "POST",
++    headers: { authorization: `Bearer ${secret}` },
++  });
++}
+diff --git a/worker/test/realm/realm_remove.workers.test.ts b/worker/test/realm/realm_remove.workers.test.ts
+new file mode 100644
+index 0000000..d718881
+--- /dev/null
++++ b/worker/test/realm/realm_remove.workers.test.ts
+@@ -0,0 +1,395 @@
++import { SELF, env, runInDurableObject } from "cloudflare:test";
++import { kvRegistry, type RealmRegistry } from "../../src/realm/registry";
++import { describe, expect, it } from "vitest";
++import { handleRealmRequest } from "../../src/realm/http";
++import { RealmContainer } from "../../src/realm/container";
++import { RealmNode } from "../../src/realm/node";
++import {
++  READ_CAPABILITY_PATH,
++  REALM_CREATE_HEADER,
++  REALM_ID_HEADER,
++  RealmAuth,
++  handlePublicRealmRequest,
++} from "../../src/realm/realm_auth";
++import { initRealmMetaSchema } from "../../src/realm/schema";
++import { RealmStore } from "../../src/realm/store";
++
++// DO-local own-resource path: ingress forwards DELETE /realms/{realm_id} to /.
++// /realm would instead invent a nested public resource /realms/{realm_id}/realm.
++const REMOVE_PATH = "/";
++const LOG_ID = "survival-probe";
++let sequence = 0;
++
++type Call = (path: string, secret: string, method?: string, body?: unknown) => Promise<Response>;
++
++async function withRealm(
++  fn: (call: Call, write: string) => Promise<void>,
++  options: {
++    registry?: RealmRegistry;
++    allowUnbound?: boolean;
++    wipe?: (storage: DurableObjectStorage) => Promise<void>;
++  } = {},
++): Promise<void> {
++  const realmId = `realm-remove-${Date.now()}-${sequence++}`;
++  const stub = env.COMMONPLACE_LOG.get(env.COMMONPLACE_LOG.idFromName(realmId));
++  await runInDurableObject(stub, async (_instance, state) => {
++    initRealmMetaSchema(state.storage.sql);
++    const auth = new RealmAuth(state.storage.sql, state.storage);
++    const store = new RealmStore(state.storage.sql, state.storage);
++    // Real dispatcher and real Workers SQLite storage, not an always-successful inner handler
++    // or a deleteAll fake. This measures the public handler, not the ingress/Container lane.
++    const authorized = (request: Request) => handleRealmRequest(request, store);
++    const created = await handlePublicRealmRequest(
++      new Request("https://realm.invalid/realm/create", {
++        method: "POST",
++        headers: { [REALM_CREATE_HEADER]: "1", [REALM_ID_HEADER]: realmId },
++      }),
++      auth,
++      authorized,
++      options.registry,
++      true, // Explicit unbound fixture allows R2 to mint its own read capability.
++    );
++    expect(created.status).toBe(201);
++    const { realm_secret: write } = await created.json<{ realm_secret: string }>();
++    expect(/^[0-9a-f]{64}$/.test(write)).toBe(true);
++
++    const call: Call = (path, secret, method = "POST", body) =>
++      handlePublicRealmRequest(
++        new Request(`https://realm.invalid${path}`, {
++          method,
++          headers: {
++            ...(secret === "" ? {} : { authorization: `Bearer ${secret}` }),
++            "content-type": "application/json",
++            [REALM_ID_HEADER]: realmId, // Trusted DO-local fixture, as supplied by ingress.
++          },
++          body: body === undefined ? undefined : JSON.stringify(body),
++        }),
++        auth,
++        authorized,
++        options.registry,
++        options.allowUnbound ?? true,
++        () => options.wipe === undefined ? state.storage.deleteAll() : options.wipe(state.storage),
++      );
++
++    expect((await call("/create-log", write, "POST", { log_id: LOG_ID })).status).toBe(201);
++    const before = await call("/frontier", write, "POST", { log_id: LOG_ID });
++    expect(before.status).toBe(200);
++    expect(await before.json()).toEqual({ ok: true, frontier: { writers: [] } });
++    await fn(call, write);
++  });
++}
++
++const registryKV = (env as unknown as { REALM_REGISTRY: KVNamespace }).REALM_REGISTRY;
++
++async function gateway(realmId: string, path: string, secret: string, method = "POST", body?: unknown,
++  extraHeaders: Record<string, string> = {}) {
++  const response = await SELF.fetch(`https://gateway.invalid/realms/${realmId}${path}`, {
++    method,
++    headers: {
++      ...(secret === "" ? {} : { authorization: `Bearer ${secret}` }),
++      "content-type": "application/json",
++      ...extraHeaders,
++    },
++    body: body === undefined ? undefined : JSON.stringify(body),
++  });
++  // Drain the cross-Worker stream even when an arm checks only status, before
++  // isolated-storage cleanup can begin. The returned response is local/buffered.
++  const bytes = await response.arrayBuffer();
++  return new Response(response.status === 204 ? null : bytes, {
++    status: response.status, statusText: response.statusText, headers: response.headers,
++  });
++}
++
++async function createGatewayRealm(realmId: string): Promise<string> {
++  const created = await gateway(realmId, "", env.GATEWAY_TOKEN, "POST", {});
++  expect(created.status).toBe(201);
++  const body = await created.json<{ realm_secret: string; registry: string }>();
++  expect(body.registry).toBe("registered");
++  return body.realm_secret;
++}
++
++async function registryCount(): Promise<number> {
++  let cursor: string | undefined;
++  let count = 0;
++  do {
++    const page = await registryKV.list({ cursor });
++    count += page.keys.length;
++    if (page.list_complete) return count;
++    cursor = page.cursor;
++  } while (true);
++}
++
++describe("REALM-REMOVE-1b", () => {
++  it("R1: gateway create and entry write, positive frontier, removal, same-capability not_found", async () => {
++    const realmId = crypto.randomUUID();
++    const write = await createGatewayRealm(realmId);
++    expect((await gateway(realmId, "/create-log", write, "POST", { log_id: LOG_ID })).status).toBe(201);
++    const entry = {
++      entry_id: "entry-one", writer_id: "writer-one", writer_seq: 1,
++      prev_entry_id: null, created_at: "2026-09-04T00:00:00Z",
++    };
++    const committed = await gateway(realmId, "/commit", write, "POST", {
++      log_id: LOG_ID, expected_revision: 0, expected_epoch: 0,
++      insert_entries: [{ ...entry, canonical_bytes: btoa(JSON.stringify(entry)) }],
++      put_tips: [{ writer_id: entry.writer_id, last_seq: 1, last_entry_id: entry.entry_id }],
++    });
++    expect(committed.status).toBe(200);
++    const before = await gateway(realmId, "/frontier", write, "POST", { log_id: LOG_ID });
++    expect(before.status, "BLIND unless the same realm/log is readable before removal").toBe(200);
++    expect(await before.json()).toEqual({ ok: true, frontier: {
++      writers: [{ writer_id: entry.writer_id, seq: 1, entry_id: entry.entry_id }],
++    } });
++    console.info("R1 CONTROL entry commit=%d frontier=%d writers=1", committed.status, before.status);
++    const removed = await gateway(realmId, "", write, "DELETE");
++    expect(removed.status).toBe(204);
++    expect(await removed.text()).toBe("");
++    const after = await gateway(realmId, "/frontier", write, "POST", { log_id: LOG_ID });
++    expect(after.status).toBe(404);
++    expect(await after.json()).toEqual({ ok: false, error: { code: "not_found" } });
++    console.info("R1 RESULT delete=%d same-write frontier=%d", removed.status, after.status);
++  });
++
++  it("R2: reachable WRITE deletion refuses a read capability without removing its realm", async () => {
++    // Mandatory precondition IN THIS TEST: an unknown path already gets forbidden_scope for
++    // READ. Without a WRITE 204 first, the scope/survival assertions could pass before removal
++    // exists. Sacrifice a different DO so this control cannot destroy the refusal subject.
++    await withRealm(async (call, write) => {
++      const removed = await call(REMOVE_PATH, write, "DELETE");
++      expect(removed.status, "WRITE DELETE / must reach removal before testing READ scope").toBe(204);
++      expect(await removed.text()).toBe("");
++    });
++
++    await withRealm(async (call, write) => {
++      const minted = await call(READ_CAPABILITY_PATH, write);
++      expect(minted.status).toBe(201);
++      const { read_secret: read } = await minted.json<{ read_secret: string }>();
++      expect(/^[0-9a-f]{64}$/.test(read)).toBe(true);
++
++      // Positive control: this exact read capability reaches the real log before the refusal.
++      const before = await call("/frontier", read, "POST", { log_id: LOG_ID });
++      expect(before.status).toBe(200);
++      expect(await before.json()).toEqual({ ok: true, frontier: { writers: [] } });
++
++      console.info("R2 CONTROL write removal reached=204 read frontier=%d", before.status);
++      const refused = await call(REMOVE_PATH, read, "DELETE");
++      expect(refused.status).toBe(403);
++      expect(await refused.json()).toEqual({ ok: false, error: { code: "forbidden_scope" } });
++
++      // A refusal that nevertheless deletes storage must fail: same realm, log, and READ secret.
++      const after = await call("/frontier", read, "POST", { log_id: LOG_ID });
++      expect(after.status).toBe(200);
++      expect(await after.json()).toEqual({ ok: true, frontier: { writers: [] } });
++      console.info("R2 RESULT read delete=%d forbidden_scope surviving frontier=%d", refused.status, after.status);
++    });
++  });
++
++  it("R3: repeat and never-created canonical removals are empty 204s", async () => {
++    const realmId = crypto.randomUUID();
++    const write = await createGatewayRealm(realmId);
++    const first = await gateway(realmId, "", write, "DELETE");
++    const second = await gateway(realmId, "", write, "DELETE");
++    const neverId = crypto.randomUUID();
++    const absentControl = await gateway(neverId, "/frontier", "unassigned", "POST", { log_id: LOG_ID });
++    expect(absentControl.status).toBe(404);
++    // ⭐ plan row 941-bis: a DELETE on an EMPTY DO is inert, and the count is what proves it.
++    // ⛔ The status alone cannot: a 204 that ALSO erased a registry row looks identical from here,
++    // and that row would belong to whichever realm id the caller guessed.
++    const countBefore = await registryCount();
++    const never = await gateway(neverId, "", "unassigned", "DELETE");
++    const countAfter = await registryCount();
++    expect(countAfter, "an unauthenticated removal must have NO side effect").toBe(countBefore);
++    console.info("R3 INERT never-created delete: registry count %d -> %d", countBefore, countAfter);
++    for (const response of [first, second, never]) {
++      expect(response.status).toBe(204);
++      expect(await response.text()).toBe("");
++    }
++    const nonRoot = await gateway(neverId, "/realm/read-capability", "unassigned", "DELETE");
++    expect(nonRoot.status).toBe(404);
++    console.info("R3 RESULT first=%d repeat=%d never-created=%d non-root=%d", first.status, second.status, never.status, nonRoot.status);
++  });
++
++  it("R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row", async () => {
++    const events: string[] = [];
++    const real = kvRegistry(registryKV)!;
++    let registeredId = "";
++    let failDelete = true;
++    const registry: RealmRegistry = {
++      async put(id, capability) { registeredId = id; await real.put(id, capability); },
++      async delete(id) {
++        events.push("registry");
++        if (failDelete) throw new Error("injected registry delete failure");
++        await real.delete(id);
++      },
++    };
++    await withRealm(async (call, write) => {
++      expect((await registryKV.get(registeredId)) === null).toBe(false);
++      const before = await call("/frontier", write, "POST", { log_id: LOG_ID });
++      expect(before.status).toBe(200);
++      console.info("R4 CONTROL frontier=%d registry row present=true", before.status);
++      const failed = await call(REMOVE_PATH, write, "DELETE");
++      expect(failed.status).toBe(503);
++      const body = await failed.json();
++      expect(body).toEqual({ ok: false, error: { code: "registry_delete_failed" }, registry: "registry_delete_failed" });
++      expect(events).toEqual(["wipe", "registry"]);
++      const after = await call("/frontier", write, "POST", { log_id: LOG_ID });
++      expect(after.status).toBe(404);
++      expect((await registryKV.get(registeredId)) === null).toBe(false);
++      console.info("R4 RESULT delete=%d registry_delete_failed frontier=%d order=%s", failed.status, after.status, events.join(","));
++      // ⛔ REVERSED DELIBERATELY (plan row 941-bis, adjudicated by the reviewer): this arm used to
++      // assert that an unauthenticated retry CLEANED the orphan row. It must now assert the row
++      // SURVIVES. An unauthenticated removal has NO side effect, because "204 on an empty DO" and
++      // "any caller who guesses an id erases its registry row" are the same code path.
++      // ⭐ The repair Astra built here is not deleted, it MOVED: BACKUP-1b-iii reconciles rows whose
++      // DO reads not_found, under the Worker's own binding, with the orphan count as its control.
++      failDelete = false;
++      const retried = await call(REMOVE_PATH, "", "DELETE");
++      expect(retried.status).toBe(204);
++      expect((await registryKV.get(registeredId)) === null).toBe(false);
++      // ⭐ THE SIDE-EFFECT ASSERTION, not merely the status: no second wipe and no second registry
++      // call. A 204 that still wiped would pass a status-only arm.
++      expect(events).toEqual(["wipe", "registry"]);
++      console.info("R4 RETRY absent-auth delete=%d registry row RETAINED=true events=%s", retried.status, events.join(","));
++    }, {
++      registry,
++      async wipe(storage) { await storage.deleteAll(); events.push("wipe"); },
++    });
++  });
++
++  it("R4 storage failure never drops the registry row or live realm", async () => {
++    const events: string[] = [];
++    const real = kvRegistry(registryKV)!;
++    let registeredId = "";
++    const registry: RealmRegistry = {
++      async put(id, capability) { registeredId = id; await real.put(id, capability); },
++      async delete(id) { events.push("registry"); await real.delete(id); },
++    };
++    await withRealm(async (call, write) => {
++      expect((await registryKV.get(registeredId)) === null).toBe(false);
++      await expect(call(REMOVE_PATH, write, "DELETE")).rejects.toThrow("injected storage failure");
++      expect(events).toEqual(["wipe_failed"]);
++      expect((await registryKV.get(registeredId)) === null).toBe(false);
++      const after = await call("/frontier", write, "POST", { log_id: LOG_ID });
++      expect(after.status).toBe(200);
++      console.info("R4 STORAGE FAILURE order=%s registry row retained=true frontier=%d", events.join(","), after.status);
++    }, {
++      registry,
++      async wipe() { events.push("wipe_failed"); throw new Error("injected storage failure"); },
++    });
++  });
++
++  it("R5: real KV inventory loses exactly the removed realm and ignores spoofed identity", async () => {
++    const initial = await registryCount();
++    const realmId = crypto.randomUUID();
++    const otherId = crypto.randomUUID();
++    const write = await createGatewayRealm(realmId);
++    const otherWrite = await createGatewayRealm(otherId);
++    const before = await registryCount();
++    expect(before).toBe(initial + 2);
++    expect((await registryKV.get(realmId)) === null).toBe(false);
++    expect((await registryKV.get(otherId)) === null).toBe(false);
++    console.info("R5 CONTROL initial=%d before=%d both created rows present=true", initial, before);
++    const removed = await gateway(realmId, "", write, "DELETE", undefined, { [REALM_ID_HEADER]: otherId });
++    expect(removed.status).toBe(204);
++    const after = await registryCount();
++    expect(before).toBe(after + 1);
++    expect((await registryKV.get(realmId)) === null).toBe(true);
++    expect((await registryKV.get(otherId)) === null).toBe(false);
++    expect((await gateway(otherId, "/create-log", otherWrite, "POST", { log_id: LOG_ID })).status).toBe(201);
++    console.info("R5 RESULT before=%d after=%d delta=%d target absent=true other retained=true", before, after, before - after);
++  });
++
++  it("removal keeps wrong/missing bearer, READ scope, root-only and revocation boundaries", async () => {
++    const realmId = crypto.randomUUID();
++    const write = await createGatewayRealm(realmId);
++    expect((await gateway(realmId, "/create-log", write, "POST", { log_id: LOG_ID })).status).toBe(201);
++    const row = await registryKV.get<{ read_capability: string }>(realmId, "json");
++    expect(row === null).toBe(false);
++    const read = row!.read_capability;
++    expect((await gateway(realmId, "/frontier", read, "POST", { log_id: LOG_ID })).status).toBe(200);
++    for (const secret of ["", "wrong-bearer"]) {
++      expect((await gateway(realmId, "", secret, "DELETE")).status).toBe(401);
++    }
++    const forbidden = await gateway(realmId, "", read, "DELETE");
++    expect(forbidden.status).toBe(403);
++    expect(await forbidden.json()).toEqual({ ok: false, error: { code: "forbidden_scope" } });
++    // Trailing slash is not the canonical public removal, even with a spoofed header.
++    expect((await gateway(realmId, "/", write, "DELETE", undefined, { [REALM_ID_HEADER]: realmId })).status).toBe(400);
++    expect((await gateway(realmId, READ_CAPABILITY_PATH, write, "DELETE")).status).toBe(204);
++    expect((await gateway(realmId, "/frontier", write, "POST", { log_id: LOG_ID })).status).toBe(200);
++    expect((await gateway(realmId, "/frontier", read, "POST", { log_id: LOG_ID })).status).toBe(401);
++    expect((await registryKV.get(realmId)) === null).toBe(false);
++    console.info("SECURITY wrong/missing=401 read delete=403 noncanonical=400 revocation=204 write frontier=200 revoked read=401");
++  });
++
++  it("both lane dispatchers gate creation and removal through native blockConcurrencyWhile only", async () => {
++    // This is a lane-wiring check, NOT a concurrent-event/recreation race proof.
++    // The receiver supplies real storage and the native DO gate, recording which
++    // operations each actual fetch implementation puts inside that gate.
++    for (const lane of [
++      { name: "container", fetch: RealmContainer.prototype.fetch },
++      { name: "node", fetch: RealmNode.prototype.fetch },
++    ]) {
++      const realmId = `lifecycle-${lane.name}-${Date.now()}-${sequence++}`;
++      const stub = env.COMMONPLACE_LOG.get(env.COMMONPLACE_LOG.idFromName(realmId));
++      await runInDurableObject(stub, async (_instance, state) => {
++        const auth = new RealmAuth(state.storage.sql, state.storage);
++        const store = new RealmStore(state.storage.sql, state.storage);
++        const gated: string[] = [];
++        let operation = "";
++        const receiver = {
++          auth, store,
++          env: { REALM_TEST_LEVERS: "1" },
++          ctx: {
++            storage: state.storage,
++            async blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T> {
++              gated.push(operation);
++              return await state.blockConcurrencyWhile(fn);
++            },
++          },
++          fetchAuthorized: (request: Request) => handleRealmRequest(request, store),
++        };
++        const call = async (path: string, method: string, secret = "", body?: unknown) => {
++          operation = `${method} ${path}`;
++          return await lane.fetch.call(receiver as unknown as RealmContainer & RealmNode,
++            new Request(`https://realm.invalid${path}`, {
++              method,
++              headers: {
++                [REALM_CREATE_HEADER]: "1", [REALM_ID_HEADER]: realmId,
++                ...(secret === "" ? {} : { authorization: `Bearer ${secret}` }),
++                "content-type": "application/json",
++              },
++              body: body === undefined ? undefined : JSON.stringify(body),
++            }));
++        };
++        const created = await call("/realm/create", "POST");
++        expect(created.status).toBe(201);
++        const { realm_secret: write } = await created.json<{ realm_secret: string }>();
++        const log = await call("/create-log", "POST", write, { log_id: LOG_ID });
++        expect(log.status).toBe(201);
++        await log.arrayBuffer();
++        const before = await call("/frontier", "POST", write, { log_id: LOG_ID });
++        expect(before.status).toBe(200);
++        await before.arrayBuffer();
++        expect(gated).toEqual(["POST /realm/create"]);
++        const removed = await call("/", "DELETE", write);
++        expect(removed.status).toBe(204);
++        expect(gated).toEqual(["POST /realm/create", "DELETE /"]);
++        console.info("LIFECYCLE WIRING lane=%s gate=%s ordinary frontier=%d removal=%d", lane.name, gated.join(","), before.status, removed.status);
++      });
++    }
++  });
++
++  it("unbound registry defaults to refusal before wiping a live realm", async () => {
++    const events: string[] = [];
++    await withRealm(async (call, write) => {
++      const failed = await call(REMOVE_PATH, write, "DELETE");
++      expect(failed.status).toBe(503);
++      expect(await failed.json()).toEqual({ ok: false, error: {
++        code: "registry_not_bound", details: { binding: "REALM_REGISTRY" },
++      } });
++      expect(events).toEqual([]);
++      expect((await call("/frontier", write, "POST", { log_id: LOG_ID })).status).toBe(200);
++      console.info("UNBOUND CONTROL delete=503 registry_not_bound wipe calls=0 frontier=200");
++    }, { allowUnbound: false, async wipe(storage) { events.push("wipe"); await storage.deleteAll(); } });
++  });
++});
+diff --git a/worker/test/realm/registry.workers.test.ts b/worker/test/realm/registry.workers.test.ts
+index 04c7fb7..7f96ba4 100644
+--- a/worker/test/realm/registry.workers.test.ts
++++ b/worker/test/realm/registry.workers.test.ts
+@@ -15,6 +15,9 @@ function fakeRegistry(failing = false): RealmRegistry & { entries: Map<string, s
+       if (failing) throw new Error("KV unavailable");
+       entries.set(realmId, readCapability);
+     },
++    async delete(realmId) {
++      entries.delete(realmId);
++    },
+   };
+ }
+ 

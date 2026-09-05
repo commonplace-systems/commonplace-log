@@ -1,0 +1,13 @@
+diff --git a/worker/src/realm/realm_auth.ts b/worker/src/realm/realm_auth.ts
+index 7ea2f78..e9d7174 100644
+--- a/worker/src/realm/realm_auth.ts
++++ b/worker/src/realm/realm_auth.ts
+@@ -242,7 +242,7 @@ export async function handlePublicRealmRequest(
+   // The create endpoint is gateway-internal and never opens with a realm secret.
+   if (path === "/realm/create") return fail("not_found", 404);
+ 
+-  const isRemoval = request.method === "DELETE" && path === "/";
++  const isRemoval = false;
+   const result = await auth.authorize(request);
+   // Only exact removal may answer at all after the realm's auth tables are gone.
+   if (result === "not_found" && !isRemoval) return fail("not_found", 404);

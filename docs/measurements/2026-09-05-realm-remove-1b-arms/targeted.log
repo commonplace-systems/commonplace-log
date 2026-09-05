@@ -1,0 +1,88 @@
+
+ RUN  v3.2.7 /home/jes/codex-realm-arms/worker
+
+(node:30806) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.workers.config.ts...
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/index.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/container.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/helpers.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/utils.js" points to missing source files
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R1: gateway create and entry write, positive frontier, removal, same-capability not_found
+R1 CONTROL entry commit=200 frontier=200 writers=1
+
+ ✓ |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D1 removes the realm: a write capability that authorised before reads not_found after 109ms
+ ✓ |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D2 drops the SQL TABLE itself, not merely its rows 57ms
+workerd/io/io-context.c++:435: info: uncaught exception; exception = workerd/api/global-scope.c++:46: failed: jsg.TypeError: Can't read from request stream after response has been sent.
+stack: /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@1f2e6b0 /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2d78ab4 /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2d78b58
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R1: gateway create and entry write, positive frontier, removal, same-capability not_found
+R1 RESULT delete=204 same-write frontier=404
+
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R1: gateway create and entry write, positive frontier, removal, same-capability not_found 205ms
+ ✓ |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D3 is not a mock: the same object is usable again afterwards, so removal is not corruption 56ms
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R2: reachable WRITE deletion refuses a read capability without removing its realm
+R2 CONTROL write removal reached=204 read frontier=200
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R2: reachable WRITE deletion refuses a read capability without removing its realm
+R2 RESULT read delete=403 forbidden_scope surviving frontier=200
+
+workerd/io/io-context.c++:435: info: uncaught exception; exception = workerd/api/global-scope.c++:46: failed: jsg.TypeError: Can't read from request stream after response has been sent.
+stack: /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@1f2e6b0 /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2d78ab4 /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2d78b58
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R2: reachable WRITE deletion refuses a read capability without removing its realm 113ms
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R3: repeat and never-created canonical removals are empty 204s
+R3 INERT never-created delete: registry count 0 -> 0
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R3: repeat and never-created canonical removals are empty 204s
+R3 RESULT first=204 repeat=204 never-created=204 non-root=404
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row
+R4 CONTROL frontier=200 registry row present=true
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row
+R4 RESULT delete=503 registry_delete_failed frontier=404 order=wipe,registry
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row
+R4 RETRY absent-auth delete=204 registry row RETAINED=true events=wipe,registry
+
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R3: repeat and never-created canonical removals are empty 204s 165ms
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row 91ms
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4 storage failure never drops the registry row or live realm
+R4 STORAGE FAILURE order=wipe_failed registry row retained=true frontier=200
+
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4 storage failure never drops the registry row or live realm 86ms
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R5: real KV inventory loses exactly the removed realm and ignores spoofed identity
+R5 CONTROL initial=0 before=2 both created rows present=true
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R5: real KV inventory loses exactly the removed realm and ignores spoofed identity
+R5 RESULT before=2 after=1 delta=1 target absent=true other retained=true
+
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R5: real KV inventory loses exactly the removed realm and ignores spoofed identity 148ms
+workerd/io/io-context.c++:435: info: uncaught exception; exception = workerd/api/global-scope.c++:46: failed: jsg.TypeError: Can't read from request stream after response has been sent.
+stack: /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@1f2e6b0 /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2d78ab4 /home/jes/codex-realm-arms/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2d78b58
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > removal keeps wrong/missing bearer, READ scope, root-only and revocation boundaries
+SECURITY wrong/missing=401 read delete=403 noncanonical=400 revocation=204 write frontier=200 revoked read=401
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > both lane dispatchers gate creation and removal through native blockConcurrencyWhile only
+LIFECYCLE WIRING lane=container gate=POST /realm/create,DELETE / ordinary frontier=200 removal=204
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > both lane dispatchers gate creation and removal through native blockConcurrencyWhile only
+LIFECYCLE WIRING lane=node gate=POST /realm/create,DELETE / ordinary frontier=200 removal=204
+
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > removal keeps wrong/missing bearer, READ scope, root-only and revocation boundaries 159ms
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > both lane dispatchers gate creation and removal through native blockConcurrencyWhile only 82ms
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > unbound registry defaults to refusal before wiping a live realm
+UNBOUND CONTROL delete=503 registry_not_bound wipe calls=0 frontier=200
+
+ ✓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > unbound registry defaults to refusal before wiping a live realm 44ms
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+   Start at  04:27:57
+   Duration  5.16s (transform 606ms, setup 0ms, collect 1.94s, tests 1.38s, environment 0ms, prepare 687ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...
