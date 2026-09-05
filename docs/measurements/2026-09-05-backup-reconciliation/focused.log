@@ -1,0 +1,190 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:448791) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+stdout | test/backup/reconciliation.workers.test.ts > R1 R3 R4: dryrun preserves orphan bytes; explicit deletion removes only orphan; repeat removes zero
+RECON BASE registry=2 independently stored DO=1 orphan row present=true
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > D1: fixture listing confirms guessed membership after known Elixir controls
+D1 fixture only: known Elixir vectors=10; independent chain=1; guessed member present=true; wrong member=false; wrong generation=false
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > D1: fixture listing confirms guessed membership after known Elixir controls 226ms
+stdout | test/backup/reconciliation.workers.test.ts > R1 R3 R4: dryrun preserves orphan bytes; explicit deletion removes only orphan; repeat removes zero
+R1/R3/R4 dryrun writes=0 apply removed=1 repeated removed=0
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R1 R3 R4: dryrun preserves orphan bytes; explicit deletion removes only orphan; repeat removes zero 318ms
+stdout | test/backup/reconciliation.workers.test.ts > R2: transport_error is unknown and preserves the live realm registry bytes
+R2 healthy=present injected=transport_error verdict=unknown removed=0 byte-identical=true
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID stops backup explicitly and differs from an absent pagination cursor
+EMPTY ID { outcome: 'stopped', manifest: null }
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID stops backup explicitly and differs from an absent pagination cursor 222ms
+stdout | test/backup/reconciliation.workers.test.ts > R2: timeout is unknown and preserves the live realm registry bytes
+R2 healthy=present injected=timeout verdict=unknown removed=0 byte-identical=true
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2: transport_error is unknown and preserves the live realm registry bytes 106ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST BASE { ok: true, log_ids: [], next_after_log_id: null }
+
+stdout | test/backup/reconciliation.workers.test.ts > R2: http_5xx is unknown and preserves the live realm registry bytes
+R2 healthy=present injected=http_5xx verdict=unknown removed=0 byte-identical=true
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST RESULT no capability=401 other realm=401 READ=200 { ok: true, log_ids: [ 'log-a' ], next_after_log_id: 'log-a' } { ok: true, log_ids: [ 'log-b' ], next_after_log_id: null }
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2: timeout is unknown and preserves the live realm registry bytes 124ms
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2: http_5xx is unknown and preserves the live realm registry bytes 95ms
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local 187ms
+stdout | test/backup/reconciliation.workers.test.ts > R2: malformed_body is unknown and preserves the live realm registry bytes
+R2 healthy=present injected=malformed_body verdict=unknown removed=0 byte-identical=true
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 BASE []
+
+stdout | test/backup/reconciliation.workers.test.ts > R2: unexpected_response is unknown and preserves the live realm registry bytes
+R2 healthy=present injected=unexpected_response verdict=unknown removed=0 byte-identical=true
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2: malformed_body is unknown and preserves the live realm registry bytes 117ms
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2: unexpected_response is unknown and preserves the live realm registry bytes 95ms
+stdout | test/backup/reconciliation.workers.test.ts > R2: capability_rejected is unknown and preserves the live realm registry bytes
+R2 healthy=present injected=capability_rejected verdict=unknown removed=0 byte-identical=true
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2: capability_rejected is unknown and preserves the live realm registry bytes 100ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 RUN1 [
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/frontier.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-a/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-b/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-b/frontier.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-b/writer-a/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/manifest.json'
+] RUN2 [
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/frontier.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-a/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-b/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-b/frontier.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-b/writer-a/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/manifest.json'
+] RUN3 [
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/frontier.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-a/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-a/000000000002.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-a/writer-b/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-b/frontier.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/log-b/writer-a/000000000001.json',
+  '31c2e581-af07-484c-8669-da1b34d5ab98/manifest.json'
+]
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one 378ms
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2 recheck: registry_recheck_failed never deletes 101ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 BASE []
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R2 recheck: registry_row_changed never deletes 102ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 FAILED [
+  '59ae611b-12ba-463a-b595-0761c4a46edd/log-a/writer-a/000000000001.json'
+] RESUMED [
+  '59ae611b-12ba-463a-b595-0761c4a46edd/log-a/frontier.json',
+  '59ae611b-12ba-463a-b595-0761c4a46edd/log-a/writer-a/000000000001.json',
+  '59ae611b-12ba-463a-b595-0761c4a46edd/manifest.json'
+]
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes 173ms
+stdout | test/backup/reconciliation.workers.test.ts > R5: an unregistered live realm produces independent 1 vs 2; unknown count stays unknown
+R5 before KV=2 DO=2 after KV=1 DO=2 delta=-1; failed counter=null, never zero
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 BASE [
+  {
+    realm_id: '7743fe3d-a028-4df6-9e07-8fbebf6ebb8e',
+    outcome: 'complete'
+  },
+  {
+    realm_id: 'b616d4a0-a9a1-43ef-9ad4-a7b272b1bf2e',
+    outcome: 'complete'
+  }
+]
+
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > R5: an unregistered live realm produces independent 1 vs 2; unknown count stays unknown 147ms
+ ✓ |backup| test/backup/reconciliation.workers.test.ts > enumeration failure preserves rows and reports the partial inventory as unknown 75ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 REVOKED {
+  version: 1,
+  run_id: 'd14f668d-c2c3-45d7-8efa-01130c778aac',
+  started_at: '2026-09-05T16:23:00.762Z',
+  completed_at: '2026-09-05T16:23:00.783Z',
+  enumeration: 'registry_only',
+  coverage: 'registered_realms_only',
+  registry_count: 2,
+  realms: [
+    {
+      realm_id: '7743fe3d-a028-4df6-9e07-8fbebf6ebb8e',
+      entries_appended: 0,
+      frontiers_written: [],
+      manifest_written: false,
+      outcome: 'stopped',
+      stop: 'capability_rejected'
+    },
+    {
+      realm_id: 'b616d4a0-a9a1-43ef-9ad4-a7b272b1bf2e',
+      entries_appended: 0,
+      frontiers_written: [],
+      manifest_written: false,
+      outcome: 'complete'
+    }
+  ],
+  outcome: 'stopped'
+}
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log 223ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+A4 CONTROL write commit=200; READ commit=403 forbidden_scope; frontier unchanged
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can 69ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+A5 BASE registry=2 independently read DO realm rows=2
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+A5 RESULT registry=1 existing DO realms=2 omitted realm still readable=200 {
+  version: 1,
+  run_id: 'ae5be1a2-3e41-4dc5-9571-6b3c3bd79e21',
+  started_at: '2026-09-05T16:23:00.958Z',
+  completed_at: '2026-09-05T16:23:00.978Z',
+  enumeration: 'registry_only',
+  coverage: 'registered_realms_only',
+  registry_count: 1,
+  realms: [
+    {
+      realm_id: 'a8daf253-ca04-43c0-ab36-c2938e76eea6',
+      entries_appended: 0,
+      frontiers_written: [Array],
+      manifest_written: true,
+      outcome: 'complete'
+    }
+  ],
+  outcome: 'complete'
+}
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage 134ms
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs 59ms
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier 112ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+PAGING registry pages=2 log pages=2 writer pages=2 entries=101 frontiers=101
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries 1851ms
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Start at  16:22:55
+   Duration  7.62s (transform 331ms, setup 0ms, collect 933ms, tests 5.05s, environment 1ms, prepare 566ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

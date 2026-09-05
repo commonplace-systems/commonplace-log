@@ -1,0 +1,374 @@
+diff --git a/docs/backup-design.md b/docs/backup-design.md
+index 6bda671..9f35a2f 100644
+--- a/docs/backup-design.md
++++ b/docs/backup-design.md
+@@ -296,3 +296,36 @@ Platform logging and human disclosure therefore remain custody obligations, not
+ properties this gate proves. Earlier sections and the brief remain historical;
+ this section corrects the assumption that identifier-free credentials imply
+ identifier-free backup metadata.
++
++## 11. Reconciliation: absence, unknown reads, and an administrative boundary
++
++At base `330c013`, registry cleanup lives in `worker/reconciliation`, separate
++from the backup's pinned read-only modules. No production entry or binding is
++added. Default dry run writes nothing; a returned report names every examined
++row as present, absent or unknown. Only a DO response of 404 with the explicit
++not_found error body establishes absence. Failed requests and failed safety
++rechecks remain unknown and never delete.
++
++Apply mode is opt-in and requires explicit acknowledgment of an externally
++quiescent realm-lifecycle window. A pre-delete byte recheck is mandatory but is
++not atomic compare-and-delete. Recreation can still race it; eventual KV reads
++can also be stale. This limitation is not disguised as concurrency safety.
++Planner ruling 29945 ranks the closing mechanism as `REGISTRY-SELF-DELETE-1`:
++perform administrative cleanup inside the DO while holding its lifecycle gate,
++with the necessary authority change reviewed separately. This round changes no
++READ_ROUTES, capability minting, creation or removal path.
++
++The report independently records registry key count and an instrument-labelled
++stored-DO count; failed observation is null. Their signed difference exposes a
++count disagreement. Equal counts can hide one orphan and one unregistered realm;
++they do not establish identity agreement. Local arms measure KV and user storage
++on separately enumerated DO IDs. No production count is inferred from fixtures.
++
++The inverse repair remains outside this repository: commonplace-next knows the
++realm IDs it created and is the starting point for a backfill inventory. A DO
++objects listing supplies opaque IDs and hasStoredData, not the names needed by
++idFromName. A known name alone also cannot recover an existing read secret; that
++custody problem needs an operator with suitable authority, not an automatic mint.
++Reconciliation reports contain sensitive realm identifiers and must stay under
++the metadata custody decision in §10. The library returns its report in memory;
++production invocation and protected report persistence remain unwired.
+diff --git a/worker/reconciliation/README.md b/worker/reconciliation/README.md
+new file mode 100644
+index 0000000..b29a545
+--- /dev/null
++++ b/worker/reconciliation/README.md
+@@ -0,0 +1,45 @@
++# Registry reconciliation library
++
++This is administrative code, separate from the pinned read-only backup Worker.
++It has no deployed entry, HTTP route, cron, credential lookup or Cloudflare account
++client. Existing backup source and its review manifest are unchanged.
++
++`reconcile(env, {countStoredObjects})` defaults to dry run and returns a sensitive
++in-memory report. It writes nothing. The caller supplies an independent stored-DO
++count observation with its instrument name; the library lists registry keys for
++the other count. Missing/failed counts stay null, not zero. The signed difference
++is diagnostic, not proof of completeness: equal counts can hide offsetting holes.
++
++A row is `absent` only after HTTP 404 with the expected `ok:false` / `not_found`
++body from its DO. A validated successful read is `present`. Transport failure,
++timeout, 5xx, malformed/unexpected response, rejected capability or failed registry
++read is `unknown`, with a named cause. Unknown rows are never deleted. Complete
++registry enumeration precedes all deletion; a failed page preserves every row.
++
++Deletion requires BOTH `apply:true` and `lifecycleQuiesced:true`. The latter is an
++explicit acknowledgment of an externally enforced lifecycle maintenance window,
++not an internally acquired lock. Do not assert it while create/removal can race.
++Each absent row is read again byte-for-byte before deletion. A failed, missing or
++changed recheck is unknown and preserves the row. KV provides no atomic
++compare-and-delete; a byte recheck does not protect the interval after that read
++and eventual consistency further limits its value. Arbitrary concurrent recreation
++is not safe. The planner ranked `REGISTRY-SELF-DELETE-1` to move deletion into the
++DO's lifecycle gate under a separately authorized administrative route.
++
++The report names every examined row, its verdict/cause and action. A delete error
++is recorded as `delete_failed`; it is not counted as a success. Reports contain no
++capabilities or raw exception bodies, but realm identifiers remain sensitive.
++Keep them within the approved backup custody boundary. There is no CLI that prints
++a live report and no production invocation/persistence wiring in this round.
++
++The independent count callback must be implemented by the eventual authorized
++operator adapter (all pages of the correct DO namespace's objects listing,
++counting `hasStoredData`). Local tests instead enumerate local DO IDs and inspect
++user-table storage independently of KV. Those are fixture counts, not production
++measurements. No live account call is necessary to run the tests.
++
++An unregistered live realm has no name in the registry. The DO object listing
++cannot reverse idFromName to recover it. Backfill must begin with realm IDs held
++by their creator, commonplace-next, and requires its own capability-custody plan;
++knowing an ID does not recover a lost read capability. Reconciliation does not
++mint secrets, infer names from counts, or repair that direction.
+diff --git a/worker/reconciliation/run.ts b/worker/reconciliation/run.ts
+new file mode 100644
+index 0000000..a0b5aea
+--- /dev/null
++++ b/worker/reconciliation/run.ts
+@@ -0,0 +1,129 @@
++/** Administrative library only: no deployed entry, cron, or backup import. */
++export interface ReconciliationEnv {
++  REALMS: Pick<DurableObjectNamespace, "idFromName" | "get">;
++  REALM_REGISTRY: Pick<KVNamespace, "list" | "delete"> & { get(key: string): Promise<string | null> };
++}
++export type CountObservation = { count: number; instrument: string };
++export type Verdict = "present" | "absent" | "unknown";
++export type RowResult = {
++  realm_id: string;
++  verdict: Verdict;
++  cause: string;
++  action: "keep" | "would_delete" | "deleted" | "delete_failed";
++};
++export type ReconciliationReport = {
++  version: 1;
++  mode: "dry_run" | "delete";
++  registry_rows: number;
++  registry_enumeration: "complete" | "unknown";
++  stored_objects: CountObservation | null;
++  count_cause: string | null;
++  registry_minus_stored_objects: number | null;
++  rows: RowResult[];
++  removed: number;
++  would_remove: number;
++};
++export type Options = {
++  apply?: boolean;
++  /** External lifecycle exclusion is an operator precondition, not a lock provided here. */
++  lifecycleQuiesced?: boolean;
++  timeoutMs?: number;
++  countStoredObjects: () => Promise<CountObservation>;
++};
++const record = (value: unknown): value is Record<string, unknown> =>
++  typeof value === "object" && value !== null && !Array.isArray(value);
++
++async function probe(env: ReconciliationEnv, realm: string, capability: string, timeoutMs: number): Promise<{ verdict: Verdict; cause: string }> {
++  const abort = new AbortController();
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  const read = async (): Promise<{ verdict: Verdict; cause: string }> => {
++    try {
++      const response = await env.REALMS.get(env.REALMS.idFromName(realm)).fetch("https://realm.internal/list-logs", {
++        method: "POST", headers: { authorization: `Bearer ${capability}`, "content-type": "application/json" },
++        body: JSON.stringify({ limit: 1 }), signal: abort.signal,
++      });
++      const text = await response.text();
++      if (response.status >= 500) return { verdict: "unknown", cause: "http_5xx" };
++      if (response.status === 401 || response.status === 403) return { verdict: "unknown", cause: "capability_rejected" };
++      let body: unknown;
++      try { body = JSON.parse(text); } catch { return { verdict: "unknown", cause: "malformed_body" }; }
++      if (response.status === 404 && record(body) && body.ok === false && record(body.error) && body.error.code === "not_found") {
++        return { verdict: "absent", cause: "not_found" };
++      }
++      if (response.status === 200 && record(body) && body.ok === true && Array.isArray(body.log_ids)
++        && body.log_ids.every((id) => typeof id === "string")
++        && (body.next_after_log_id === null || typeof body.next_after_log_id === "string")) {
++        return { verdict: "present", cause: "read_ok" };
++      }
++      return { verdict: "unknown", cause: "unexpected_response" };
++    } catch { return { verdict: "unknown", cause: "transport_error" }; }
++  };
++  try {
++    return await Promise.race([read(), new Promise<{ verdict: Verdict; cause: string }>((resolve) => {
++      timer = setTimeout(() => {
++        resolve({ verdict: "unknown", cause: "timeout" });
++        abort.abort();
++      }, timeoutMs);
++    })]);
++  } finally { clearTimeout(timer); }
++}
++
++/** Returns a sensitive in-memory report. Caller must keep it inside approved custody. */
++export async function reconcile(env: ReconciliationEnv, options: Options): Promise<ReconciliationReport> {
++  const apply = options.apply === true;
++  if (apply && options.lifecycleQuiesced !== true) throw new Error("lifecycle_quiescence_required");
++  const timeoutMs = options.timeoutMs ?? 5000;
++  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) throw new Error("invalid_timeout");
++  const report: ReconciliationReport = {
++    version: 1, mode: apply ? "delete" : "dry_run", registry_rows: 0, registry_enumeration: "unknown",
++    stored_objects: null, count_cause: null, registry_minus_stored_objects: null,
++    rows: [], removed: 0, would_remove: 0,
++  };
++  try {
++    const observation = await options.countStoredObjects();
++    if (!Number.isSafeInteger(observation.count) || observation.count < 0 || !observation.instrument) throw new Error("invalid_count");
++    report.stored_objects = observation;
++  } catch { report.count_cause = "stored_object_count_unavailable"; }
++  const keys = new Set<string>();
++  try {
++    let cursor: string | undefined;
++    const cursors = new Set<string>();
++    for (;;) {
++      const page = await env.REALM_REGISTRY.list({ cursor, limit: 100 });
++      for (const key of page.keys) keys.add(key.name);
++      if (page.list_complete) break;
++      if (!page.cursor || cursors.has(page.cursor)) throw new Error("invalid_registry_cursor");
++      cursors.add(page.cursor); cursor = page.cursor;
++    }
++    report.registry_enumeration = "complete";
++  } catch {
++    report.registry_rows = keys.size;
++    report.rows = [...keys].map((realm_id) => ({ realm_id, verdict: "unknown", cause: "registry_enumeration_failed", action: "keep" }));
++    return report; // A partial listing is not a deletion plan.
++  }
++  report.registry_rows = keys.size;
++  if (report.stored_objects !== null) report.registry_minus_stored_objects = keys.size - report.stored_objects.count;
++  for (const realm_id of keys) {
++    const row: RowResult = { realm_id, verdict: "unknown", cause: "registry_read_failed", action: "keep" };
++    report.rows.push(row);
++    let raw: string | null;
++    try { raw = await env.REALM_REGISTRY.get(realm_id); } catch { continue; }
++    if (raw === null) { row.cause = "registry_row_missing"; continue; }
++    let value: unknown;
++    try { value = JSON.parse(raw); } catch { row.cause = "invalid_registry_row"; continue; }
++    if (!record(value) || value.realm_id !== realm_id || typeof value.read_capability !== "string"
++      || !/^[0-9a-f]{64}$/.test(value.read_capability)) { row.cause = "invalid_registry_row"; continue; }
++    Object.assign(row, await probe(env, realm_id, value.read_capability, timeoutMs));
++    if (row.verdict !== "absent") continue;
++    if (!apply) { row.action = "would_delete"; report.would_remove++; continue; }
++    // This is NOT compare-and-delete. Requires external lifecycle quiescence;
++    // REGISTRY-SELF-DELETE-1 will move deletion under the DO's lifecycle gate.
++    let current: string | null;
++    try { current = await env.REALM_REGISTRY.get(realm_id); }
++    catch { row.verdict = "unknown"; row.cause = "registry_recheck_failed"; continue; }
++    if (current !== raw) { row.verdict = "unknown"; row.cause = "registry_row_changed"; continue; }
++    try { await env.REALM_REGISTRY.delete(realm_id); row.action = "deleted"; report.removed++; }
++    catch { row.action = "delete_failed"; row.cause = "registry_delete_failed"; }
++  }
++  return report;
++}
+diff --git a/worker/test/backup/reconciliation.workers.test.ts b/worker/test/backup/reconciliation.workers.test.ts
+new file mode 100644
+index 0000000..1873342
+--- /dev/null
++++ b/worker/test/backup/reconciliation.workers.test.ts
+@@ -0,0 +1,141 @@
++import { env, listDurableObjectIds, runInDurableObject } from "cloudflare:test";
++import { beforeEach, expect, it } from "vitest";
++import { reconcile, type ReconciliationEnv } from "../../reconciliation/run";
++
++async function create() {
++  const realm = crypto.randomUUID();
++  const response = await env.REALMS.get(env.REALMS.idFromName(realm)).fetch("https://realm.test/realm/create", {
++    method: "POST", headers: { "x-commonplace-realm-id": realm, "x-commonplace-realm-create": "1" },
++  });
++  expect(response.status).toBe(201); await response.text();
++  expect(await env.REALM_REGISTRY.get(realm)).not.toBeNull();
++  return realm;
++}
++async function storedCount() {
++  let count = 0;
++  for (const id of await listDurableObjectIds(env.REALMS)) {
++    const hasStoredData = await runInDurableObject(env.REALMS.get(id), (_instance, state) =>
++      state.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").toArray().length > 0);
++    if (hasStoredData) count++;
++  }
++  return { count, instrument: "local DO enumeration + independent user-table storage inspection" };
++}
++async function snapshot() {
++  const result: Record<string, string | null> = {};
++  for (const key of (await env.REALM_REGISTRY.list()).keys) result[key.name] = await env.REALM_REGISTRY.get(key.name);
++  return result;
++}
++async function orphan() {
++  const realm = await create();
++  await runInDurableObject(env.REALMS.get(env.REALMS.idFromName(realm)), async (_i, state) => { await state.storage.deleteAll(); });
++  return realm;
++}
++function withFetch(fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>): ReconciliationEnv {
++  return { ...env, REALMS: {
++    idFromName: env.REALMS.idFromName.bind(env.REALMS),
++    get: (id) => new Proxy(env.REALMS.get(id), { get(target, property) {
++      if (property === "fetch") return fetch;
++      return Reflect.get(target, property);
++    } }),
++  } };
++}
++const deletion = { apply: true, lifecycleQuiesced: true, countStoredObjects: storedCount };
++beforeEach(async () => {
++  for (const key of (await env.REALM_REGISTRY.list()).keys) await env.REALM_REGISTRY.delete(key.name);
++  expect((await env.REALM_REGISTRY.list()).keys).toHaveLength(0);
++});
++
++it("R1 R3 R4: dryrun preserves orphan bytes; explicit deletion removes only orphan; repeat removes zero", async () => {
++  const live = await create(); const gone = await orphan();
++  const before = await snapshot();
++  const counts = await storedCount();
++  expect(Object.keys(before)).toHaveLength(2); expect(counts.count).toBe(1);
++  console.info("RECON BASE registry=2 independently stored DO=1 orphan row present=true");
++  const dry = await reconcile(env, { countStoredObjects: storedCount });
++  expect(dry.rows.find((r) => r.realm_id === gone)).toMatchObject({ verdict: "absent", cause: "not_found", action: "would_delete" });
++  expect(dry.would_remove).toBe(1); expect(dry.removed).toBe(0);
++  expect(await snapshot()).toEqual(before);
++  await expect(reconcile(env, { apply: true, countStoredObjects: storedCount })).rejects.toThrow("lifecycle_quiescence_required");
++  expect(await snapshot()).toEqual(before);
++  const applied = await reconcile(env, deletion);
++  expect(applied.rows.find((r) => r.realm_id === live)).toMatchObject({ verdict: "present", action: "keep" });
++  expect(applied.rows.find((r) => r.realm_id === gone)).toMatchObject({ verdict: "absent", action: "deleted" });
++  expect(applied.removed).toBe(1); expect(await env.REALM_REGISTRY.get(gone)).toBeNull();
++  expect(await env.REALM_REGISTRY.get(live)).toBe(before[live]);
++  const repeated = await reconcile(env, deletion);
++  expect(repeated.removed).toBe(0); expect(repeated.would_remove).toBe(0);
++  expect(repeated.registry_rows).toBe(1);
++  console.info("R1/R3/R4 dryrun writes=0 apply removed=1 repeated removed=0");
++});
++
++it.each(["transport_error", "timeout", "http_5xx", "malformed_body", "unexpected_response", "capability_rejected"] as const)(
++  "R2: %s is unknown and preserves the live realm registry bytes", async (cause) => {
++    const realm = await create(); const before = await snapshot();
++    const healthy = await reconcile(env, { countStoredObjects: storedCount });
++    expect(healthy.rows).toHaveLength(1); expect(healthy.rows[0]).toMatchObject({ verdict: "present" });
++    const broken = withFetch(async (_input, init) => {
++      if (cause === "transport_error") throw new Error("fixture unreachable");
++      if (cause === "timeout") return await new Promise<Response>((_resolve, reject) => {
++        init?.signal?.addEventListener("abort", () => reject(new Error("fixture aborted")), { once: true });
++      });
++      if (cause === "http_5xx") return Response.json({ ok: false, error: { code: "not_found" } }, { status: 503 });
++      if (cause === "malformed_body") return new Response("not json", { status: 404 });
++      if (cause === "capability_rejected") return Response.json({ ok: false }, { status: 401 });
++      return Response.json({ ok: false, error: { code: "other" } }, { status: 404 });
++    });
++    const report = await reconcile(broken, { ...deletion, timeoutMs: 20 });
++    const after = await snapshot();
++    console.info("R2 observed", { injected: cause, row: report.rows[0], row_retained: after[realm] === before[realm] });
++    expect(after).toEqual(before);
++    expect(report.rows).toEqual([{ realm_id: realm, verdict: "unknown", cause, action: "keep" }]);
++    expect(report.removed).toBe(0); expect(await snapshot()).toEqual(before);
++    console.info(`R2 healthy=present injected=${cause} verdict=unknown removed=0 byte-identical=true`);
++  },
++);
++
++it.each(["registry_recheck_failed", "registry_row_changed"] as const)("R2 recheck: %s never deletes", async (cause) => {
++  const realm = await orphan(); const original = await env.REALM_REGISTRY.get(realm);
++  let reads = 0; let deletes = 0;
++  const registry: ReconciliationEnv["REALM_REGISTRY"] = {
++    list: env.REALM_REGISTRY.list.bind(env.REALM_REGISTRY),
++    get: async () => {
++      reads++;
++      if (reads === 2) {
++        if (cause === "registry_recheck_failed") throw new Error("fixture read failed");
++        return "replacement row fixture";
++      }
++      return original;
++    },
++    delete: async () => { deletes++; },
++  };
++  const report = await reconcile({ ...env, REALM_REGISTRY: registry }, deletion);
++  expect(report.rows[0]).toMatchObject({ verdict: "unknown", cause, action: "keep" });
++  expect(deletes).toBe(0); expect(await env.REALM_REGISTRY.get(realm)).toBe(original);
++});
++
++it("R5: an unregistered live realm produces independent 1 vs 2; unknown count stays unknown", async () => {
++  await create(); const hidden = await create();
++  expect(Object.keys(await snapshot())).toHaveLength(2); expect((await storedCount()).count).toBe(2);
++  await env.REALM_REGISTRY.delete(hidden);
++  const report = await reconcile(env, { countStoredObjects: storedCount });
++  expect(report.registry_rows).toBe(1); expect(report.stored_objects?.count).toBe(2);
++  expect(report.registry_minus_stored_objects).toBe(-1); expect(report.rows).toHaveLength(1);
++  const unavailable = await reconcile(env, { countStoredObjects: async () => { throw new Error("fixture blind counter"); } });
++  expect(unavailable.stored_objects).toBeNull(); expect(unavailable.registry_minus_stored_objects).toBeNull();
++  expect(unavailable.count_cause).toBe("stored_object_count_unavailable");
++  console.info("R5 before KV=2 DO=2 after KV=1 DO=2 delta=-1; failed counter=null, never zero");
++});
++
++it("enumeration failure preserves rows and reports the partial inventory as unknown", async () => {
++  const realm = await orphan(); const before = await snapshot(); let pages = 0;
++  const registry: ReconciliationEnv["REALM_REGISTRY"] = {
++    ...env.REALM_REGISTRY,
++    get: env.REALM_REGISTRY.get.bind(env.REALM_REGISTRY), delete: env.REALM_REGISTRY.delete.bind(env.REALM_REGISTRY),
++    list: async () => { if (pages++) throw new Error("fixture failed page");
++      return { keys: [{ name: realm }], list_complete: false, cursor: "next", cacheStatus: null }; },
++  };
++  const result = await reconcile({ ...env, REALM_REGISTRY: registry }, deletion);
++  expect(result.registry_enumeration).toBe("unknown"); expect(result.registry_minus_stored_objects).toBeNull();
++  expect(result.rows[0]).toMatchObject({ verdict: "unknown", cause: "registry_enumeration_failed" });
++  expect(await snapshot()).toEqual(before);
++});

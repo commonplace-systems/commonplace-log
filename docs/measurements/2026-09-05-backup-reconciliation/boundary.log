@@ -1,0 +1,4 @@
+D4 covers the complete production backup source set; excludes tests, fixture artifacts, operator exports and provider telemetry.
+D4 PASS: 2 production modules match the reviewed bucket-only artifact output paths.
+A4 SOURCE baseline live-realm matches=12; backup matches=0
+A6 PASS: live config, live entry module, and commonplace_log/ have zero diff from 7c9d9ca16b418ac7c218e5827540d3fed3c8d7a8

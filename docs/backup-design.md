@@ -296,3 +296,36 @@ Platform logging and human disclosure therefore remain custody obligations, not
 properties this gate proves. Earlier sections and the brief remain historical;
 this section corrects the assumption that identifier-free credentials imply
 identifier-free backup metadata.
+
+## 11. Reconciliation: absence, unknown reads, and an administrative boundary
+
+At base `330c013`, registry cleanup lives in `worker/reconciliation`, separate
+from the backup's pinned read-only modules. No production entry or binding is
+added. Default dry run writes nothing; a returned report names every examined
+row as present, absent or unknown. Only a DO response of 404 with the explicit
+not_found error body establishes absence. Failed requests and failed safety
+rechecks remain unknown and never delete.
+
+Apply mode is opt-in and requires explicit acknowledgment of an externally
+quiescent realm-lifecycle window. A pre-delete byte recheck is mandatory but is
+not atomic compare-and-delete. Recreation can still race it; eventual KV reads
+can also be stale. This limitation is not disguised as concurrency safety.
+Planner ruling 29945 ranks the closing mechanism as `REGISTRY-SELF-DELETE-1`:
+perform administrative cleanup inside the DO while holding its lifecycle gate,
+with the necessary authority change reviewed separately. This round changes no
+READ_ROUTES, capability minting, creation or removal path.
+
+The report independently records registry key count and an instrument-labelled
+stored-DO count; failed observation is null. Their signed difference exposes a
+count disagreement. Equal counts can hide one orphan and one unregistered realm;
+they do not establish identity agreement. Local arms measure KV and user storage
+on separately enumerated DO IDs. No production count is inferred from fixtures.
+
+The inverse repair remains outside this repository: commonplace-next knows the
+realm IDs it created and is the starting point for a backfill inventory. A DO
+objects listing supplies opaque IDs and hasStoredData, not the names needed by
+idFromName. A known name alone also cannot recover an existing read secret; that
+custody problem needs an operator with suitable authority, not an automatic mint.
+Reconciliation reports contain sensitive realm identifiers and must stay under
+the metadata custody decision in §10. The library returns its report in memory;
+production invocation and protected report persistence remain unwired.

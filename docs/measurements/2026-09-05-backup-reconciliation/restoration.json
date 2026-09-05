@@ -1,0 +1,5 @@
+{
+  "source_sha256": "aba7850a88b9fb4ae4ac2d8989db90f8491ff3c44983048003b9671e321d3ede",
+  "test_sha256": "35d9705866e434373d239fb45c95738d4a0c836db68b12d17147f3da25dabcbd",
+  "restored": "production module byte-equality asserted; test unchanged during mutation"
+}

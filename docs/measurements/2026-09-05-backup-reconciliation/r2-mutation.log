@@ -1,0 +1,77 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:450291) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > D1: fixture listing confirms guessed membership after known Elixir controls
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID stops backup explicitly and differs from an absent pagination cursor
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R1 R3 R4: dryrun preserves orphan bytes; explicit deletion removes only orphan; repeat removes zero
+stdout | test/backup/reconciliation.workers.test.ts > R2: transport_error is unknown and preserves the live realm registry bytes
+R2 observed {
+  injected: 'transport_error',
+  row: {
+    realm_id: '4ea54fba-dff0-435c-ad4d-75d62df4d08c',
+    verdict: 'absent',
+    cause: 'transport_error',
+    action: 'deleted'
+  },
+  row_retained: false
+}
+
+ × |backup| test/backup/reconciliation.workers.test.ts > R2: transport_error is unknown and preserves the live realm registry bytes 170ms
+   → expected {} to deeply equal { …(1) }
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2: timeout is unknown and preserves the live realm registry bytes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2: http_5xx is unknown and preserves the live realm registry bytes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2: malformed_body is unknown and preserves the live realm registry bytes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2: unexpected_response is unknown and preserves the live realm registry bytes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2: capability_rejected is unknown and preserves the live realm registry bytes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2 recheck: registry_recheck_failed never deletes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R2 recheck: registry_row_changed never deletes
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > R5: an unregistered live realm produces independent 1 vs 2; unknown count stays unknown
+ ↓ |backup| test/backup/reconciliation.workers.test.ts > enumeration failure preserves rows and reports the partial inventory as unknown
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |backup| test/backup/reconciliation.workers.test.ts > R2: transport_error is unknown and preserves the live realm registry bytes
+AssertionError: expected {} to deeply equal { …(1) }
+
+- Expected
++ Received
+
+- {
+-   "4ea54fba-dff0-435c-ad4d-75d62df4d08c": "{\"realm_id\":\"4ea54fba-dff0-435c-ad4d-75d62df4d08c\",\"read_capability\":\"a89f5d1200372bc16d092bbf2b743f0126951c5b66548db252b351015ed76050\",\"registered_at\":\"2026-09-05T16:24:07.148Z\"}",
+- }
++ {}
+
+ ❯ test/backup/reconciliation.workers.test.ts:89:19
+     87|     const after = await snapshot();
+     88|     console.info("R2 observed", { injected: cause, row: report.rows[0]…
+     89|     expect(after).toEqual(before);
+       |                   ^
+     90|     expect(report.rows).toEqual([{ realm_id: realm, verdict: "unknown"…
+     91|     expect(report.removed).toBe(0); expect(await snapshot()).toEqual(b…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 skipped (2)
+      Tests  1 failed | 21 skipped (22)
+   Start at  16:24:02
+   Duration  4.59s (transform 487ms, setup 0ms, collect 1.21s, tests 219ms, environment 1ms, prepare 816ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...
