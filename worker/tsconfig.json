@@ -21,6 +21,7 @@
     "src/realm",
     "test/do",
     "test/realm/**/*.workers.test.ts",
-    "test/realm/helpers.ts"
+    "test/realm/helpers.ts",
+    "test/backup"
   ]
 }

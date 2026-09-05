@@ -171,3 +171,56 @@ that exists, is unregistered, and whose write secret the caller never received.
 BINDING MUST EXIST BEFORE THIS CODE DEPLOYS. Deployed without them, REALM CREATION STOPS.**
 ⭐ **Measured, not reasoned: binding it in `wrangler.test.jsonc` is what took 20 red arms in
 `http.workers.test.ts` back to green. The test corpus reproduced the outage in miniature.**
+
+## 9. Correction: enumerate logs, preserve log identity, and use writer cursors
+
+BACKUP-1b-ii preflight, 2026-09-05 at `b75ac47`; ruled by commonplace-plan,
+ledger row 1000 / plan `38458dd`, clod-squad message 29837. Sections 3 and 4
+remain above as historical statements, including the incorrect ones.
+
+The first backup prompt described reading a frontier for each realm, then using
+`tail-local` per writer. The implementation exposes only **per-log** frontiers:
+every existing read route needs `log_id`, but the registry contains only realm IDs.
+The missing operation is log enumeration. This round adds a paginated
+`POST /list-logs` (`after_log_id`, `limit`; response `log_ids`, `next_after_log_id`)
+and admits it through the existing READ scope. That scope is realm-wide; there
+was no per-log authorization restriction to widen. Reads of an empty realm
+return an empty inventory without creating the log schema.
+
+The storage schema makes `(log_id, writer_id, writer_seq)` unique. Section 3's
+old key drops `log_id`, so two legitimate entries can map to one R2 object.
+The corrected layout is:
+
+```text
+<realm_id>/<log_id>/<writer_id>/<seq padded to at least 12>.json
+<realm_id>/<log_id>/frontier.json
+<realm_id>/manifest.json
+_runs/<run_id>.json
+```
+
+Each identifier path segment is percent-encoded. Entry objects contain the exact
+canonical bytes returned by the source; frontiers record per-writer sequence and
+entry ID; the realm manifest records the log IDs. Entries are immutable by
+conditional creation and byte comparison, not because UUIDv7 is content-addressed
+(Section 3's description of UUIDv7 as content-addressed was also incorrect).
+
+Use `/read-writer` with `after_seq` and the captured frontier's `through_seq`.
+`tail-local` takes `after_arrival`: its cursor is realm-wide, replica-local arrival
+metadata and is not a writer sequence. A log's frontier is written after its
+entries, and the realm's manifest after all enumerated log frontiers. Failed
+checkpoint writes leave the previous checkpoint intact; retries compare existing
+entry bytes rather than overwriting them. Concurrent checkpoint writes use ETags.
+
+Section 4 also says minting again revokes the prior capability. The implementation
+refuses a second mint with `409 read_capability_exists`. Rotation is explicit
+revocation followed by minting. The revocation test now revokes, runs the backup,
+and checks for `capability_rejected` in the persisted run log; it separately pins
+the second-mint refusal. Generated test capabilities stay in temporary memory/KV.
+
+These discrepancies were found by reading the HTTP handlers and uniqueness
+constraints before implementing the prose. The separate-Worker decision remains
+unchanged. Its registry interface exposes only `get`/`list`; this is a code
+restriction, not a claim that Workers KV bindings have a platform read-only mode.
+The run explicitly reports `registered_realms_only`: pre-registry realms are not
+backfilled here, and production registry/DO-count reconciliation remains 1b-iii.
+Restore verification remains 1c; this round does not certify a usable restore.

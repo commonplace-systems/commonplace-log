@@ -1,0 +1,10 @@
+--- worker/backup/run.ts
++++ worker/backup/run.ts
+@@ -255,6 +255,7 @@
+             || !/^[0-9a-f]{64}$/.test(value.read_capability)) throw new Stop("registry_invalid");
+           await backupRealm(env, key.name, value.read_capability, result);
+         } catch (error) {
++          if (error instanceof Stop && error.code === "capability_rejected") continue;
+           result.outcome = "stopped";
+           result.stop = error instanceof Stop ? error.code : "registry_unavailable";
+           run.outcome = "stopped";

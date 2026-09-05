@@ -1,0 +1,924 @@
+diff --git a/docs/backup-design.md b/docs/backup-design.md
+index 574b021..ecdf3e1 100644
+--- a/docs/backup-design.md
++++ b/docs/backup-design.md
+@@ -171,3 +171,56 @@ that exists, is unregistered, and whose write secret the caller never received.
+ BINDING MUST EXIST BEFORE THIS CODE DEPLOYS. Deployed without them, REALM CREATION STOPS.**
+ ⭐ **Measured, not reasoned: binding it in `wrangler.test.jsonc` is what took 20 red arms in
+ `http.workers.test.ts` back to green. The test corpus reproduced the outage in miniature.**
++
++## 9. Correction: enumerate logs, preserve log identity, and use writer cursors
++
++BACKUP-1b-ii preflight, 2026-09-05 at `b75ac47`; ruled by commonplace-plan,
++ledger row 1000 / plan `38458dd`, clod-squad message 29837. Sections 3 and 4
++remain above as historical statements, including the incorrect ones.
++
++The first backup prompt described reading a frontier for each realm, then using
++`tail-local` per writer. The implementation exposes only **per-log** frontiers:
++every existing read route needs `log_id`, but the registry contains only realm IDs.
++The missing operation is log enumeration. This round adds a paginated
++`POST /list-logs` (`after_log_id`, `limit`; response `log_ids`, `next_after_log_id`)
++and admits it through the existing READ scope. That scope is realm-wide; there
++was no per-log authorization restriction to widen. Reads of an empty realm
++return an empty inventory without creating the log schema.
++
++The storage schema makes `(log_id, writer_id, writer_seq)` unique. Section 3's
++old key drops `log_id`, so two legitimate entries can map to one R2 object.
++The corrected layout is:
++
++```text
++<realm_id>/<log_id>/<writer_id>/<seq padded to at least 12>.json
++<realm_id>/<log_id>/frontier.json
++<realm_id>/manifest.json
++_runs/<run_id>.json
++```
++
++Each identifier path segment is percent-encoded. Entry objects contain the exact
++canonical bytes returned by the source; frontiers record per-writer sequence and
++entry ID; the realm manifest records the log IDs. Entries are immutable by
++conditional creation and byte comparison, not because UUIDv7 is content-addressed
++(Section 3's description of UUIDv7 as content-addressed was also incorrect).
++
++Use `/read-writer` with `after_seq` and the captured frontier's `through_seq`.
++`tail-local` takes `after_arrival`: its cursor is realm-wide, replica-local arrival
++metadata and is not a writer sequence. A log's frontier is written after its
++entries, and the realm's manifest after all enumerated log frontiers. Failed
++checkpoint writes leave the previous checkpoint intact; retries compare existing
++entry bytes rather than overwriting them. Concurrent checkpoint writes use ETags.
++
++Section 4 also says minting again revokes the prior capability. The implementation
++refuses a second mint with `409 read_capability_exists`. Rotation is explicit
++revocation followed by minting. The revocation test now revokes, runs the backup,
++and checks for `capability_rejected` in the persisted run log; it separately pins
++the second-mint refusal. Generated test capabilities stay in temporary memory/KV.
++
++These discrepancies were found by reading the HTTP handlers and uniqueness
++constraints before implementing the prose. The separate-Worker decision remains
++unchanged. Its registry interface exposes only `get`/`list`; this is a code
++restriction, not a claim that Workers KV bindings have a platform read-only mode.
++The run explicitly reports `registered_realms_only`: pre-registry realms are not
++backfilled here, and production registry/DO-count reconciliation remains 1b-iii.
++Restore verification remains 1c; this round does not certify a usable restore.
+diff --git a/worker/backup/README.md b/worker/backup/README.md
+new file mode 100644
+index 0000000..28967cb
+--- /dev/null
++++ b/worker/backup/README.md
+@@ -0,0 +1,66 @@
++# Backup Worker
++
++`wrangler.backup.jsonc` is a second Worker, with no Containers configuration,
++HTTP handler, or active cron. It binds the existing `commonplace-log` script's
++`RealmNode` namespace, the existing realm-registry KV namespace, and the backup
++R2 bucket. Set the real registry namespace ID before any separately authorized
++activation; the checked-in placeholder is not a working deployment configuration.
++This round neither deploys nor changes a live binding or bucket.
++
++`scheduled()` runs the registry walk and rejects if its persisted run reports a
++stop. Only the local test entry exports `POST /run`. The production module exposes
++no HTTP trigger. Tests use local Workers SQLite, KV, and R2; no Cloudflare account
++credentials are needed.
++
++The source contract is based on log main `b75ac47` plus the `/list-logs` addition
++in this round. Before activation, compare the deployed `prov:source-sha` to the
++landed implementation containing that route; the pre-round deployed script cannot
++serve it. That deployment comparison is an activation prerequisite, not a check
++this code-and-tests round has performed.
++
++Run checks from `worker/`:
++
++```sh
++npm ci
++npx vitest run --config vitest.backup.config.ts --reporter=verbose --sequence.seed=20260905
++npx tsc -p tsconfig.backup.json --noEmit
++bash scripts/check-backup-boundary.sh
++npm test
++```
++
++The normal test command includes the backup project. The focused TypeScript check
++does not include unrelated legacy test files; the existing full check still
++reports the two previously documented TS2307 errors in the read-capability tests.
++
++See [design correction §9](../../docs/backup-design.md#9-correction-enumerate-logs-preserve-log-identity-and-use-writer-cursors)
++for the layout. `frontier.json` contains `{version: 1, log_id, writers}` where
++each writer has `writer_id`, `seq`, `entry_id`. `manifest.json` contains
++`{version: 1, realm_id, log_ids}`. Checkpoints contain no credentials. Entries retain
++source bytes; objects at an existing coordinate are compared, never replaced.
++
++Conditional R2 writes use `etagDoesNotMatch: "*"` for new objects and `etagMatches`
++for checkpoint replacement. A failed condition returns `null`; it is treated as
++a conflict rather than successful advancement. See the
++[Cloudflare R2 API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/).
++
++Each `_runs/<uuid>.json` records start/end timestamps, the exact number of registry
++keys visited, per-realm appended counts, frontier/manifest writes, and named stops.
++It reports coverage as `registered_realms_only`, including when the registry is
++empty. It cannot prove that production's registry is complete. A realm stop does
++not suppress the other registered realms. A run-log write failure rejects the
++invocation; no system can persist its failure into the same unavailable bucket.
++
++Failure names include `capability_rejected`, `realm_not_found`, `read_failed`,
++`read_refused`, `invalid_response`, `source_regressed`, `writer_fork`,
++`backup_entry_conflict`, `checkpoint_conflict`, `storage_failed`, and registry
++failures. No remote error body or exception message is copied into the log.
++
++The registry interface exposes only `get` and `list`, and the client accepts only
++the three read routes it needs. Cloudflare's KV binding itself is not attenuated
++by that TypeScript interface; the source check establishes what this Worker calls,
++not a platform sandbox for arbitrary replacement Worker code.
++
++An invocation snapshots each log frontier independently. This is not a cross-log
++transaction or a point-in-time realm snapshot. Newly created logs can appear in
++a later run. Overlapping runs may stop with a checkpoint conflict and retry later.
++There is no retention/deletion, registry repair, or restore implementation here.
+diff --git a/worker/backup/index.ts b/worker/backup/index.ts
+new file mode 100644
+index 0000000..dd1a527
+--- /dev/null
++++ b/worker/backup/index.ts
+@@ -0,0 +1,9 @@
++import { runBackup, type BackupEnv } from "./run";
++
++// Separate script: no HTTP entrypoint, Container import, or lifecycle configuration.
++export default {
++  async scheduled(_controller: ScheduledController, env: BackupEnv): Promise<void> {
++    const result = await runBackup(env);
++    if (result.outcome !== "complete") throw new Error(`backup_stopped:${result.run_id}`);
++  },
++} satisfies ExportedHandler<BackupEnv>;
+diff --git a/worker/backup/run.ts b/worker/backup/run.ts
+new file mode 100644
+index 0000000..d857ac4
+--- /dev/null
++++ b/worker/backup/run.ts
+@@ -0,0 +1,276 @@
++/** Read-only realm HTTP client. Checkpoints advance only after durable entry objects. */
++export interface BackupEnv {
++  REALMS: Pick<DurableObjectNamespace, "idFromName" | "get">;
++  // Only these KV operations enter the loop. A KV binding itself is not a platform read-only grant.
++  REALM_REGISTRY: Pick<KVNamespace, "get" | "list">;
++  BACKUP: Pick<R2Bucket, "get" | "put">;
++}
++
++type ReadRoute = "/list-logs" | "/frontier" | "/read-writer";
++type Tip = { writer_id: string; seq: number; entry_id: string };
++type Checkpoint = { version: 1; log_id: string; writers: Tip[] };
++type StopCode = "registry_invalid" | "registry_entry_missing" | "registry_unavailable"
++  | "capability_rejected" | "realm_not_found" | "read_refused" | "read_failed"
++  | "invalid_response" | "source_regressed" | "writer_fork" | "backup_entry_conflict"
++  | "checkpoint_conflict" | "storage_failed";
++class Stop extends Error {
++  constructor(readonly code: StopCode) { super(code); }
++}
++export type RealmResult = {
++  realm_id: string;
++  entries_appended: number;
++  frontiers_written: string[];
++  manifest_written: boolean;
++  outcome: "complete" | "stopped";
++  stop?: StopCode;
++};
++export type RunResult = {
++  version: 1;
++  run_id: string;
++  started_at: string;
++  completed_at: string;
++  enumeration: "registry_only";
++  coverage: "registered_realms_only";
++  registry_count: number;
++  realms: RealmResult[];
++  outcome: "complete" | "stopped";
++  stop?: StopCode;
++};
++const PAGE_SIZE = 100;
++const segment = (value: string) => encodeURIComponent(value);
++const prefix = (realm: string, log: string) => `${segment(realm)}/${segment(log)}`;
++
++function object(value: unknown): Record<string, unknown> {
++  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Stop("invalid_response");
++  return value as Record<string, unknown>;
++}
++function identifier(value: unknown): string {
++  if (typeof value !== "string" || value.length === 0) throw new Stop("invalid_response");
++  return value;
++}
++function array(value: unknown): unknown[] {
++  if (!Array.isArray(value)) throw new Stop("invalid_response");
++  return value;
++}
++function sequence(value: unknown): number {
++  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new Stop("invalid_response");
++  return value;
++}
++function tips(value: unknown): Tip[] {
++  const seen = new Set<string>();
++  return array(value).map((item) => {
++    const row = object(item);
++    const writer_id = identifier(row.writer_id);
++    if (seen.has(writer_id)) throw new Stop("invalid_response");
++    seen.add(writer_id);
++    return { writer_id, seq: sequence(row.seq), entry_id: identifier(row.entry_id) };
++  }).sort((a, b) => a.writer_id < b.writer_id ? -1 : a.writer_id > b.writer_id ? 1 : 0);
++}
++
++async function read(env: BackupEnv, realm: string, capability: string, route: ReadRoute,
++  body: Record<string, unknown>): Promise<Record<string, unknown>> {
++  let response: Response;
++  try {
++    response = await env.REALMS.get(env.REALMS.idFromName(realm)).fetch(
++      `https://realm.internal${route}`, {
++        method: "POST", headers: { authorization: `Bearer ${capability}`, "content-type": "application/json" },
++        body: JSON.stringify(body),
++      },
++    );
++  } catch { throw new Stop("read_failed"); }
++  // Never copy error bodies or thrown messages: they may include request credentials.
++  if (!response.ok) {
++    // Finish the cross-Worker stream before releasing its storage/test context.
++    try { await response.arrayBuffer(); } catch { throw new Stop("read_failed"); }
++  }
++  if (response.status === 401 || response.status === 403) throw new Stop("capability_rejected");
++  if (response.status === 404) throw new Stop("realm_not_found");
++  if (!response.ok) throw new Stop("read_refused");
++  try {
++    const result = object(await response.json());
++    if (result.ok !== true) throw new Stop("invalid_response");
++    return result;
++  } catch { throw new Stop("invalid_response"); }
++}
++
++async function listLogs(env: BackupEnv, realm: string, capability: string): Promise<string[]> {
++  const logs: string[] = [];
++  let after = "";
++  for (;;) {
++    const page = await read(env, realm, capability, "/list-logs", { after_log_id: after, limit: PAGE_SIZE });
++    const ids = array(page.log_ids).map(identifier);
++    for (const id of ids) {
++      if (id <= after) throw new Stop("invalid_response");
++      logs.push(id); after = id;
++    }
++    if (page.next_after_log_id === null) return logs;
++    if (ids.length === 0 || page.next_after_log_id !== after) throw new Stop("invalid_response");
++  }
++}
++
++async function stored(env: BackupEnv, key: string): Promise<{ text: string; etag: string } | null> {
++  try {
++    const item = await env.BACKUP.get(key);
++    return item === null ? null : { text: await item.text(), etag: item.etag };
++  } catch { throw new Stop("storage_failed"); }
++}
++
++/** Conditional checkpoints prevent an overlapping stale run from replacing a newer snapshot. */
++async function checkpoint(env: BackupEnv, key: string, value: unknown,
++  previous: { text: string; etag: string } | null): Promise<boolean> {
++  const text = JSON.stringify(value);
++  if (previous?.text === text) return false;
++  try {
++    const saved = await env.BACKUP.put(key, text, {
++      onlyIf: previous === null ? { etagDoesNotMatch: "*" } : { etagMatches: previous.etag },
++      httpMetadata: { contentType: "application/json" },
++    });
++    if (saved === null) throw new Stop("checkpoint_conflict");
++    return true;
++  } catch (error) {
++    if (error instanceof Stop) throw error;
++    throw new Stop("storage_failed");
++  }
++}
++
++async function appendObject(env: BackupEnv, key: string, bytes: Uint8Array): Promise<boolean> {
++  try {
++    // If-None-Match is atomic: concurrent runs cannot overwrite an immutable entry.
++    const written = await env.BACKUP.put(key, bytes, {
++      onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" },
++    });
++    if (written !== null) return true;
++    const existing = await env.BACKUP.get(key);
++    if (existing === null) throw new Stop("storage_failed");
++    const prior = new Uint8Array(await existing.arrayBuffer());
++    if (prior.length !== bytes.length || prior.some((byte, i) => byte !== bytes[i])) {
++      throw new Stop("backup_entry_conflict");
++    }
++    return false;
++  } catch (error) {
++    if (error instanceof Stop) throw error;
++    throw new Stop("storage_failed");
++  }
++}
++
++function decode(encoded: unknown): { bytes: Uint8Array; entry: Record<string, unknown> } {
++  try {
++    const bytes = Uint8Array.from(atob(identifier(encoded)), (ch) => ch.charCodeAt(0));
++    return { bytes, entry: object(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes))) };
++  } catch { throw new Stop("invalid_response"); }
++}
++
++async function backupLog(env: BackupEnv, realm: string, capability: string, log: string,
++  result: RealmResult): Promise<void> {
++  const key = `${prefix(realm, log)}/frontier.json`;
++  const previous = await stored(env, key);
++  let prior: Tip[] = [];
++  if (previous !== null) {
++    try {
++      const value = object(JSON.parse(previous.text));
++      if (value.version !== 1 || value.log_id !== log) throw new Stop("invalid_response");
++      prior = tips(value.writers);
++    } catch { throw new Stop("invalid_response"); }
++  }
++  const response = await read(env, realm, capability, "/frontier", { log_id: log });
++  const current = tips(object(response.frontier).writers);
++  const old = new Map(prior.map((tip) => [tip.writer_id, tip]));
++  for (const tip of prior) {
++    const next = current.find((item) => item.writer_id === tip.writer_id);
++    if (next === undefined || next.seq < tip.seq) throw new Stop("source_regressed");
++    if (next.seq === tip.seq && next.entry_id !== tip.entry_id) throw new Stop("writer_fork");
++  }
++  for (const tip of current) {
++    const last = old.get(tip.writer_id);
++    let after = last?.seq ?? 0;
++    let predecessor: string | null = last?.entry_id ?? null;
++    while (after < tip.seq) {
++      const response = await read(env, realm, capability, "/read-writer", {
++        log_id: log, writer_id: tip.writer_id, after_seq: after, through_seq: tip.seq, limit: PAGE_SIZE,
++      });
++      const page = object(response.page);
++      const rows = array(page.entries);
++      if (rows.length === 0 || rows.length > PAGE_SIZE) throw new Stop("invalid_response");
++      for (const item of rows) {
++        const row = object(item);
++        const { bytes, entry } = decode(row.canonical_bytes);
++        if (row.writer_seq !== after + 1 || entry.writer_seq !== row.writer_seq || row.writer_seq > tip.seq
++          || entry.log_id !== log || entry.writer_id !== tip.writer_id) throw new Stop("invalid_response");
++        if (entry.prev_entry_id !== predecessor) throw new Stop("writer_fork");
++        const id = identifier(entry.entry_id);
++        if (row.writer_seq === tip.seq && id !== tip.entry_id) throw new Stop("writer_fork");
++        const objectKey = `${prefix(realm, log)}/${segment(tip.writer_id)}/${String(row.writer_seq).padStart(12, "0")}.json`;
++        if (await appendObject(env, objectKey, bytes)) result.entries_appended++;
++        after = row.writer_seq; predecessor = id;
++      }
++      if (after < tip.seq && page.next_after_seq !== after) throw new Stop("invalid_response");
++      if (after === tip.seq && page.next_after_seq !== null) throw new Stop("invalid_response");
++    }
++  }
++  const value: Checkpoint = { version: 1, log_id: log, writers: current };
++  // Commit point for this log: every entry through these tips exists in R2 before this put.
++  if (await checkpoint(env, key, value, previous)) result.frontiers_written.push(log);
++}
++
++async function backupRealm(env: BackupEnv, realm: string, capability: string, result: RealmResult) {
++  const manifestKey = `${segment(realm)}/manifest.json`;
++  const previous = await stored(env, manifestKey);
++  const logs = await listLogs(env, realm, capability);
++  if (previous !== null) {
++    try {
++      const manifest = object(JSON.parse(previous.text));
++      if (manifest.version !== 1 || manifest.realm_id !== realm) throw new Stop("invalid_response");
++      if (array(manifest.log_ids).map(identifier).some((log) => !logs.includes(log))) throw new Stop("source_regressed");
++    } catch (error) { if (error instanceof Stop) throw error; throw new Stop("invalid_response"); }
++  }
++  for (const log of logs) await backupLog(env, realm, capability, log, result);
++  // Realm commit point: inventory appears only once each named log has a durable frontier.
++  result.manifest_written = await checkpoint(env, manifestKey,
++    { version: 1, realm_id: realm, log_ids: logs }, previous);
++}
++
++export async function runBackup(env: BackupEnv): Promise<RunResult> {
++  const run: RunResult = {
++    version: 1, run_id: crypto.randomUUID(), started_at: new Date().toISOString(), completed_at: "",
++    enumeration: "registry_only", coverage: "registered_realms_only", registry_count: 0,
++    realms: [], outcome: "complete",
++  };
++  let cursor: string | undefined;
++  const seen = new Set<string>();
++  try {
++    for (;;) {
++      const page = await env.REALM_REGISTRY.list({ cursor, limit: PAGE_SIZE });
++      for (const key of page.keys) {
++        if (seen.has(key.name)) continue;
++        seen.add(key.name); run.registry_count++;
++        const result: RealmResult = { realm_id: key.name, entries_appended: 0, frontiers_written: [],
++          manifest_written: false, outcome: "complete" };
++        run.realms.push(result);
++        try {
++          const raw = await env.REALM_REGISTRY.get(key.name);
++          if (raw === null) throw new Stop("registry_entry_missing");
++          let value: Record<string, unknown>;
++          try { value = object(JSON.parse(raw)); } catch { throw new Stop("registry_invalid"); }
++          if (value.realm_id !== key.name || typeof value.read_capability !== "string"
++            || !/^[0-9a-f]{64}$/.test(value.read_capability)) throw new Stop("registry_invalid");
++          await backupRealm(env, key.name, value.read_capability, result);
++        } catch (error) {
++          result.outcome = "stopped";
++          result.stop = error instanceof Stop ? error.code : "registry_unavailable";
++          run.outcome = "stopped";
++        }
++      }
++      if (page.list_complete) break;
++      if (!page.cursor || page.cursor === cursor) throw new Stop("registry_unavailable");
++      cursor = page.cursor;
++    }
++  } catch {
++    run.outcome = "stopped"; run.stop = "registry_unavailable";
++  }
++  run.completed_at = new Date().toISOString();
++  // If even the run log cannot be persisted, reject the invocation; never claim success.
++  if (!await env.BACKUP.put(`_runs/${run.run_id}.json`, JSON.stringify(run), {
++    onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" },
++  })) throw new Stop("storage_failed");
++  return run;
++}
+diff --git a/worker/scripts/check-backup-boundary.sh b/worker/scripts/check-backup-boundary.sh
+new file mode 100644
+index 0000000..b961381
+--- /dev/null
++++ b/worker/scripts/check-backup-boundary.sh
+@@ -0,0 +1,18 @@
++#!/usr/bin/env bash
++set -euo pipefail
++cd "$(dirname "$0")/.."
++base="${1:-b75ac47afe03a78c809b0e3c91b87f790f1598b8}"
++python3 - <<'PY'
++from pathlib import Path
++import re
++pattern = re.compile(r'/(?:create-log|take-lease|commit|realm/read-capability)|realm_secret|write_secret|storageFetch')
++def hits(directory):
++    return sum(len(pattern.findall(p.read_text())) for p in Path(directory).rglob('*.ts'))
++control = hits('src/realm')
++subject = hits('backup')
++print(f'A4 SOURCE baseline live-realm matches={control}; backup matches={subject}')
++assert control > 0, 'source scanner is blind'
++assert subject == 0, 'backup references a write surface'
++PY
++git diff --exit-code "$base" -- wrangler.jsonc src/index.ts ../commonplace_log/
++echo "A6 PASS: live config, live entry module, and commonplace_log/ have zero diff from $base"
+diff --git a/worker/src/realm/http.ts b/worker/src/realm/http.ts
+index 7e769bc..589ed95 100644
+--- a/worker/src/realm/http.ts
++++ b/worker/src/realm/http.ts
+@@ -183,6 +183,14 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
+     const path = new URL(request.url).pathname;
+     const value = await body(request);
+ 
++    if (path === "/list-logs") {
++      const after = value.after_log_id === undefined ? "" : string(value.after_log_id);
++      const limit = value.limit === undefined ? 100 : positiveInteger(value.limit);
++      if (limit > 1000) throw new MalformedRequest();
++      const result = store.listLogs(after, limit);
++      return json({ ok: true, log_ids: result.logIds, next_after_log_id: result.nextAfterLogId });
++    }
++
+     if (path === "/create-log") {
+       const { log_id, format_version, created_at } = value;
+       store.createLog(string(log_id), {
+diff --git a/worker/src/realm/realm_auth.ts b/worker/src/realm/realm_auth.ts
+index 7ea2f78..e085870 100644
+--- a/worker/src/realm/realm_auth.ts
++++ b/worker/src/realm/realm_auth.ts
+@@ -94,6 +94,7 @@ async function matches(presented: string, expected: Uint8Array | null): Promise<
+  * why a read capability can never mint another and the write secret stays the only root.
+  */
+ const READ_ROUTES: ReadonlySet<string> = new Set([
++  "/list-logs",
+   "/frontier",
+   "/read-set",
+   "/read-writer",
+diff --git a/worker/src/realm/store.ts b/worker/src/realm/store.ts
+index 53a8342..ad13d91 100644
+--- a/worker/src/realm/store.ts
++++ b/worker/src/realm/store.ts
+@@ -279,6 +279,20 @@ export class RealmStore {
+     }
+   }
+ 
++  /** Realm-wide inventory for its already realm-wide read capability. Keyset paginated. */
++  listLogs(afterLogId = "", limit = 100): { logIds: string[]; nextAfterLogId: string | null } {
++    // A created realm may have no logs yet. Reads must not create the log schema.
++    if (this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='logs'").toArray().length === 0) {
++      return { logIds: [], nextAfterLogId: null };
++    }
++    const rows = this.sql.exec(
++      "SELECT log_id FROM logs WHERE log_id > ? ORDER BY log_id LIMIT ?",
++      afterLogId, limit + 1,
++    ).toArray();
++    const logIds = rows.slice(0, limit).map((row) => String(row.log_id));
++    return { logIds, nextAfterLogId: rows.length > limit ? logIds.at(-1) ?? null : null };
++  }
++
+   frontier(logId: string): { writers: Array<{ writerId: string; seq: number; entryId: string }> } {
+     this.requireLog(logId);
+     const writers = this.sql
+diff --git a/worker/test/backup-boundary.test.ts b/worker/test/backup-boundary.test.ts
+new file mode 100644
+index 0000000..f5e482b
+--- /dev/null
++++ b/worker/test/backup-boundary.test.ts
+@@ -0,0 +1,27 @@
++import { readFileSync, readdirSync } from "node:fs";
++import { describe, expect, it } from "vitest";
++
++const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
++describe("backup deployment boundary", () => {
++  it("A4: production backup references no realm-write surface; live realm code is the positive control", () => {
++    const pattern = /\/(?:create-log|take-lease|commit|realm\/read-capability)|realm_secret|write_secret|storageFetch/g;
++    const backup = source("../backup/index.ts") + source("../backup/run.ts");
++    const directory = new URL("../src/realm/", import.meta.url);
++    const live = readdirSync(directory).filter((p) => p.endsWith(".ts"))
++      .map((p) => readFileSync(new URL(p, directory), "utf8")).join("\n");
++    expect((live.match(pattern) ?? []).length).toBeGreaterThan(0);
++    expect(backup.match(pattern) ?? []).toEqual([]);
++    console.info("A4 SOURCE live control matches=%d backup=0", (live.match(pattern) ?? []).length);
++  });
++  it("production is a second script referencing the existing DO namespace with no HTTP/test/Container entry", () => {
++    const config = source("../wrangler.backup.jsonc");
++    expect(config).toContain('"name": "commonplace-log-backup"');
++    expect(config).toContain('"main": "backup/index.ts"');
++    expect(config).toContain('"script_name": "commonplace-log"');
++    expect(config).toContain('"class_name": "RealmNode"');
++    expect(config).not.toMatch(/"(?:containers|migrations|triggers)"/);
++    expect(source("../backup/index.ts")).not.toMatch(/\bfetch\s*\(/);
++    expect(source("../backup/index.ts")).not.toContain("test/");
++    expect(source("../wrangler.jsonc")).toContain('"containers"');
++  });
++});
+diff --git a/worker/test/backup/backup.workers.test.ts b/worker/test/backup/backup.workers.test.ts
+new file mode 100644
+index 0000000..bdc0995
+--- /dev/null
++++ b/worker/test/backup/backup.workers.test.ts
+@@ -0,0 +1,241 @@
++import { env, SELF, listDurableObjectIds, runInDurableObject, createScheduledController } from "cloudflare:test";
++import { beforeEach, describe, expect, it } from "vitest";
++import { runBackup, type BackupEnv } from "../../backup/run";
++import worker from "../../backup/index";
++import { RealmStore } from "../../src/realm/store";
++
++declare module "cloudflare:test" {
++  interface ProvidedEnv {
++    REALMS: DurableObjectNamespace;
++    REALM_REGISTRY: KVNamespace;
++    BACKUP: R2Bucket;
++  }
++}
++
++async function request(realm: string, path: string, secret = "", body: unknown = {}, method = "POST") {
++  const response = await env.REALMS.get(env.REALMS.idFromName(realm)).fetch(`https://realm.test${path}`, {
++    method, headers: {
++      authorization: `Bearer ${secret}`, "content-type": "application/json",
++      "x-commonplace-realm-id": realm,
++      ...(path === "/realm/create" ? { "x-commonplace-realm-create": "1" } : {}),
++    }, body: JSON.stringify(body),
++  });
++  const text = await response.text();
++  return { status: response.status, body: text === "" ? null : JSON.parse(text) };
++}
++async function createRealm() {
++  const realm = crypto.randomUUID();
++  const created = await request(realm, "/realm/create");
++  expect(created.status).toBe(201);
++  const row = await env.REALM_REGISTRY.get<{ read_capability: string }>(realm, "json");
++  if (row === null) throw new Error("fixture registration absent");
++  return { realm, write: String(created.body.realm_secret), read: row.read_capability };
++}
++async function addLog(realm: string, write: string, log: string) {
++  expect((await request(realm, "/create-log", write, { log_id: log })).status).toBe(201);
++}
++async function append(realm: string, write: string, log: string, writer: string, seq: number, prev: string | null = null) {
++  const entry = {
++    version: 1, log_id: log, writer_id: writer, writer_seq: seq, entry_id: crypto.randomUUID(),
++    prev_entry_id: prev, created_at: "2026-09-05T15:00:00Z", body: { value: `${log}:${seq}` },
++  };
++  const read = await request(realm, "/read-set", write, { log_id: log, writers: [], coordinates: [], entry_ids: [] });
++  expect(read.status).toBe(200);
++  const committed = await request(realm, "/commit", write, {
++    log_id: log, expected_revision: read.body.read_set.revision, expected_epoch: read.body.read_set.lease_epoch,
++    insert_entries: [{ entry_id: entry.entry_id, writer_id: writer, writer_seq: seq, prev_entry_id: prev,
++      created_at: entry.created_at, canonical_bytes: btoa(JSON.stringify(entry)) }],
++    put_tips: [{ writer_id: writer, last_seq: seq, last_entry_id: entry.entry_id }],
++  });
++  expect(committed.status).toBe(200);
++  return entry;
++}
++async function listing(prefix = "") {
++  const keys: string[] = [];
++  let cursor: string | undefined;
++  for (;;) {
++    const page = await env.BACKUP.list({ prefix, cursor });
++    keys.push(...page.objects.map((obj) => obj.key));
++    if (!page.truncated) return keys.sort();
++    cursor = page.cursor;
++  }
++}
++async function saved(key: string) {
++  const item = await env.BACKUP.get(key);
++  return item === null ? null : item.json();
++}
++beforeEach(async () => {
++  for (const key of await listing()) await env.BACKUP.delete(key);
++  const keys = await env.REALM_REGISTRY.list();
++  for (const key of keys.keys) await env.REALM_REGISTRY.delete(key.name);
++  expect(await listing()).toEqual([]);
++  expect((await env.REALM_REGISTRY.list()).keys).toHaveLength(0);
++});
++
++describe("BACKUP-1b-ii", () => {
++  it("list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local", async () => {
++    const a = await createRealm(); const b = await createRealm();
++    console.info("LIST BASE", (await request(a.realm, "/list-logs", a.read)).body);
++    expect(await runInDurableObject(env.REALMS.get(env.REALMS.idFromName(a.realm)), (_i, state) =>
++      state.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='logs'").toArray())).toEqual([]);
++    await addLog(a.realm, a.write, "log-b"); await addLog(a.realm, a.write, "log-a");
++    await addLog(b.realm, b.write, "only-b");
++    expect((await request(a.realm, "/list-logs")).status).toBe(401);
++    expect((await request(a.realm, "/list-logs", b.read)).status).toBe(401);
++    const first = await request(a.realm, "/list-logs", a.read, { limit: 1 });
++    expect(first).toEqual({ status: 200, body: { ok: true, log_ids: ["log-a"], next_after_log_id: "log-a" } });
++    const last = await request(a.realm, "/list-logs", a.read, { limit: 1, after_log_id: "log-a" });
++    expect(last.body).toEqual({ ok: true, log_ids: ["log-b"], next_after_log_id: null });
++    expect((await request(a.realm, "/list-logs", a.read, { limit: 0 })).status).toBe(400);
++    expect((await request(a.realm, "/list-logs", a.read, { limit: 1001 })).status).toBe(400);
++    console.info("LIST RESULT no capability=401 other realm=401 READ=200", first.body, last.body);
++  });
++
++  it("A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one", async () => {
++    const { realm, write, read } = await createRealm();
++    await addLog(realm, write, "log-a"); await addLog(realm, write, "log-b");
++    const a = await append(realm, write, "log-a", "writer-a", 1);
++    const b = await append(realm, write, "log-b", "writer-a", 1);
++    await append(realm, write, "log-a", "writer-b", 1);
++    console.info("A1 BASE", await listing(realm));
++    const first = await runBackup(env); const firstKeys = await listing(realm);
++    expect(first.realms[0]?.entries_appended).toBe(3);
++    expect(firstKeys).toHaveLength(6); // three entries, two frontiers, manifest
++    expect(await saved(`${realm}/log-a/writer-a/000000000001.json`)).toEqual(a);
++    expect(await saved(`${realm}/log-b/writer-a/000000000001.json`)).toEqual(b);
++    const second = await runBackup(env); const secondKeys = await listing(realm);
++    expect(second.realms[0]).toMatchObject({ entries_appended: 0, frontiers_written: [], manifest_written: false, outcome: "complete" });
++    expect(secondKeys).toEqual(firstKeys);
++    await append(realm, write, "log-a", "writer-a", 2, a.entry_id);
++    const third = await runBackup(env); const thirdKeys = await listing(realm);
++    expect(third.realms[0]?.entries_appended).toBe(1);
++    expect(thirdKeys).toHaveLength(7);
++    console.info("A1 RUN1", firstKeys, "RUN2", secondKeys, "RUN3", thirdKeys);
++    // Neither run logs nor entry/frontier/manifest objects contain the stored capability.
++    for (const key of await listing()) expect(await (await env.BACKUP.get(key))?.text()).not.toContain(read);
++  });
++
++  it("A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes", async () => {
++    const { realm, write } = await createRealm();
++    await addLog(realm, write, "log-a"); await append(realm, write, "log-a", "writer-a", 1);
++    console.info("A2 BASE", await listing(realm));
++    const storage: BackupEnv["BACKUP"] = {
++      get: env.BACKUP.get.bind(env.BACKUP),
++      put: async (...args: Parameters<R2Bucket["put"]>) => {
++        if (args[0] === `${realm}/log-a/frontier.json`) throw new Error("injected checkpoint failure");
++        return env.BACKUP.put(...args);
++      },
++    };
++    const failed = await runBackup({ ...env, BACKUP: storage });
++    expect(failed.realms[0]).toMatchObject({ outcome: "stopped", stop: "storage_failed", entries_appended: 1, frontiers_written: [], manifest_written: false });
++    const partial = await listing(realm);
++    expect(partial).toEqual([`${realm}/log-a/writer-a/000000000001.json`]);
++    expect(await saved(`${realm}/log-a/frontier.json`)).toBeNull();
++    expect(await saved(`${realm}/manifest.json`)).toBeNull();
++    const resumed = await runBackup(env);
++    expect(resumed.realms[0]).toMatchObject({ entries_appended: 0, frontiers_written: ["log-a"], manifest_written: true, outcome: "complete" });
++    expect(await saved(`${realm}/log-a/frontier.json`)).not.toBeNull();
++    console.info("A2 FAILED", partial, "RESUMED", await listing(realm));
++  });
++
++  it("A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log", async () => {
++    const a = await createRealm(); const b = await createRealm();
++    await addLog(a.realm, a.write, "log-a"); await append(a.realm, a.write, "log-a", "writer-a", 1);
++    const first = await runBackup(env);
++    expect(first.outcome).toBe("complete");
++    console.info("A3 BASE", first.realms.map((r) => ({ realm_id: r.realm_id, outcome: r.outcome })));
++    expect(await request(a.realm, "/realm/read-capability", a.write)).toMatchObject({ status: 409, body: { error: { code: "read_capability_exists" } } });
++    expect((await request(a.realm, "/realm/read-capability", a.write, {}, "DELETE")).status).toBe(204);
++    const stopped = await runBackup(env);
++    const log = await saved(`_runs/${stopped.run_id}.json`);
++    expect(stopped.outcome).toBe("stopped");
++    expect(stopped.realms.find((r) => r.realm_id === a.realm)).toMatchObject({ outcome: "stopped", stop: "capability_rejected", manifest_written: false });
++    expect(stopped.realms.find((r) => r.realm_id === b.realm)?.outcome).toBe("complete");
++    expect(log).toEqual(stopped);
++    console.info("A3 REVOKED", log);
++  });
++
++  it("A4: read capability cannot commit even though the write control can", async () => {
++    const { realm, write, read } = await createRealm();
++    await addLog(realm, write, "log-a");
++    const entry = await append(realm, write, "log-a", "writer-a", 1);
++    const refused = await request(realm, "/commit", read);
++    expect(refused).toMatchObject({ status: 403, body: { error: { code: "forbidden_scope" } } });
++    expect((await request(realm, "/frontier", read, { log_id: "log-a" })).body.frontier.writers[0].entry_id).toBe(entry.entry_id);
++    console.info("A4 CONTROL write commit=200; READ commit=403 forbidden_scope; frontier unchanged");
++  });
++
++  it("A5: existing but unregistered realm is not discovered; run names exact registry coverage", async () => {
++    const a = await createRealm(); const b = await createRealm();
++    await addLog(a.realm, a.write, "log-a"); await addLog(b.realm, b.write, "log-b");
++    const ids = await listDurableObjectIds(env.REALMS);
++    let storedRealms = 0;
++    for (const id of ids) {
++      storedRealms += await runInDurableObject(env.REALMS.get(id), (_instance, state) =>
++        Number(state.storage.sql.exec("SELECT count(*) AS n FROM realm_meta").one().n));
++    }
++    expect(storedRealms).toBe(2);
++    expect((await env.REALM_REGISTRY.list()).keys).toHaveLength(2);
++    console.info("A5 BASE registry=2 independently read DO realm rows=2");
++    await env.REALM_REGISTRY.delete(b.realm);
++    const result = await runBackup(env);
++    expect(result.registry_count).toBe(1);
++    expect(result.coverage).toBe("registered_realms_only");
++    expect(result.realms.map((r) => r.realm_id)).toEqual([a.realm]);
++    expect(await listing(b.realm)).toEqual([]);
++    expect((await request(b.realm, "/frontier", b.read, { log_id: "log-b" })).status).toBe(200);
++    console.info("A5 RESULT registry=1 existing DO realms=2 omitted realm still readable=200", result);
++  });
++
++  it("test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs", async () => {
++    expect("fetch" in worker).toBe(false);
++    const response = await SELF.fetch("https://backup.test/run", { method: "POST" });
++    expect(response.status).toBe(200);
++    expect((await response.json<{ registry_count: number }>()).registry_count).toBe(0);
++    await worker.scheduled(createScheduledController(), env);
++    expect(await listing("_runs/")).toHaveLength(2);
++  });
++
++  it("conflicting immutable entry bytes stop the log without overwriting or advancing its frontier", async () => {
++    const { realm, write } = await createRealm();
++    await addLog(realm, write, "log-a"); await append(realm, write, "log-a", "writer-a", 1);
++    const key = `${realm}/log-a/writer-a/000000000001.json`;
++    await env.BACKUP.put(key, "conflicting bytes");
++    const result = await runBackup(env);
++    expect(result.realms[0]).toMatchObject({ outcome: "stopped", stop: "backup_entry_conflict" });
++    expect(await (await env.BACKUP.get(key))?.text()).toBe("conflicting bytes");
++    expect(await saved(`${realm}/log-a/frontier.json`)).toBeNull();
++  });
++
++  it("paginates the registry, log inventory, and writer sequence without skipping entries", async () => {
++    const a = await createRealm(); const b = await createRealm();
++    await runInDurableObject(env.REALMS.get(env.REALMS.idFromName(a.realm)), (_i, state) => {
++      const store = new RealmStore(state.storage.sql, state.storage);
++      for (let n = 0; n < 101; n++) store.createLog(`log-${String(n).padStart(3, "0")}`);
++      let previous: string | null = null;
++      for (let n = 1; n <= 101; n++) {
++        const entryId: string = crypto.randomUUID();
++        const entry = { version: 1, log_id: "log-100", writer_id: "writer-a", writer_seq: n,
++          entry_id: entryId, prev_entry_id: previous, created_at: "2026-09-05T15:00:00Z", body: { n } };
++        store.commit({ logId: entry.log_id, expectedRevision: n - 1, expectedEpoch: 0,
++          insertEntries: [{ entryId: entry.entry_id, writerId: entry.writer_id, writerSeq: n,
++            prevEntryId: previous, createdAt: entry.created_at, canonicalBytes: new TextEncoder().encode(JSON.stringify(entry)) }],
++          putTips: [{ writerId: entry.writer_id, lastSeq: n, lastEntryId: entry.entry_id }] });
++        previous = entryId;
++      }
++    });
++    const registry: BackupEnv["REALM_REGISTRY"] = {
++      get: env.REALM_REGISTRY.get.bind(env.REALM_REGISTRY),
++      list: (opts) => env.REALM_REGISTRY.list({ ...opts, limit: 1 }),
++    };
++    const result = await runBackup({ ...env, REALM_REGISTRY: registry });
++    expect(result.outcome).toBe("complete");
++    expect(result.registry_count).toBe(2);
++    expect(result.realms.find((r) => r.realm_id === a.realm)?.entries_appended).toBe(101);
++    expect(result.realms.find((r) => r.realm_id === a.realm)?.frontiers_written).toHaveLength(101);
++    expect(result.realms.find((r) => r.realm_id === b.realm)?.outcome).toBe("complete");
++    const last = await saved(`${a.realm}/log-100/writer-a/000000000101.json`);
++    expect(last).toMatchObject({ writer_seq: 101, body: { n: 101 } });
++    console.info("PAGING registry pages=2 log pages=2 writer pages=2 entries=101 frontiers=101");
++  });
++});
+diff --git a/worker/test/backup/entry.ts b/worker/test/backup/entry.ts
+new file mode 100644
+index 0000000..1a36b49
+--- /dev/null
++++ b/worker/test/backup/entry.ts
+@@ -0,0 +1,14 @@
++import { RealmContainer } from "../../src/realm/container";
++import backup from "../../backup/index";
++import { runBackup, type BackupEnv } from "../../backup/run";
++
++export { RealmContainer };
++// This HTTP trigger and local DO export are absent from the production entry module.
++export default {
++  ...backup,
++  async fetch(request: Request, env: BackupEnv): Promise<Response> {
++    if (request.method !== "POST" || new URL(request.url).pathname !== "/run") return new Response(null, { status: 404 });
++    const result = await runBackup(env);
++    return Response.json(result, { status: result.outcome === "complete" ? 200 : 503 });
++  },
++};
+diff --git a/worker/tsconfig.backup.json b/worker/tsconfig.backup.json
+new file mode 100644
+index 0000000..4a1f617
+--- /dev/null
++++ b/worker/tsconfig.backup.json
+@@ -0,0 +1,5 @@
++{
++  "extends": "./tsconfig.workers.json",
++  "include": ["backup", "test/backup", "vitest.backup.config.ts"],
++  "exclude": []
++}
+diff --git a/worker/tsconfig.json b/worker/tsconfig.json
+index 98fdb38..6a9bc50 100644
+--- a/worker/tsconfig.json
++++ b/worker/tsconfig.json
+@@ -21,6 +21,7 @@
+     "src/realm",
+     "test/do",
+     "test/realm/**/*.workers.test.ts",
+-    "test/realm/helpers.ts"
++    "test/realm/helpers.ts",
++    "test/backup"
+   ]
+ }
+diff --git a/worker/tsconfig.workers.json b/worker/tsconfig.workers.json
+index ace8d41..4549997 100644
+--- a/worker/tsconfig.workers.json
++++ b/worker/tsconfig.workers.json
+@@ -4,6 +4,6 @@
+     // Workers runtime globals + the `cloudflare:test` module types.
+     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
+   },
+-  "include": ["src", "test/do", "test/realm", "vitest.workers.config.ts"],
++  "include": ["src", "backup", "test/do", "test/realm", "test/backup", "vitest.workers.config.ts", "vitest.backup.config.ts"],
+   "exclude": []
+ }
+diff --git a/worker/vitest.backup.config.ts b/worker/vitest.backup.config.ts
+new file mode 100644
+index 0000000..b6324db
+--- /dev/null
++++ b/worker/vitest.backup.config.ts
+@@ -0,0 +1,9 @@
++import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
++
++export default defineWorkersConfig({
++  test: {
++    name: "backup",
++    include: ["test/backup/**/*.test.ts"],
++    poolOptions: { workers: { wrangler: { configPath: "./wrangler.backup.test.jsonc" } } },
++  },
++});
+diff --git a/worker/vitest.config.ts b/worker/vitest.config.ts
+index cd01371..6e2d6e1 100644
+--- a/worker/vitest.config.ts
++++ b/worker/vitest.config.ts
+@@ -9,11 +9,12 @@ export default defineConfig({
+           name: "unit",
+           globals: true,
+           include: ["test/**/*.test.ts"],
+-          exclude: [...configDefaults.exclude, "test/do/**", "test/realm/**/*.workers.test.ts"],
++          exclude: [...configDefaults.exclude, "test/do/**", "test/realm/**/*.workers.test.ts", "test/backup/**"],
+         },
+       },
+       // Durable Object suite: runs inside workerd via @cloudflare/vitest-pool-workers.
+       "./vitest.workers.config.ts",
++      "./vitest.backup.config.ts",
+     ],
+   },
+ });
+diff --git a/worker/wrangler.backup.jsonc b/worker/wrangler.backup.jsonc
+new file mode 100644
+index 0000000..a882acf
+--- /dev/null
++++ b/worker/wrangler.backup.jsonc
+@@ -0,0 +1,22 @@
++{
++  "$schema": "node_modules/wrangler/config-schema.json",
++  "name": "commonplace-log-backup",
++  "main": "backup/index.ts",
++  "compatibility_date": "2026-03-10",
++  "compatibility_flags": ["nodejs_compat"],
++  "workers_dev": false,
++  "preview_urls": false,
++  "durable_objects": {
++    "bindings": [
++      { "name": "REALMS", "class_name": "RealmNode", "script_name": "commonplace-log" }
++    ]
++  },
++  // Supply the existing registry namespace ID before activation; do not create another inventory.
++  "kv_namespaces": [
++    { "binding": "REALM_REGISTRY", "id": "SET_EXISTING_REGISTRY_NAMESPACE_ID" }
++  ],
++  "r2_buckets": [
++    { "binding": "BACKUP", "bucket_name": "commonplace-log-backup" }
++  ]
++  // Scheduling is intentionally not activated in this code-and-tests round.
++}
+diff --git a/worker/wrangler.backup.test.jsonc b/worker/wrangler.backup.test.jsonc
+new file mode 100644
+index 0000000..e5404bf
+--- /dev/null
++++ b/worker/wrangler.backup.test.jsonc
+@@ -0,0 +1,11 @@
++{
++  "$schema": "node_modules/wrangler/config-schema.json",
++  "name": "commonplace-log-backup-test",
++  "main": "test/backup/entry.ts",
++  "compatibility_date": "2026-03-10",
++  "compatibility_flags": ["nodejs_compat"],
++  "durable_objects": { "bindings": [{ "name": "REALMS", "class_name": "RealmContainer" }] },
++  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RealmContainer"] }],
++  "kv_namespaces": [{ "binding": "REALM_REGISTRY", "id": "local-backup-registry" }],
++  "r2_buckets": [{ "binding": "BACKUP", "bucket_name": "local-backup-test" }]
++}

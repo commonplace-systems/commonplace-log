@@ -1,0 +1,59 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:387116) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 BASE [
+  {
+    realm_id: 'bbe7c10e-01e6-4879-9267-becc66234756',
+    outcome: 'complete'
+  },
+  {
+    realm_id: 'd6a4900d-fd58-4465-9ba1-34a42b5aec5b',
+    outcome: 'complete'
+  }
+]
+
+ × test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log 213ms
+   → expected 'complete' to be 'stopped' // Object.is equality
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+AssertionError: expected 'complete' to be 'stopped' // Object.is equality
+
+Expected: "stopped"
+Received: "complete"
+
+ ❯ test/backup/backup.workers.test.ts:151:29
+    149|     const stopped = await runBackup(env);
+    150|     const log = await saved(`_runs/${stopped.run_id}.json`);
+    151|     expect(stopped.outcome).toBe("stopped");
+       |                             ^
+    152|     expect(stopped.realms.find((r) => r.realm_id === a.realm)).toMatch…
+    153|     expect(stopped.realms.find((r) => r.realm_id === b.realm)?.outcome…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 skipped (9)
+   Start at  15:31:16
+   Duration  3.03s (transform 261ms, setup 0ms, collect 376ms, tests 256ms, environment 0ms, prepare 251ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

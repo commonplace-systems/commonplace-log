@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commonplace-log-backup-test",
+  "main": "test/backup/entry.ts",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "REALMS", "class_name": "RealmContainer" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RealmContainer"] }],
+  "kv_namespaces": [{ "binding": "REALM_REGISTRY", "id": "local-backup-registry" }],
+  "r2_buckets": [{ "binding": "BACKUP", "bucket_name": "local-backup-test" }]
+}

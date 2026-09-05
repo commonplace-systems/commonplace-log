@@ -94,6 +94,7 @@ async function matches(presented: string, expected: Uint8Array | null): Promise<
  * why a read capability can never mint another and the write secret stays the only root.
  */
 const READ_ROUTES: ReadonlySet<string> = new Set([
+  "/list-logs",
   "/frontier",
   "/read-set",
   "/read-writer",

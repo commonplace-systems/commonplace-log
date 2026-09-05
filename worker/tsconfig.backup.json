@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.workers.json",
+  "include": ["backup", "test/backup", "vitest.backup.config.ts"],
+  "exclude": []
+}

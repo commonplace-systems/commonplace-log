@@ -183,6 +183,14 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
     const path = new URL(request.url).pathname;
     const value = await body(request);
 
+    if (path === "/list-logs") {
+      const after = value.after_log_id === undefined ? "" : string(value.after_log_id);
+      const limit = value.limit === undefined ? 100 : positiveInteger(value.limit);
+      if (limit > 1000) throw new MalformedRequest();
+      const result = store.listLogs(after, limit);
+      return json({ ok: true, log_ids: result.logIds, next_after_log_id: result.nextAfterLogId });
+    }
+
     if (path === "/create-log") {
       const { log_id, format_version, created_at } = value;
       store.createLog(string(log_id), {
