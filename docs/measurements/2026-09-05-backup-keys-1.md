@@ -70,6 +70,10 @@ record was requested in message 29921 following planner's ruling. No effective
 bucket access policy was inspected or changed here; no deployment authorization
 is inferred from this decision.
 
+Boss subsequently confirmed the final cf-records decision at `14c72e1` and its
+historical-roster qualification at `ff74193` (message 29928). These are external
+record references supplied by its owner, not claims of a Cloudflare policy change.
+
 ## D4: reviewed source integrity, with a demonstrated failure
 
 Read both production modules in full. Current I/O is realm reads and R2. The
