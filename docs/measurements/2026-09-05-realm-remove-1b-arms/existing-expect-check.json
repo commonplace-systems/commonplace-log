@@ -1,0 +1,8 @@
+[
+  {
+    "path": "worker/test/realm/registry.workers.test.ts",
+    "old_expect_lines": 15,
+    "new_expect_lines": 15,
+    "identical": true
+  }
+]

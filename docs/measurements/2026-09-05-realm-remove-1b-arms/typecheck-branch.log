@@ -1,0 +1,8 @@
+
+> commonplace-log-worker@0.0.1 typecheck
+> tsc --noEmit && tsc -p tsconfig.workers.json --noEmit
+
+test/realm/delete_all.workers.test.ts(66,17): error TS2532: Object is possibly 'undefined'.
+test/realm/delete_all.workers.test.ts(99,14): error TS2532: Object is possibly 'undefined'.
+test/realm/read_capability.workers.test.ts(157,24): error TS2307: Cannot find module '../../src/realm/node.ts?raw' or its corresponding type declarations.
+test/realm/read_capability.workers.test.ts(158,29): error TS2307: Cannot find module '../../src/realm/container.ts?raw' or its corresponding type declarations.

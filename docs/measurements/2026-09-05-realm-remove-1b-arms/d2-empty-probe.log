@@ -1,0 +1,51 @@
+
+ RUN  v3.2.7 /home/jes/codex-realm-arms/worker
+
+(node:34355) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.workers.config.ts...
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/index.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/container.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/helpers.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/utils.js" points to missing source files
+ ↓ |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D1 removes the realm: a write capability that authorised before reads not_found after
+ × |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D2 drops the SQL TABLE itself, not merely its rows 55ms
+   → expected [] to have a length of 1 but got +0
+ ↓ |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D3 is not a mock: the same object is usable again afterwards, so removal is not corruption
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |do| test/realm/delete_all.workers.test.ts > REALM-REMOVE-1a: does deleteAll() drop SQL, not just key-value? > D2 drops the SQL TABLE itself, not merely its rows
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ test/realm/delete_all.workers.test.ts:103:25
+    101|       expect(tableCount(sql, "probe")).toBe(1);
+    102|       const probeRows = [...sql.exec("SELECT v FROM probe WHERE k = 'a…
+    103|       expect(probeRows).toHaveLength(1);
+       |                         ^
+    104|       const probeRow = probeRows[0];
+    105|       if (probeRow === undefined) throw new Error("positive-control pr…
+ ❯ test/realm/delete_all.workers.test.ts:58:12
+ ❯ maybeHandleRunRequest home/jes/codex-realm-arms/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-internal.mjs:198:20
+ ❯ DurableObject.Wrapper.fetch home/jes/codex-realm-arms/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-internal.mjs:563:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  04:31:46
+   Duration  4.14s (transform 490ms, setup 0ms, collect 899ms, tests 114ms, environment 1ms, prepare 304ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

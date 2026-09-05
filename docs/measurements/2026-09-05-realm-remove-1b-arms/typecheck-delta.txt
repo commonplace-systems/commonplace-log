@@ -1,0 +1,3 @@
+Repaired diagnostics are byte-identical to base diagnostics.
+test/realm/read_capability.workers.test.ts(157,24): error TS2307: Cannot find module '../../src/realm/node.ts?raw' or its corresponding type declarations.
+test/realm/read_capability.workers.test.ts(158,29): error TS2307: Cannot find module '../../src/realm/container.ts?raw' or its corresponding type declarations.
