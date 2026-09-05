@@ -12,7 +12,7 @@ type Checkpoint = { version: 1; log_id: string; writers: Tip[] };
 type StopCode = "registry_invalid" | "registry_entry_missing" | "registry_unavailable"
   | "capability_rejected" | "realm_not_found" | "read_refused" | "read_failed"
   | "invalid_response" | "source_regressed" | "writer_fork" | "backup_entry_conflict"
-  | "checkpoint_conflict" | "storage_failed";
+  | "checkpoint_conflict" | "storage_failed" | "unsupported_empty_log_id";
 class Stop extends Error {
   constructor(readonly code: StopCode) { super(code); }
 }
@@ -46,6 +46,11 @@ function object(value: unknown): Record<string, unknown> {
 }
 function identifier(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) throw new Stop("invalid_response");
+  return value;
+}
+// The existing create-log API accepts every string, including the empty string.
+function logIdentifier(value: unknown): string {
+  if (typeof value !== "string") throw new Stop("invalid_response");
   return value;
 }
 function array(value: unknown): unknown[] {
@@ -95,12 +100,12 @@ async function read(env: BackupEnv, realm: string, capability: string, route: Re
 
 async function listLogs(env: BackupEnv, realm: string, capability: string): Promise<string[]> {
   const logs: string[] = [];
-  let after = "";
+  let after: string | undefined;
   for (;;) {
     const page = await read(env, realm, capability, "/list-logs", { after_log_id: after, limit: PAGE_SIZE });
-    const ids = array(page.log_ids).map(identifier);
+    const ids = array(page.log_ids).map(logIdentifier);
     for (const id of ids) {
-      if (id <= after) throw new Stop("invalid_response");
+      if (after !== undefined && id <= after) throw new Stop("invalid_response");
       logs.push(id); after = id;
     }
     if (page.next_after_log_id === null) return logs;
@@ -216,11 +221,12 @@ async function backupRealm(env: BackupEnv, realm: string, capability: string, re
   const manifestKey = `${segment(realm)}/manifest.json`;
   const previous = await stored(env, manifestKey);
   const logs = await listLogs(env, realm, capability);
+  if (logs.includes("")) throw new Stop("unsupported_empty_log_id");
   if (previous !== null) {
     try {
       const manifest = object(JSON.parse(previous.text));
       if (manifest.version !== 1 || manifest.realm_id !== realm) throw new Stop("invalid_response");
-      if (array(manifest.log_ids).map(identifier).some((log) => !logs.includes(log))) throw new Stop("source_regressed");
+      if (array(manifest.log_ids).map(logIdentifier).some((log) => !logs.includes(log))) throw new Stop("source_regressed");
     } catch (error) { if (error instanceof Stop) throw error; throw new Stop("invalid_response"); }
   }
   for (const log of logs) await backupLog(env, realm, capability, log, result);

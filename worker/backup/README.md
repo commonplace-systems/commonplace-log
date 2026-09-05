@@ -37,6 +37,14 @@ for the layout. `frontier.json` contains `{version: 1, log_id, writers}` where
 each writer has `writer_id`, `seq`, `entry_id`. `manifest.json` contains
 `{version: 1, realm_id, log_ids}`. Checkpoints contain no credentials. Entries retain
 source bytes; objects at an existing coordinate are compared, never replaced.
+The inventory includes logs with no entries. An absent pagination cursor starts
+the inventory, while an explicit empty-string cursor starts after that ID.
+An existing empty-string log ID stops its realm with `unsupported_empty_log_id`
+before any entry or checkpoint write; restoring empty path segments is unverified.
+It is enumerated and reported rather than silently omitted.
+Object keys and manifests disclose document identities, including derived cell
+identifiers that can reveal memberships. Treat listings as sensitive metadata;
+the planner tracks the key-exposure decision separately as `BACKUP-KEYS-1`.
 
 Conditional R2 writes use `etagDoesNotMatch: "*"` for new objects and `etagMatches`
 for checkpoint replacement. A failed condition returns `null`; it is treated as

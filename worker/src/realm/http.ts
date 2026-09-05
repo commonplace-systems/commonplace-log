@@ -184,7 +184,7 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
     const value = await body(request);
 
     if (path === "/list-logs") {
-      const after = value.after_log_id === undefined ? "" : string(value.after_log_id);
+      const after = value.after_log_id === undefined ? undefined : string(value.after_log_id);
       const limit = value.limit === undefined ? 100 : positiveInteger(value.limit);
       if (limit > 1000) throw new MalformedRequest();
       const result = store.listLogs(after, limit);

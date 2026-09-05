@@ -1,0 +1,2 @@
+A4 SOURCE baseline live-realm matches=12; backup matches=0
+A6 PASS: live config, live entry module, and commonplace_log/ have zero diff from b75ac47afe03a78c809b0e3c91b87f790f1598b8

@@ -73,6 +73,27 @@ beforeEach(async () => {
 });
 
 describe("BACKUP-1b-ii", () => {
+  it("empty log ID stops backup explicitly and differs from an absent pagination cursor", async () => {
+    const { realm, write, read } = await createRealm();
+    await addLog(realm, write, "");
+    await addLog(realm, write, "log-a");
+    await append(realm, write, "", "writer-a", 1);
+    const run = await runBackup(env);
+    const manifest = await saved(`${realm}/manifest.json`);
+    console.info("EMPTY ID", { outcome: run.outcome, manifest });
+    expect(run.outcome).toBe("stopped");
+    expect(run.realms[0]).toMatchObject({ outcome: "stopped", stop: "unsupported_empty_log_id", manifest_written: false });
+    expect(manifest).toBeNull();
+    expect(await listing(realm)).toEqual([]);
+    expect(await saved(`_runs/${run.run_id}.json`)).toEqual(run);
+    const first = await request(realm, "/list-logs", read, { limit: 1 });
+    expect(first.body).toEqual({ ok: true, log_ids: [""], next_after_log_id: "" });
+    const last = await request(realm, "/list-logs", read, { limit: 1, after_log_id: "" });
+    expect(last.body).toEqual({ ok: true, log_ids: ["log-a"], next_after_log_id: null });
+    const repeated = await runBackup(env);
+    expect(repeated.realms[0]).toMatchObject({ outcome: "stopped", stop: "unsupported_empty_log_id", entries_appended: 0, manifest_written: false });
+  });
+
   it("list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local", async () => {
     const a = await createRealm(); const b = await createRealm();
     console.info("LIST BASE", (await request(a.realm, "/list-logs", a.read)).body);

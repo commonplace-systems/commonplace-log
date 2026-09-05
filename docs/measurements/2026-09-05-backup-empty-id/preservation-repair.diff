@@ -1,0 +1,108 @@
+diff --git a/worker/backup/run.ts b/worker/backup/run.ts
+index d857ac4..3775ec8 100644
+--- a/worker/backup/run.ts
++++ b/worker/backup/run.ts
+@@ -48,6 +48,11 @@ function identifier(value: unknown): string {
+   if (typeof value !== "string" || value.length === 0) throw new Stop("invalid_response");
+   return value;
+ }
++// The existing create-log API accepts every string, including the empty string.
++function logIdentifier(value: unknown): string {
++  if (typeof value !== "string") throw new Stop("invalid_response");
++  return value;
++}
+ function array(value: unknown): unknown[] {
+   if (!Array.isArray(value)) throw new Stop("invalid_response");
+   return value;
+@@ -95,12 +100,12 @@ async function read(env: BackupEnv, realm: string, capability: string, route: Re
+ 
+ async function listLogs(env: BackupEnv, realm: string, capability: string): Promise<string[]> {
+   const logs: string[] = [];
+-  let after = "";
++  let after: string | undefined;
+   for (;;) {
+     const page = await read(env, realm, capability, "/list-logs", { after_log_id: after, limit: PAGE_SIZE });
+-    const ids = array(page.log_ids).map(identifier);
++    const ids = array(page.log_ids).map(logIdentifier);
+     for (const id of ids) {
+-      if (id <= after) throw new Stop("invalid_response");
++      if (after !== undefined && id <= after) throw new Stop("invalid_response");
+       logs.push(id); after = id;
+     }
+     if (page.next_after_log_id === null) return logs;
+@@ -220,7 +225,7 @@ async function backupRealm(env: BackupEnv, realm: string, capability: string, re
+     try {
+       const manifest = object(JSON.parse(previous.text));
+       if (manifest.version !== 1 || manifest.realm_id !== realm) throw new Stop("invalid_response");
+-      if (array(manifest.log_ids).map(identifier).some((log) => !logs.includes(log))) throw new Stop("source_regressed");
++      if (array(manifest.log_ids).map(logIdentifier).some((log) => !logs.includes(log))) throw new Stop("source_regressed");
+     } catch (error) { if (error instanceof Stop) throw error; throw new Stop("invalid_response"); }
+   }
+   for (const log of logs) await backupLog(env, realm, capability, log, result);
+diff --git a/worker/src/realm/http.ts b/worker/src/realm/http.ts
+index 589ed95..88b825c 100644
+--- a/worker/src/realm/http.ts
++++ b/worker/src/realm/http.ts
+@@ -184,7 +184,7 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
+     const value = await body(request);
+ 
+     if (path === "/list-logs") {
+-      const after = value.after_log_id === undefined ? "" : string(value.after_log_id);
++      const after = value.after_log_id === undefined ? undefined : string(value.after_log_id);
+       const limit = value.limit === undefined ? 100 : positiveInteger(value.limit);
+       if (limit > 1000) throw new MalformedRequest();
+       const result = store.listLogs(after, limit);
+diff --git a/worker/src/realm/store.ts b/worker/src/realm/store.ts
+index ad13d91..3a99248 100644
+--- a/worker/src/realm/store.ts
++++ b/worker/src/realm/store.ts
+@@ -280,14 +280,14 @@ export class RealmStore {
+   }
+ 
+   /** Realm-wide inventory for its already realm-wide read capability. Keyset paginated. */
+-  listLogs(afterLogId = "", limit = 100): { logIds: string[]; nextAfterLogId: string | null } {
++  listLogs(afterLogId: string | undefined = undefined, limit = 100): { logIds: string[]; nextAfterLogId: string | null } {
+     // A created realm may have no logs yet. Reads must not create the log schema.
+     if (this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='logs'").toArray().length === 0) {
+       return { logIds: [], nextAfterLogId: null };
+     }
+-    const rows = this.sql.exec(
+-      "SELECT log_id FROM logs WHERE log_id > ? ORDER BY log_id LIMIT ?",
+-      afterLogId, limit + 1,
++    const rows = (afterLogId === undefined
++      ? this.sql.exec("SELECT log_id FROM logs ORDER BY log_id LIMIT ?", limit + 1)
++      : this.sql.exec("SELECT log_id FROM logs WHERE log_id > ? ORDER BY log_id LIMIT ?", afterLogId, limit + 1)
+     ).toArray();
+     const logIds = rows.slice(0, limit).map((row) => String(row.log_id));
+     return { logIds, nextAfterLogId: rows.length > limit ? logIds.at(-1) ?? null : null };
+diff --git a/worker/test/backup/backup.workers.test.ts b/worker/test/backup/backup.workers.test.ts
+index bdc0995..50ba8a3 100644
+--- a/worker/test/backup/backup.workers.test.ts
++++ b/worker/test/backup/backup.workers.test.ts
+@@ -73,6 +73,26 @@ beforeEach(async () => {
+ });
+ 
+ describe("BACKUP-1b-ii", () => {
++  it("empty log ID is backed up and differs from an absent pagination cursor", async () => {
++    const { realm, write, read } = await createRealm();
++    await addLog(realm, write, "");
++    await addLog(realm, write, "log-a");
++    const entry = await append(realm, write, "", "writer-a", 1);
++    const run = await runBackup(env);
++    const manifest = await saved(`${realm}/manifest.json`);
++    console.info("EMPTY ID", { outcome: run.outcome, manifest });
++    expect(run.outcome).toBe("complete");
++    expect(manifest).toEqual({ version: 1, realm_id: realm, log_ids: ["", "log-a"] });
++    expect(await saved(`${realm}//writer-a/000000000001.json`)).toEqual(entry);
++    expect(await saved(`${realm}//frontier.json`)).toMatchObject({ log_id: "", writers: [{ writer_id: "writer-a", seq: 1, entry_id: entry.entry_id }] });
++    const first = await request(realm, "/list-logs", read, { limit: 1 });
++    expect(first.body).toEqual({ ok: true, log_ids: [""], next_after_log_id: "" });
++    const last = await request(realm, "/list-logs", read, { limit: 1, after_log_id: "" });
++    expect(last.body).toEqual({ ok: true, log_ids: ["log-a"], next_after_log_id: null });
++    const repeated = await runBackup(env);
++    expect(repeated.realms[0]).toMatchObject({ outcome: "complete", entries_appended: 0, manifest_written: false });
++  });
++
+   it("list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local", async () => {
+     const a = await createRealm(); const b = await createRealm();
+     console.info("LIST BASE", (await request(a.realm, "/list-logs", a.read)).body);
