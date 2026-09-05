@@ -1,0 +1,63 @@
+
+ RUN  v3.2.7 /home/jes/codex-realm-arms/worker
+
+(node:52685) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.workers.config.ts...
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/index.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/container.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/helpers.js" points to missing source files
+Sourcemap for "/home/jes/codex-realm-arms/worker/node_modules/@cloudflare/containers/dist/lib/utils.js" points to missing source files
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row
+R4 CONTROL frontier=200 registry row present=true
+
+stdout | test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row
+R4 RESULT delete=503 registry_delete_failed frontier=404 order=wipe,registry
+
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R1: gateway create and entry write, positive frontier, removal, same-capability not_found
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R2: reachable WRITE deletion refuses a read capability without removing its realm
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R3: repeat and never-created canonical removals are empty 204s
+ × |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row 91ms
+   → expected true to be false // Object.is equality
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4 storage failure never drops the registry row or live realm
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R5: real KV inventory loses exactly the removed realm and ignores spoofed identity
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > removal keeps wrong/missing bearer, READ scope, root-only and revocation boundaries
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > both lane dispatchers gate creation and removal through native blockConcurrencyWhile only
+ ↓ |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > unbound registry defaults to refusal before wiping a live realm
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |do| test/realm/realm_remove.workers.test.ts > REALM-REMOVE-1b > R4: registry failure is named after real wipe; an unauthenticated retry RETAINS the KV row
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ withRealm.registry.registry test/realm/realm_remove.workers.test.ts:247:61
+    245|       const retried = await call(REMOVE_PATH, "", "DELETE");
+    246|       expect(retried.status).toBe(204);
+    247|       expect((await registryKV.get(registeredId)) === null).toBe(false…
+       |                                                             ^
+    248|       // ⭐ THE SIDE-EFFECT ASSERTION, not merely the status: no second…
+    249|       // call. A 204 that still wiped would pass a status-only arm.
+ ❯ test/realm/realm_remove.workers.test.ts:78:5
+ ❯ maybeHandleRunRequest home/jes/codex-realm-arms/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-internal.mjs:198:20
+ ❯ DurableObject.Wrapper.fetch home/jes/codex-realm-arms/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-internal.mjs:563:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 skipped (9)
+   Start at  04:54:17
+   Duration  3.07s (transform 333ms, setup 0ms, collect 596ms, tests 127ms, environment 0ms, prepare 162ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

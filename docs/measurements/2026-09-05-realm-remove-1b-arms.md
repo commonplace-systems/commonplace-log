@@ -101,6 +101,32 @@ Process rc 1. Restoring the original source gave `1 passed | 8 skipped (9)`,
 rc 0, with the retained-row control printed. Source restoration was checked
 byte-for-byte; the application source also matches the preserved Git revision.
 
+### Post-repair R4 repetition
+
+The first R4 mutation above ran before the dispatcher-test row guards were added;
+the repaired full suite then passed without mutation. Planner messages 29801/29805
+required an explicit post-repair mutation before landing. That additional check
+was run after boss-clod confirmed the assigned window in message 29811.
+
+Starting from clean repaired commit
+`629efde171f8305dbdb8e607c23ccecc7fc9ab95`, the same one-line inert-return
+mutation again produced **rc 1**, `1 failed | 8 skipped (9)`, at unchanged R4
+line 247: `expected true to be false`. Its initial frontier and ordered-deletion
+controls passed before the failed retained-row assertion.
+
+Application source was restored byte-for-byte and the repaired D-test was
+verified unchanged throughout. The same R4 command then produced **rc 0**,
+`1 passed | 8 skipped (9)`, printing:
+
+```text
+R4 RETRY absent-auth delete=204 registry row RETAINED=true events=wipe,registry
+```
+
+See `r4-postrepair-mutation.log`, `r4-postrepair-restored.log`, their direct process
+status files, the mutation diff, and `r4-postrepair-identity.json` with the starting
+commit, command, and source/test SHA256 values. The window was released in
+boss-clod message 29813; the results were sent to the planner in message 29814.
+
 ### R2: make the removal route unreachable
 
 Temporarily set the removal predicate to `false`, leaving R2 unchanged.
