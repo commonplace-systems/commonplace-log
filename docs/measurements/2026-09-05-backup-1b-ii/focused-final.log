@@ -1,0 +1,225 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:380494) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST BASE { ok: true, log_ids: [], next_after_log_id: null }
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST RESULT no capability=401 other realm=401 READ=200 { ok: true, log_ids: [ 'log-a' ], next_after_log_id: 'log-a' } { ok: true, log_ids: [ 'log-b' ], next_after_log_id: null }
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local 178ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 BASE []
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 RUN1 [
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/frontier.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-a/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-b/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-b/frontier.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-b/writer-a/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/manifest.json'
+] RUN2 [
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/frontier.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-a/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-b/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-b/frontier.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-b/writer-a/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/manifest.json'
+] RUN3 [
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/frontier.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-a/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-a/000000000002.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-a/writer-b/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-b/frontier.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/log-b/writer-a/000000000001.json',
+  '2a66072a-a74e-4c6a-b408-4d8b8c797a3d/manifest.json'
+]
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one 282ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 BASE []
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 FAILED [
+  'd1d6484b-ce78-428d-ace5-1fa117130581/log-a/writer-a/000000000001.json'
+] RESUMED [
+  'd1d6484b-ce78-428d-ace5-1fa117130581/log-a/frontier.json',
+  'd1d6484b-ce78-428d-ace5-1fa117130581/log-a/writer-a/000000000001.json',
+  'd1d6484b-ce78-428d-ace5-1fa117130581/manifest.json'
+]
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes 161ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 BASE [
+  {
+    realm_id: '4fe76bc0-fbe3-4477-aa18-5fbe50f60d35',
+    outcome: 'complete'
+  },
+  {
+    realm_id: 'b4cc9abd-3f33-40e5-8bff-8b2488534905',
+    outcome: 'complete'
+  }
+]
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 REVOKED {
+  version: 1,
+  run_id: 'f7fb0df4-a82a-4752-86c8-253b6ab87d1c',
+  started_at: '2026-09-05T15:24:54.103Z',
+  completed_at: '2026-09-05T15:24:54.121Z',
+  enumeration: 'registry_only',
+  coverage: 'registered_realms_only',
+  registry_count: 2,
+  realms: [
+    {
+      realm_id: '4fe76bc0-fbe3-4477-aa18-5fbe50f60d35',
+      entries_appended: 0,
+      frontiers_written: [],
+      manifest_written: false,
+      outcome: 'stopped',
+      stop: 'capability_rejected'
+    },
+    {
+      realm_id: 'b4cc9abd-3f33-40e5-8bff-8b2488534905',
+      entries_appended: 0,
+      frontiers_written: [],
+      manifest_written: false,
+      outcome: 'complete'
+    }
+  ],
+  outcome: 'stopped'
+}
+
+
+================================================================================
+Failed to pop isolated storage stack frame in test/backup/backup.workers.test.ts's test "A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log".
+In particular, we were unable to pop Durable Objects storage.
+This usually means your Worker tried to access storage outside of a test, or some resources have not been disposed of properly.
+Ensure you "await" all Promises that read or write to these services, and make sure you use the "using" keyword when passing data across JSRPC.
+See https://developers.cloudflare.com/workers/testing/vitest-integration/known-issues/#isolated-storage for more details.
+[2m
+- AssertionError [ERR_ASSERTION]: Expected .sqlite, got /tmp/miniflare-f9a0ddf5e05050b5b9c3ea0bb1d63654/do/vitest-pool-workers-runner--RealmContainer/bb409718d8e1cac90a04346b997b90be2d63669315a20f5eb0723f5a09850226.sqlite-shm
+[22m================================================================================
+
+ × test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log 201ms
+   → Isolated storage failed. There should be additional logs above.
+Error running worker: AssertionError [ERR_ASSERTION]: Isolated storage failed. There should be additional logs above.
+    at new AssertionError (node-internal:internal_assertionerror:427:15)
+    at assert.strictEqual (node-internal:internal_assert:196:11)
+    at WorkersTestRunner.updateStackedStorage (home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:133:12)
+    at WorkersTestRunner.onAfterRunSuite (home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:171:5)
+    at runSuite (home/jes/commonplace-log/worker/node_modules/@vitest/runner/dist/chunk-hooks.js:1763:3)
+    at runFiles (home/jes/commonplace-log/worker/node_modules/@vitest/runner/dist/chunk-hooks.js:1787:3)
+    at startTests (home/jes/commonplace-log/worker/node_modules/@vitest/runner/dist/chunk-hooks.js:1820:3)
+    at home/jes/commonplace-log/worker/node_modules/vitest/dist/chunks/runBaseTests.9Ij9_de-.js:117:26
+    at withEnv (home/jes/commonplace-log/worker/node_modules/vitest/dist/chunks/runBaseTests.9Ij9_de-.js:84:3)
+    at run (home/jes/commonplace-log/worker/node_modules/vitest/dist/chunks/runBaseTests.9Ij9_de-.js:109:2)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/backup/backup.workers.test.ts [ test/backup/backup.workers.test.ts ]
+AssertionError: Isolated storage failed. There should be additional logs above.
+
+- Expected
++ Received
+
+- 204
++ 500
+
+ ❯ new AssertionError node-internal:internal_assertionerror:427:15
+ ❯ assert.strictEqual node-internal:internal_assert:196:11
+ ❯ WorkersTestRunner.updateStackedStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:133:12
+ ❯ WorkersTestRunner.onAfterRunSuite home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:171:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii
+AssertionError: Isolated storage failed. There should be additional logs above.
+
+- Expected
++ Received
+
+- 204
++ 500
+
+ ❯ new AssertionError node-internal:internal_assertionerror:427:15
+ ❯ assert.strictEqual node-internal:internal_assert:196:11
+ ❯ WorkersTestRunner.updateStackedStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:133:12
+ ❯ WorkersTestRunner.ensurePoppedActiveTryStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:183:7
+ ❯ WorkersTestRunner.onAfterRunTask home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:213:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+AssertionError: Isolated storage failed. There should be additional logs above.
+
+- Expected
++ Received
+
+- 204
++ 500
+
+ ❯ new AssertionError node-internal:internal_assertionerror:427:15
+ ❯ assert.strictEqual node-internal:internal_assert:196:11
+ ❯ WorkersTestRunner.updateStackedStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:133:12
+ ❯ WorkersTestRunner.ensurePoppedActiveTryStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:183:7
+ ❯ WorkersTestRunner.onAfterTryTask home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:238:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+AssertionError: Isolated storage failed. There should be additional logs above.
+
+- Expected
++ Received
+
+- 204
++ 500
+
+ ❯ new AssertionError node-internal:internal_assertionerror:427:15
+ ❯ assert.strictEqual node-internal:internal_assert:196:11
+ ❯ WorkersTestRunner.updateStackedStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:133:12
+ ❯ WorkersTestRunner.onBeforeTryTask home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:228:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+Error: Isolated storage failed. There should be additional logs above.
+ ❯ new AssertionError node-internal:internal_assertionerror:427:15
+ ❯ assert.strictEqual node-internal:internal_assert:196:11
+ ❯ WorkersTestRunner.updateStackedStorage home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:133:12
+ ❯ WorkersTestRunner.onAfterRunSuite home/jes/commonplace-log/worker/node_modules/@cloudflare/vitest-pool-workers/dist/worker/lib/cloudflare/test-runner.mjs:171:5
+ ❯ runSuite home/jes/commonplace-log/worker/node_modules/@vitest/runner/dist/chunk-hooks.js:1763:3
+ ❯ runFiles home/jes/commonplace-log/worker/node_modules/@vitest/runner/dist/chunk-hooks.js:1787:3
+ ❯ startTests home/jes/commonplace-log/worker/node_modules/@vitest/runner/dist/chunk-hooks.js:1820:3
+ ❯ home/jes/commonplace-log/worker/node_modules/vitest/dist/chunks/runBaseTests.9Ij9_de-.js:117:26
+ ❯ withEnv home/jes/commonplace-log/worker/node_modules/vitest/dist/chunks/runBaseTests.9Ij9_de-.js:84:3
+ ❯ run home/jes/commonplace-log/worker/node_modules/vitest/dist/chunks/runBaseTests.9Ij9_de-.js:109:2
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (9)
+     Errors  1 error
+   Start at  15:24:50
+   Duration  3.95s (transform 215ms, setup 0ms, collect 308ms, tests 841ms, environment 0ms, prepare 228ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

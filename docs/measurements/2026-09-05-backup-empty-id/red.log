@@ -1,0 +1,67 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:405783) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID is backed up and differs from an absent pagination cursor
+EMPTY ID {
+  outcome: 'complete',
+  manifest: {
+    version: 1,
+    realm_id: '84979341-9987-43e6-9ddc-ab4d538440e8',
+    log_ids: [ 'log-a' ]
+  }
+}
+
+ × |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID is backed up and differs from an absent pagination cursor 218ms
+   → expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID is backed up and differs from an absent pagination cursor
+AssertionError: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+
+- Expected
++ Received
+
+  {
+    "log_ids": [
+-     "",
+      "log-a",
+    ],
+    "realm_id": "84979341-9987-43e6-9ddc-ab4d538440e8",
+    "version": 1,
+  }
+
+ ❯ test/backup/backup.workers.test.ts:85:22
+     83|     console.info("EMPTY ID", { outcome: run.outcome, manifest });
+     84|     expect(run.outcome).toBe("complete");
+     85|     expect(manifest).toEqual({ version: 1, realm_id: realm, log_ids: […
+       |                      ^
+     86|     expect(await saved(`${realm}//writer-a/000000000001.json`)).toEqua…
+     87|     expect(await saved(`${realm}//frontier.json`)).toMatchObject({ log…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 skipped (10)
+   Start at  15:47:03
+   Duration  4.47s (transform 266ms, setup 0ms, collect 416ms, tests 279ms, environment 0ms, prepare 278ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

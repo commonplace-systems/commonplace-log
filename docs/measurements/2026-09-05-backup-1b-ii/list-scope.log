@@ -1,0 +1,66 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:387201) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST BASE { ok: false, error: { code: 'forbidden_scope' } }
+
+ × test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local 163ms
+   → expected { status: 403, …(1) } to deeply equal { status: 200, …(1) }
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier
+ ↓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+AssertionError: expected { status: 403, …(1) } to deeply equal { status: 200, …(1) }
+
+- Expected
++ Received
+
+  {
+    "body": {
+-     "log_ids": [
+-       "log-a",
+-     ],
+-     "next_after_log_id": "log-a",
+-     "ok": true,
++     "error": {
++       "code": "forbidden_scope",
+      },
+-   "status": 200,
++     "ok": false,
++   },
++   "status": 403,
+  }
+
+ ❯ test/backup/backup.workers.test.ts:86:19
+     84|     expect((await request(a.realm, "/list-logs", b.read)).status).toBe…
+     85|     const first = await request(a.realm, "/list-logs", a.read, { limit…
+     86|     expect(first).toEqual({ status: 200, body: { ok: true, log_ids: ["…
+       |                   ^
+     87|     const last = await request(a.realm, "/list-logs", a.read, { limit:…
+     88|     expect(last.body).toEqual({ ok: true, log_ids: ["log-b"], next_aft…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 skipped (9)
+   Start at  15:31:20
+   Duration  3.23s (transform 212ms, setup 0ms, collect 328ms, tests 219ms, environment 0ms, prepare 255ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

@@ -1,0 +1,2 @@
+backup/run.ts(155,71): error TS2345: Argument of type '{ fatal: true; }' is not assignable to parameter of type 'TextDecoderConstructorOptions'.
+  Property 'ignoreBOM' is missing in type '{ fatal: true; }' but required in type 'TextDecoderConstructorOptions'.

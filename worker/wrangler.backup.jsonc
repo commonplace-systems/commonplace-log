@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "commonplace-log-backup",
+  "main": "backup/index.ts",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      { "name": "REALMS", "class_name": "RealmNode", "script_name": "commonplace-log" }
+    ]
+  },
+  // Supply the existing registry namespace ID before activation; do not create another inventory.
+  "kv_namespaces": [
+    { "binding": "REALM_REGISTRY", "id": "SET_EXISTING_REGISTRY_NAMESPACE_ID" }
+  ],
+  "r2_buckets": [
+    { "binding": "BACKUP", "bucket_name": "commonplace-log-backup" }
+  ]
+  // Scheduling is intentionally not activated in this code-and-tests round.
+}

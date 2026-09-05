@@ -1,0 +1,58 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:409573) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID stops backup explicitly and differs from an absent pagination cursor
+EMPTY ID {
+  outcome: 'complete',
+  manifest: {
+    version: 1,
+    realm_id: 'e6c27f2b-d4e2-4575-81a6-222af977f732',
+    log_ids: [ 'log-a' ]
+  }
+}
+
+ × |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID stops backup explicitly and differs from an absent pagination cursor 156ms
+   → expected 'complete' to be 'stopped' // Object.is equality
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier
+ ↓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID stops backup explicitly and differs from an absent pagination cursor
+AssertionError: expected 'complete' to be 'stopped' // Object.is equality
+
+Expected: "stopped"
+Received: "complete"
+
+ ❯ test/backup/backup.workers.test.ts:84:25
+     82|     const manifest = await saved(`${realm}/manifest.json`);
+     83|     console.info("EMPTY ID", { outcome: run.outcome, manifest });
+     84|     expect(run.outcome).toBe("stopped");
+       |                         ^
+     85|     expect(run.realms[0]).toMatchObject({ outcome: "stopped", stop: "u…
+     86|     expect(manifest).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 skipped (10)
+   Start at  15:50:03
+   Duration  3.11s (transform 266ms, setup 0ms, collect 416ms, tests 194ms, environment 1ms, prepare 318ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

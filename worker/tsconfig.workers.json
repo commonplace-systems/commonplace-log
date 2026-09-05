@@ -4,6 +4,6 @@
     // Workers runtime globals + the `cloudflare:test` module types.
     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
   },
-  "include": ["src", "test/do", "test/realm", "vitest.workers.config.ts"],
+  "include": ["src", "backup", "test/do", "test/realm", "test/backup", "vitest.workers.config.ts", "vitest.backup.config.ts"],
   "exclude": []
 }

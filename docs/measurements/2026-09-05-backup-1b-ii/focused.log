@@ -1,0 +1,145 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:379213) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+workerd/io/worker.c++:2441: info: uncaught exception; source = Uncaught (in promise); stack = Error: no such table: logs: SQLITE_ERROR
+    at RealmStore.listLogs (/home/jes/commonplace-log/worker/src/realm/store.ts:284:27)
+    at handleRealmRequest (/home/jes/commonplace-log/worker/src/realm/http.ts:190:28)
+    at /home/jes/commonplace-log/worker/src/realm/container.ts:20:7
+    at handlePublicRealmRequest (/home/jes/commonplace-log/worker/src/realm/realm_auth.ts:324:10)
+    at RealmContainer.fetch (/home/jes/commonplace-log/worker/src/realm/container.ts:24:12)
+workerd/io/io-context.c++:435: info: uncaught exception; exception = workerd/jsg/_virtual_includes/iterator/workerd/jsg/value.h:1480: failed: jsg.Error: no such table: logs: SQLITE_ERROR
+stack: /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2cfbe50 /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2cfca8e /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@4f03c2a /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2b0c760 /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2b0cd90
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 BASE []
+
+ × test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local 111ms
+   → no such table: logs: SQLITE_ERROR
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 RUN1 [
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/frontier.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-a/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-b/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-b/frontier.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-b/writer-a/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/manifest.json'
+] RUN2 [
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/frontier.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-a/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-b/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-b/frontier.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-b/writer-a/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/manifest.json'
+] RUN3 [
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/frontier.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-a/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-a/000000000002.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-a/writer-b/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-b/frontier.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/log-b/writer-a/000000000001.json',
+  '371b7aac-c2c0-4082-af1d-88f751600071/manifest.json'
+]
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one 272ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 BASE []
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 FAILED [
+  'e4c83736-0e9f-49a4-890a-6f2b3f26006a/log-a/writer-a/000000000001.json'
+] RESUMED [
+  'e4c83736-0e9f-49a4-890a-6f2b3f26006a/log-a/frontier.json',
+  'e4c83736-0e9f-49a4-890a-6f2b3f26006a/log-a/writer-a/000000000001.json',
+  'e4c83736-0e9f-49a4-890a-6f2b3f26006a/manifest.json'
+]
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes 173ms
+workerd/io/worker.c++:2441: info: uncaught exception; source = Uncaught (in promise); stack = Error: no such table: logs: SQLITE_ERROR
+    at RealmStore.listLogs (/home/jes/commonplace-log/worker/src/realm/store.ts:284:27)
+    at handleRealmRequest (/home/jes/commonplace-log/worker/src/realm/http.ts:190:28)
+    at /home/jes/commonplace-log/worker/src/realm/container.ts:20:7
+    at handlePublicRealmRequest (/home/jes/commonplace-log/worker/src/realm/realm_auth.ts:324:10)
+    at RealmContainer.fetch (/home/jes/commonplace-log/worker/src/realm/container.ts:24:12)
+workerd/io/io-context.c++:435: info: uncaught exception; exception = workerd/jsg/_virtual_includes/iterator/workerd/jsg/value.h:1480: failed: jsg.Error: no such table: logs: SQLITE_ERROR
+stack: /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2cfbe50 /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2cfca8e /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@4f03c2a /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2b0c760 /home/jes/commonplace-log/worker/node_modules/@cloudflare/workerd-linux-64/bin/workerd@2b0cd90
+ × test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log 178ms
+   → expected 'stopped' to be 'complete' // Object.is equality
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+A4 CONTROL write commit=200; READ commit=403 forbidden_scope; frontier unchanged
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can 145ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+A5 BASE registry=2 independently read DO realm rows=2
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+A5 RESULT registry=1 existing DO realms=2 omitted realm still readable=200 {
+  version: 1,
+  run_id: '1d162f76-9dcc-4fac-ab4a-31093b1a124e',
+  started_at: '2026-09-05T15:23:02.327Z',
+  completed_at: '2026-09-05T15:23:02.353Z',
+  enumeration: 'registry_only',
+  coverage: 'registered_realms_only',
+  registry_count: 1,
+  realms: [
+    {
+      realm_id: 'c30d6027-8862-42c8-b4a4-62da94ca7b46',
+      entries_appended: 0,
+      frontiers_written: [Array],
+      manifest_written: true,
+      outcome: 'complete'
+    }
+  ],
+  outcome: 'complete'
+}
+
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage 199ms
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs 78ms
+ ✓ test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier 154ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+Error: no such table: logs: SQLITE_ERROR
+ ❯ request test/backup/backup.workers.test.ts:15:20
+     13| 
+     14| async function request(realm: string, path: string, secret = "", body:…
+     15|   const response = await env.REALMS.get(env.REALMS.idFromName(realm)).…
+       |                    ^
+     16|     method, headers: {
+     17|       authorization: `Bearer ${secret}`, "content-type": "application/…
+ ❯ test/backup/backup.workers.test.ts:77:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { remote: true }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+AssertionError: expected 'stopped' to be 'complete' // Object.is equality
+
+Expected: "complete"
+Received: "stopped"
+
+ ❯ test/backup/backup.workers.test.ts:142:27
+    140|     await addLog(a.realm, a.write, "log-a"); await append(a.realm, a.w…
+    141|     const first = await runBackup(env);
+    142|     expect(first.outcome).toBe("complete");
+       |                           ^
+    143|     console.info("A3 BASE", first.realms.map((r) => ({ realm_id: r.rea…
+    144|     expect(await request(a.realm, "/realm/read-capability", a.write)).…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 6 passed (8)
+   Start at  15:22:58
+   Duration  4.31s (transform 230ms, setup 0ms, collect 340ms, tests 1.40s, environment 0ms, prepare 260ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

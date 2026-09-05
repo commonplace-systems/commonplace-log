@@ -1,0 +1,155 @@
+
+ RUN  v3.2.7 /home/jes/commonplace-log/worker
+
+(node:406351) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[vpw:debug] Adding `enable_nodejs_tty_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_fs_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_http_modules` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:debug] Adding `enable_nodejs_perf_hooks_module` compatibility flag during tests as this feature is needed to support the Vitest runner.
+[vpw:info] Starting isolated runtimes for vitest.backup.config.ts...
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID is backed up and differs from an absent pagination cursor
+EMPTY ID {
+  outcome: 'complete',
+  manifest: {
+    version: 1,
+    realm_id: 'ed91ebd0-1fac-4934-8f96-38ae50394ba6',
+    log_ids: [ '', 'log-a' ]
+  }
+}
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > empty log ID is backed up and differs from an absent pagination cursor 244ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST BASE { ok: true, log_ids: [], next_after_log_id: null }
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local
+LIST RESULT no capability=401 other realm=401 READ=200 { ok: true, log_ids: [ 'log-a' ], next_after_log_id: 'log-a' } { ok: true, log_ids: [ 'log-b' ], next_after_log_id: null }
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 BASE []
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local 135ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one
+A1 RUN1 [
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/frontier.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-a/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-b/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-b/frontier.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-b/writer-a/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/manifest.json'
+] RUN2 [
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/frontier.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-a/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-b/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-b/frontier.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-b/writer-a/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/manifest.json'
+] RUN3 [
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/frontier.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-a/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-a/000000000002.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-a/writer-b/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-b/frontier.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/log-b/writer-a/000000000001.json',
+  'ef2eaea1-5dd0-400f-938a-442d1e037acb/manifest.json'
+]
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A1: repeated backup appends zero; identical coordinates across logs remain distinct; new entry adds one 272ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 BASE []
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes
+A2 FAILED [
+  '448b61c3-06ed-47af-940d-d3a96abfc546/log-a/writer-a/000000000001.json'
+] RESUMED [
+  '448b61c3-06ed-47af-940d-d3a96abfc546/log-a/frontier.json',
+  '448b61c3-06ed-47af-940d-d3a96abfc546/log-a/writer-a/000000000001.json',
+  '448b61c3-06ed-47af-940d-d3a96abfc546/manifest.json'
+]
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A2: a real checkpoint put failure leaves entries but no frontier/manifest; resume completes 159ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 BASE [
+  {
+    realm_id: '3f0be883-67d0-4404-956f-2c2e730ce21e',
+    outcome: 'complete'
+  },
+  {
+    realm_id: 'b9e061b6-5d83-4a88-a9a7-4868f5b266e5',
+    outcome: 'complete'
+  }
+]
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log
+A3 REVOKED {
+  version: 1,
+  run_id: '14ce9ecc-d3bd-49e3-abb5-b1457d52d02b',
+  started_at: '2026-09-05T15:47:43.865Z',
+  completed_at: '2026-09-05T15:47:43.887Z',
+  enumeration: 'registry_only',
+  coverage: 'registered_realms_only',
+  registry_count: 2,
+  realms: [
+    {
+      realm_id: '3f0be883-67d0-4404-956f-2c2e730ce21e',
+      entries_appended: 0,
+      frontiers_written: [],
+      manifest_written: false,
+      outcome: 'complete'
+    },
+    {
+      realm_id: 'b9e061b6-5d83-4a88-a9a7-4868f5b266e5',
+      entries_appended: 0,
+      frontiers_written: [],
+      manifest_written: false,
+      outcome: 'stopped',
+      stop: 'capability_rejected'
+    }
+  ],
+  outcome: 'stopped'
+}
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A3: second mint is 409; revoke stops only that realm and names the stop in the persisted run log 209ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can
+A4 CONTROL write commit=200; READ commit=403 forbidden_scope; frontier unchanged
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A4: read capability cannot commit even though the write control can 100ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+A5 BASE registry=2 independently read DO realm rows=2
+
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage
+A5 RESULT registry=1 existing DO realms=2 omitted realm still readable=200 {
+  version: 1,
+  run_id: '4b5945a2-c7f2-48f0-a5a0-b51fae41dc5c',
+  started_at: '2026-09-05T15:47:44.116Z',
+  completed_at: '2026-09-05T15:47:44.137Z',
+  enumeration: 'registry_only',
+  coverage: 'registered_realms_only',
+  registry_count: 1,
+  realms: [
+    {
+      realm_id: 'bef02a89-c4e0-4b91-8595-1a4cdbcd5808',
+      entries_appended: 0,
+      frontiers_written: [Array],
+      manifest_written: true,
+      outcome: 'complete'
+    }
+  ],
+  outcome: 'complete'
+}
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > A5: existing but unregistered realm is not discovered; run names exact registry coverage 151ms
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > test-only HTTP trigger runs; production exports no HTTP trigger and scheduled handler runs 66ms
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > conflicting immutable entry bytes stop the log without overwriting or advancing its frontier 124ms
+stdout | test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries
+PAGING registry pages=2 log pages=2 writer pages=2 entries=101 frontiers=101
+
+ ✓ |backup| test/backup/backup.workers.test.ts > BACKUP-1b-ii > paginates the registry, log inventory, and writer sequence without skipping entries 1662ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  15:47:39
+   Duration  6.14s (transform 235ms, setup 0ms, collect 385ms, tests 3.14s, environment 0ms, prepare 197ms)
+
+[vpw:debug] Shutting down runtimes...
+[vpw:debug] Disposing remote proxy sessions...

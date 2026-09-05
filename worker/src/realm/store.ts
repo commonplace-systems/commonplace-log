@@ -279,6 +279,20 @@ export class RealmStore {
     }
   }
 
+  /** Realm-wide inventory for its already realm-wide read capability. Keyset paginated. */
+  listLogs(afterLogId: string | undefined = undefined, limit = 100): { logIds: string[]; nextAfterLogId: string | null } {
+    // A created realm may have no logs yet. Reads must not create the log schema.
+    if (this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='logs'").toArray().length === 0) {
+      return { logIds: [], nextAfterLogId: null };
+    }
+    const rows = (afterLogId === undefined
+      ? this.sql.exec("SELECT log_id FROM logs ORDER BY log_id LIMIT ?", limit + 1)
+      : this.sql.exec("SELECT log_id FROM logs WHERE log_id > ? ORDER BY log_id LIMIT ?", afterLogId, limit + 1)
+    ).toArray();
+    const logIds = rows.slice(0, limit).map((row) => String(row.log_id));
+    return { logIds, nextAfterLogId: rows.length > limit ? logIds.at(-1) ?? null : null };
+  }
+
   frontier(logId: string): { writers: Array<{ writerId: string; seq: number; entryId: string }> } {
     this.requireLog(logId);
     const writers = this.sql

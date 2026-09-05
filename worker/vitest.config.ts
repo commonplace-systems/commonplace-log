@@ -9,11 +9,12 @@ export default defineConfig({
           name: "unit",
           globals: true,
           include: ["test/**/*.test.ts"],
-          exclude: [...configDefaults.exclude, "test/do/**", "test/realm/**/*.workers.test.ts"],
+          exclude: [...configDefaults.exclude, "test/do/**", "test/realm/**/*.workers.test.ts", "test/backup/**"],
         },
       },
       // Durable Object suite: runs inside workerd via @cloudflare/vitest-pool-workers.
       "./vitest.workers.config.ts",
+      "./vitest.backup.config.ts",
     ],
   },
 });
