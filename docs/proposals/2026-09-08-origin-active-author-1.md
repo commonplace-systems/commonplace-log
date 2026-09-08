@@ -237,10 +237,15 @@ Outcomes are integers: 1 ok, 2 error, 3 exit, 4 throw, 5 timeout, 6 not_joined,
 7 refused, 8 duplicate, 9 not_duplicate, 10 lookup_error, 11 head_changed,
 12 operation_reused. Codes describe the existing branch/result, not raw reasons.
 Call phase allows 1..5; handler allows 1..8 and 12; memory allows 1..5,7,8,12;
-durable allows 3,4,5,8,9,10,12; admission/retry allow 1..5,7;
+durable allows 2,3,4,5,8,9,10,12; admission/retry allow 1..5,7;
 persistence allows 1..5,8,11; projection allows 1..5,7;
 enqueue/postenqueue allow 1..5. `exception` freeze maps to outcome2;
-reply_error also maps to2. Missing entry on a failed publication is a gap,
+reply_error also maps to2. In the durable phase, a raised exception from
+`content_head_by_operation`, `content_commit`, or `Author.commit` is outcome2,
+distinct from a returned generic lookup error (outcome10) that the original
+branch converts to `:not_duplicate`. Preserve the original exception and stack;
+do not translate it into that returned lookup-error branch.
+Missing entry on a failed publication is a gap,
 not permission to weaken these phase shapes.
 
 Static ASCII serialization accounting, with no product import or execution:
@@ -295,7 +300,11 @@ Each uses finite fixtures and explicit cleanup; no live captures are proposed.
    no B callback mark, unchanged ACK message, and ackTuple unavailable.
 4. **Phase outcomes:** cover memory duplicate/reuse/refusal, durable hit,
    unknown-operation, generic lookup error preserving `:not_duplicate`, and
-   failure inside existing durable verification. Verify no extra business read.
+   failure inside existing durable verification. Explicitly propose a raised
+   exception at each of `content_head_by_operation`, `content_commit`, and
+   `Author.commit`: require durable outcome2 and unchanged original exception
+   identity/stack, separately from returned lookup-error10 with unchanged
+   `:not_duplicate`. Verify no extra business read.
 5. **Existing retry:** head-changed at persistence1, original snapshot/reconcile,
    then persistence2 success or refusal. Require distinct immutable timestamps,
    at most the original one retry, and no success overwriting the first failure.
