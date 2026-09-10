@@ -1,0 +1,49 @@
+{
+  "accepted_combined_coverage": true,
+  "baseline": "retained required named performance RED with nonvacuous matching canonical output",
+  "candidate": "retained33 passes plus corrected2 passes =35, no replay",
+  "original_validation1_remains_incomplete": true,
+  "continuation_result": {
+    "total": 10,
+    "failures": 0,
+    "skipped": 0,
+    "excluded": 8
+  },
+  "continuation_native0_no_timeout_known_group_absence_inputs907_equal": true,
+  "metrics": [
+    {
+      "candidate": {
+        "reductions": 129376,
+        "elapsed_us": 1357
+      },
+      "history_rows": 64,
+      "baseline": {
+        "reductions": 2988747,
+        "elapsed_us": 32714
+      },
+      "prepared_equal": true
+    },
+    {
+      "candidate": {
+        "reductions": 158475,
+        "elapsed_us": 2238
+      },
+      "history_rows": 128,
+      "baseline": {
+        "reductions": 5914154,
+        "elapsed_us": 57241
+      },
+      "prepared_equal": true
+    }
+  ],
+  "files": {
+    "tmp/validation-2/receipt.json": "9055b91b9e3c4d07ea5415daabc8590df485bdabcd130d99b88d290743118303",
+    "tmp/validation-2/inputs-PRE.json": "c54a74a3b0d5372675d0ef221c40489131bec04ee5ecb8715f76e456a2d91515",
+    "tmp/validation-2/inputs-POST.json": "c54a74a3b0d5372675d0ef221c40489131bec04ee5ecb8715f76e456a2d91515",
+    "tmp/validation-2/continuation/test-result.json": "807dbe7975a9718931cf0baa5319e2bf1588131a1ceb32e74363d43559508cd3",
+    "tmp/validation-2/continuation.stdout": "e60b2f40b2f44d25904cdab021c7f44973bf820cc033c8f343bcb0accce7abc2",
+    "tmp/validation-2/continuation.rc": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "tmp/validation-1/candidate-metrics.json": "30b2096abba7f4609ebc5611abe48a0c7f2d637477c3a53996b8fe0f223943b8"
+  },
+  "limits": "Local deterministic validation/work reduction only, not hosted cause/cure; fixed certificate proof depends on pinned validator; internal fallback frames may differ; no immunity to operational failures."
+}
