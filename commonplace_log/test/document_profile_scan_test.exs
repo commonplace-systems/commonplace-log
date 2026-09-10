@@ -203,7 +203,7 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
 
   test "certificate encoding exception defers to original scan native exception" do
     h = %{handle(history(4)) | log_id: self()}
-    assert {:native, :error, %Protocol.UndefinedError{}, _} = same(h, [%{"n" => 1}], "absent")
+    assert {:native, :error, %ArgumentError{}, _} = same(h, [%{"n" => 1}], "absent")
   end
 
   test "fixed differential matrix covers empty and short histories and batch sizes" do

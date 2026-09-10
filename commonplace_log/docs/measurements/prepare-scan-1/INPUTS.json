@@ -897,7 +897,7 @@
   "/home/jes/commonplace-log-prepare-scan/commonplace_log/lib/commonplace/log_store/sqlite/server.ex": "1cc8a6c246e8d037e377f392956399d549f7313adc13dbda083ae8a1c846faec",
   "/home/jes/commonplace-log-prepare-scan/commonplace_log/lib/commonplace_log.ex": "c39412484e6512e8c591c370cedf486b4a27713f08099922cf6334e655bf814a",
   "/home/jes/commonplace-log-prepare-scan/commonplace_log/lib/commonplace_log/application.ex": "51db11dc4eeef5f527870265f0181d7e6fadb7ba133be7a40924032f3a642e11",
-  "/home/jes/commonplace-log-prepare-scan/commonplace_log/test/document_profile_scan_test.exs": "28559f358c782d01adb589ccc0fac441ffe77b2f31fbba1bec7583d92385c430",
+  "/home/jes/commonplace-log-prepare-scan/commonplace_log/test/document_profile_scan_test.exs": "890eb97e409a34839541b8abed63783ece5b66e101e0d6fbfbb19a90c66193f7",
   "/home/jes/commonplace-log-prepare-scan/commonplace_log/test/document_profile_sidecar_test.exs": "2ee30de4a8c289b3f14041c53fbb9e394b7486b7eb770f1d812e5f2274c0d451",
   "/home/jes/commonplace-log-prepare-scan/commonplace_log/test/document_profile_test.exs": "974a3aaaa0c23d0fb004dd92a21bf0ef05d21bf89f0a77ffe4e3faeec9c365f2",
   "/home/jes/commonplace-log-prepare-scan/commonplace_log/test/fixtures/document_profile_scan_baseline.ex.txt": "7cece84ee7a0ec87afaf351476cc36a5aecede495e32a2daeef8c791881bb2fd",
