@@ -19,5 +19,7 @@
     "tmp/validation-1/baseline.stderr": "03aabeac9544312a45919a46394b70754e09157d3f965b4fc46fc284693afc62",
     "tmp/validation-1/candidate/test-result.json": "fa78fbca5c4ade501ffd1de15fc5c05966a42dff8df44d49560d219a5315e34e",
     "tmp/validation-1/baseline/test-result.json": "be9846803588fd1e21d925d24c1824f248e5a6a025a4faec99e18fb2be1eaffd"
-  }
+  },
+  "original_904_pre_post_equals_exact_ad39847_manifest": true,
+  "product_source_equals_ad39847": true
 }
