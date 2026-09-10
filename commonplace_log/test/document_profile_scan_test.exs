@@ -95,6 +95,7 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
     catch
       kind, reason ->
         {m, f, args, _} = hd(__STACKTRACE__)
+        m = if m == Baseline, do: DocumentProfile, else: m
         {:native, kind, reason, {m, f, if(is_list(args), do: length(args), else: args)}}
     end
   end
@@ -180,25 +181,29 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
     assert {:ok, %{canonical_entries: [^large]}} = same(h, bodies, "target")
   end
 
+  @tag :prepare_scan_continuation
   test "first candidate validation error is retained even when operation is absent" do
     h = handle(history(12))
     bodies = [%{"text" => String.duplicate("x", 1_048_576)}]
-    assert {:error, {:entry_too_large, _}} = same(h, bodies, "absent")
+    assert {:native, :error, {:case_clause, {:error, {:entry_too_large, _}}},
+            {DocumentProfile, :find_or_build_entries, 6}} = same(h, bodies, "absent")
   end
 
+  @tag :prepare_scan_continuation
   test "malformed history and missing predecessor retain native fallback failures" do
     rows = history(4)
     h = handle(rows)
     broken_json = put_in(h.store.rows, ["{" | tl(rows)])
     assert {:native, :error, %Jason.DecodeError{}, _} = same(broken_json, [%{"n" => 1}], "absent")
     missing_id = put_in(h.store.rows, [hd(rows), "{}" | Enum.drop(rows, 2)])
-    assert {:native, :error, %KeyError{}, _} = same(missing_id, [%{"n" => 1}], "absent")
+    assert {:native, :error, {:badkey, "entry_id"}, {:erlang, :map_get, 2}} = same(missing_id, [%{"n" => 1}], "absent")
 
     malformed_id =
       rows |> Enum.at(1) |> Jason.decode!() |> Map.put("entry_id", "bad") |> Jason.encode!()
 
     h = put_in(h.store.rows, [hd(rows), malformed_id | Enum.drop(rows, 2)])
-    assert {:error, {:invalid_entry, _}} = same(h, [%{"n" => 1}], "absent")
+    assert {:native, :error, {:case_clause, {:error, {:invalid_entry, _}}},
+            {DocumentProfile, :find_or_build_entries, 6}} = same(h, [%{"n" => 1}], "absent")
   end
 
   test "certificate encoding exception defers to original scan native exception" do

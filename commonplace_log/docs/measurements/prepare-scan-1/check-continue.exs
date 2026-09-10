@@ -1,0 +1,17 @@
+[out, mode] = System.argv()
+true = mode == "continuation"
+ExUnit.start(autorun: false)
+ExUnit.configure(exclude: [:test], include: [:prepare_scan_continuation])
+Application.put_env(:commonplace_log, Commonplace.LogStore.SQLite, data_dir: Path.join(out, "data"))
+beam = Path.join(out, "ebin")
+File.mkdir_p!(beam)
+{:ok, _, _} = Kernel.ParallelCompiler.compile_to_path(Path.wildcard("lib/**/*.ex"), beam)
+{:ok, _} = Application.ensure_all_started(:commonplace_log)
+Code.require_file("test/support/in_memory_persistence.ex")
+Code.require_file("test/support/sidecar_loopback.ex")
+Code.require_file("test/document_profile_scan_test.exs")
+
+result = ExUnit.run()
+File.write!(Path.join(out, "test-result.json"), Jason.encode!(result))
+Application.stop(:commonplace_log)
+System.halt(if(result.failures == 0, do: 0, else: 1))

@@ -1,0 +1,23 @@
+{
+  "original_receipt_complete": false,
+  "original_candidate_native_rc": 1,
+  "baseline_positive_control": "native1/10total1fail9excluded; accepted required performance RED",
+  "candidate": "native1/35total2fail/33 retained green",
+  "product_changed": false,
+  "disposition": "Two fixture expectations: raw badkey is not rescued KeyError; renamed baseline MFA differs only by deliberate module rename. Both implementations raise same case_clause wrapping entry_too_large because original find_or_build_entries does not handle returned scan errors. Preserve that behavior; also correct later malformed-predecessor case_clause expectation. Normalize only Baseline module to DocumentProfile for native-frame comparison. Full stack equivalence not claimed.",
+  "files": {
+    "tmp/validation-1/inputs-POST.json": "cac17e9e54e80f82add16f4d3ee0dcfd970f2db45628c1aa0f49ab70efc42a8c",
+    "tmp/validation-1/candidate-metrics.json": "30b2096abba7f4609ebc5611abe48a0c7f2d637477c3a53996b8fe0f223943b8",
+    "tmp/validation-1/candidate.rc": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "tmp/validation-1/baseline-metrics.json": "de1d832f30736addb6b73669adb84122b868894b0598976a80f8d325bc70a5a3",
+    "tmp/validation-1/baseline.rc": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "tmp/validation-1/receipt.json": "d9f403fd1f278d597a011cd826eaa4f5d09ee403201c1a6a46f81d79e81c1c9f",
+    "tmp/validation-1/inputs-PRE.json": "cac17e9e54e80f82add16f4d3ee0dcfd970f2db45628c1aa0f49ab70efc42a8c",
+    "tmp/validation-1/candidate.stderr": "2b7a0b0cb040e0c5481d29e7d262686edd6b6f9f84190e5079651df3a5f7439f",
+    "tmp/validation-1/baseline.stdout": "94c3342468f8b919330e89b14c8a108fd1d003a36be109b9067f7b6cc5757309",
+    "tmp/validation-1/candidate.stdout": "d0e3b4e2567a9ee4f5a3be29fbbe69b942dab595b792520967e11b5c5c9c1eea",
+    "tmp/validation-1/baseline.stderr": "03aabeac9544312a45919a46394b70754e09157d3f965b4fc46fc284693afc62",
+    "tmp/validation-1/candidate/test-result.json": "fa78fbca5c4ade501ffd1de15fc5c05966a42dff8df44d49560d219a5315e34e",
+    "tmp/validation-1/baseline/test-result.json": "be9846803588fd1e21d925d24c1824f248e5a6a025a4faec99e18fb2be1eaffd"
+  }
+}
