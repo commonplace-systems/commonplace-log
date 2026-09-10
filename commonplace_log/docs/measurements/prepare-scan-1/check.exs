@@ -1,0 +1,21 @@
+[out, mode] = System.argv()
+true = mode in ["baseline", "candidate"]
+ExUnit.start(autorun: false)
+if mode == "baseline", do: ExUnit.configure(exclude: [:test], include: [:prepare_scan_performance])
+Application.put_env(:commonplace_log, Commonplace.LogStore.SQLite, data_dir: Path.join(out, "data"))
+beam = Path.join(out, "ebin")
+File.mkdir_p!(beam)
+{:ok, _, _} = Kernel.ParallelCompiler.compile_to_path(Path.wildcard("lib/**/*.ex"), beam)
+if mode == "baseline", do: Code.compile_file("test/fixtures/document_profile_scan_baseline.ex.txt")
+{:ok, _} = Application.ensure_all_started(:commonplace_log)
+Code.require_file("test/support/in_memory_persistence.ex")
+Code.require_file("test/support/sidecar_loopback.ex")
+Code.require_file("test/document_profile_scan_test.exs")
+if mode == "candidate" do
+  Code.require_file("test/document_profile_test.exs")
+  Code.require_file("test/document_profile_sidecar_test.exs")
+end
+result = ExUnit.run()
+File.write!(Path.join(out, "test-result.json"), Jason.encode!(result))
+Application.stop(:commonplace_log)
+System.halt(if(result.failures == 0, do: 0, else: 1))

@@ -386,152 +386,30 @@ defmodule Commonplace.Log.DocumentProfile do
     else
       parsed = Enum.map(existing, &Jason.decode!/1)
 
-      parsed_index = List.to_tuple(parsed)
-
-      if last_start > 1 and
-           candidate_scan_certified?(
-             handle,
-             parsed_index,
-             last_start,
-             operation_id,
-             bodies,
-             created_at
-           ) do
-        scan_matching_operations(
-          handle,
-          List.to_tuple(existing),
-          parsed_index,
-          last_start,
-          operation_id,
-          bodies,
-          created_at
-        )
-      else
-        scan_existing_batch(
-          handle,
-          existing,
-          parsed,
-          last_start,
-          operation_id,
-          bodies,
-          created_at
-        )
-      end
-    end
-  end
-
-  # Keep the original scan as the authority for uncertain/invalid input. In
-  # particular, it can return an early replay before a later candidate is too
-  # large, or return an early validation error before a matching operation ID.
-  defp scan_existing_batch(handle, existing, parsed, last_start, operation_id, bodies, created_at) do
-    batch_size = length(bodies)
-
-    Enum.reduce_while(1..last_start, :not_found, fn start_seq, :not_found ->
-      prev_entry_id =
-        if start_seq == 1,
-          do: nil,
-          else: parsed |> Enum.at(start_seq - 2) |> Map.fetch!("entry_id")
-
-      with {:ok, candidate} <-
-             build_entries(
-               handle.log_id,
-               handle.writer_id,
-               start_seq,
-               prev_entry_id,
-               operation_id,
-               bodies,
-               created_at
-             ),
-           true <- Enum.slice(existing, start_seq - 1, batch_size) == candidate do
-        {:halt, {:ok, candidate}}
-      else
-        false -> {:cont, :not_found}
-        {:error, _reason} = error -> {:halt, error}
-      end
-    end)
-  end
-
-  # The largest positional start generates the largest sequence at every batch
-  # index. A successful build there certifies deterministic validation for all
-  # earlier candidates: bodies/time/operation/log/writer stay identical; derived
-  # IDs and all nonnull predecessors are lowercase ASCII UUIDs of length 36;
-  # sequence 1's nil predecessor is shorter; positive safe integer decimal widths
-  # do not shrink as the sequence grows. This proof depends on Entry's current
-  # closed fields, canonicalization and size check. It does not promise immunity
-  # to resource exhaustion or other operational faults after work is skipped.
-  defp candidate_scan_certified?(handle, parsed, last_start, operation_id, bodies, created_at) do
-    try do
-      count = tuple_size(parsed)
-
-      valid_predecessors =
-        parsed
-        |> Tuple.to_list()
-        |> Enum.all?(fn entry ->
-          is_map(entry) and Entry.uuid_problem(Map.get(entry, "entry_id")) == nil
-        end)
-
-      if count <= 9_007_199_254_740_991 and valid_predecessors do
-        predecessor = elem(parsed, last_start - 2)["entry_id"]
-
-        case build_entries(
-               handle.log_id,
-               handle.writer_id,
-               last_start,
-               predecessor,
-               operation_id,
-               bodies,
-               created_at
-             ) do
-          {:ok, _entries} -> true
-          _ -> false
-        end
-      else
-        false
-      end
-    catch
-      _kind, _reason -> false
-    end
-  end
-
-  defp scan_matching_operations(
-         handle,
-         existing,
-         parsed,
-         last_start,
-         operation_id,
-         bodies,
-         created_at
-       ) do
-    batch_size = length(bodies)
-
-    Enum.reduce_while(0..(last_start - 1), :not_found, fn index, :not_found ->
-      entry = elem(parsed, index)
-
-      # Necessary, never sufficient: exact replay still compares every byte of
-      # the derived batch with the original contiguous history at this position.
-      if entry["version"] == 2 and entry["operation_id"] == operation_id do
-        predecessor = if index == 0, do: nil, else: elem(parsed, index - 1)["entry_id"]
+      Enum.reduce_while(1..last_start, :not_found, fn start_seq, :not_found ->
+        prev_entry_id =
+          if start_seq == 1,
+            do: nil,
+            else: parsed |> Enum.at(start_seq - 2) |> Map.fetch!("entry_id")
 
         with {:ok, candidate} <-
                build_entries(
                  handle.log_id,
                  handle.writer_id,
-                 index + 1,
-                 predecessor,
+                 start_seq,
+                 prev_entry_id,
                  operation_id,
                  bodies,
                  created_at
                ),
-             true <- Enum.map(index..(index + batch_size - 1), &elem(existing, &1)) == candidate do
+             true <- Enum.slice(existing, start_seq - 1, batch_size) == candidate do
           {:halt, {:ok, candidate}}
         else
           false -> {:cont, :not_found}
           {:error, _reason} = error -> {:halt, error}
         end
-      else
-        {:cont, :not_found}
-      end
-    end)
+      end)
+    end
   end
 
   defp build_entries(
