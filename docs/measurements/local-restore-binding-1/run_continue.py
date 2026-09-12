@@ -63,7 +63,7 @@ beam_hashes_pre = beam_hashes()
 
 elixir = "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir"
 script = repo / "docs/measurements/restore-binding-native-1/restore_binding_continue.exs"
-cmd = [elixir, str(script), str(out), str(selected_line), test_name]
+cmd = [elixir, str(script), str(out), str(selected_line), f"test {test_name}"]
 (out / "command.json").write_text(
     json.dumps(
         {
