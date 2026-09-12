@@ -62,6 +62,42 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
              CloudflareSidecar.restore_bundle_batch(store, bundle())
   end
 
+  test "rejects a success response with provider-shaped or secret keys as one closed protocol error" do
+    store =
+      sidecar(
+        self(),
+        response(200, %{
+          "ok" => true,
+          "result" => result(1, 0, false) |> Map.put("secret", "sentinel")
+        })
+      )
+
+    assert {:error, {:protocol_error, :invalid_response}} =
+             CloudflareSidecar.restore_bundle_batch(store, bundle(), 1)
+  end
+
+  test "preflights raw entry and aggregate bounds before validation or transport" do
+    raw = :binary.copy(<<0>>, 1_000_000)
+
+    oversized = %{
+      bundle_id: "bundle-oversized-raw",
+      logs:
+        Enum.map(0..16, fn index ->
+          id =
+            "018f5e2a-8b3c-7d4e-9f10-123456789#{String.pad_leading(Integer.to_string(index), 3, "0")}"
+
+          %{log_id: id, archive_id: "archive-#{index}", writer_id: @writer, entries: [raw]}
+        end)
+    }
+
+    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(0, 0, true)}))
+
+    assert {:error, {:invalid_restore_bundle, :invalid_shape}} =
+             CloudflareSidecar.restore_bundle_batch(store, oversized)
+
+    refute_received {:restore_request, _, _}
+  end
+
   test "closes transport exceptions and inconsistent result counts" do
     for failure <- [:raise, :throw, :exit] do
       assert {:error, {:transport_error, :transport_failed}} =
@@ -70,18 +106,17 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
 
     inconsistent = sidecar(self(), response(200, %{"ok" => true, "result" => result(2, 0, true)}))
 
-    assert {:error, {:protocol_error, "invalid restore result"}} =
+    assert {:error, {:protocol_error, :invalid_response}} =
              CloudflareSidecar.restore_bundle_batch(inconsistent, bundle(), 1)
   end
 
   test "maps provider failures without returning body or URL" do
     cases = [
-      {400, %{"ok" => false, "error" => %{"code" => "malformed_request"}},
-       {:provider_error, :malformed_request}},
+      {400, %{"ok" => false, "error" => %{"code" => "malformed"}}, {:provider_error, :malformed}},
       {401, %{"secret" => "sentinel"}, {:unauthorized, :provider_rejected}},
       {500, %{"secret" => "sentinel"}, {:transport_error, :provider_failed}},
-      {409, %{"ok" => false, "error" => %{"code" => "constraint_violation"}},
-       {:provider_error, :constraint_violation}}
+      {409, %{"ok" => false, "error" => %{"code" => "constraint"}},
+       {:provider_error, :constraint}}
     ]
 
     for {status, body, reason} <- cases do

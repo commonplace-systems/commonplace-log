@@ -35,6 +35,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   @error_body_limit 4_096
   @restore_max_logs 64
   @restore_max_entries 4_096
+  @restore_max_entry_bytes 1_048_576
   @restore_max_bytes 16 * 1024 * 1024
   @restore_max_id_bytes 256
   @restore_response_limit 4_096
@@ -288,17 +289,17 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     end
   end
 
-  defp parse_restore_error(400, %{"ok" => false, "error" => %{"code" => "malformed_request"}}),
-    do: {:error, {:provider_error, :malformed_request}}
+  defp parse_restore_error(400, %{"ok" => false, "error" => %{"code" => "malformed"}}),
+    do: {:error, {:provider_error, :malformed}}
 
-  defp parse_restore_error(409, %{"ok" => false, "error" => %{"code" => "constraint_violation"}}),
-    do: {:error, {:provider_error, :constraint_violation}}
+  defp parse_restore_error(409, %{"ok" => false, "error" => %{"code" => "constraint"}}),
+    do: {:error, {:provider_error, :constraint}}
 
   defp parse_restore_error(409, %{"ok" => false, "error" => %{"code" => "obsolete_epoch"}}),
     do: {:error, {:provider_error, :obsolete_epoch}}
 
-  defp parse_restore_error(413, %{"ok" => false, "error" => %{"code" => "batch_too_large"}}),
-    do: {:error, {:provider_error, :batch_too_large}}
+  defp parse_restore_error(413, %{"ok" => false, "error" => %{"code" => "oversize"}}),
+    do: {:error, {:provider_error, :oversize}}
 
   defp parse_restore_error(507, %{"ok" => false, "error" => %{"code" => "storage_full"}}),
     do: {:error, {:provider_error, :storage_full}}
@@ -384,12 +385,15 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   end
 
   defp parse_restore_result(value, inventory_count, max_logs) do
-    with :ok <- exact_keys(value, ["ok", "result"]),
-         true <- value["ok"] === true,
-         %{} = result <- value["result"],
-         :ok <- exact_keys(result, ["imported_logs", "skipped_logs", "complete"]),
-         {:ok, imported_logs} <- non_negative_integer(result["imported_logs"]),
-         {:ok, skipped_logs} <- non_negative_integer(result["skipped_logs"]),
+    with response when is_map(response) and map_size(response) == 2 <- value,
+         true <- Map.keys(response) |> Enum.sort() == ["ok", "result"],
+         true <- response["ok"] === true,
+         result when is_map(result) and map_size(result) == 3 <- response["result"],
+         true <- Map.keys(result) |> Enum.sort() == ["complete", "imported_logs", "skipped_logs"],
+         imported_logs when is_integer(imported_logs) and imported_logs >= 0 <-
+           result["imported_logs"],
+         skipped_logs when is_integer(skipped_logs) and skipped_logs >= 0 <-
+           result["skipped_logs"],
          complete when is_boolean(complete) <- result["complete"],
          true <- imported_logs <= max_logs,
          true <- skipped_logs <= inventory_count,
@@ -399,11 +403,11 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
              (not complete and imported_logs + skipped_logs < inventory_count) do
       {:ok, %{imported_logs: imported_logs, skipped_logs: skipped_logs, complete: complete}}
     else
-      false -> protocol("restore success has non-true ok")
-      {:error, _reason} = error -> error
-      _ -> protocol("invalid restore result")
+      _ -> invalid_restore_response()
     end
   end
+
+  defp invalid_restore_response, do: {:error, {:protocol_error, :invalid_response}}
 
   defp encode_restore_bundle(bundle, max_logs)
        when is_map(bundle) and is_integer(max_logs) and max_logs in 1..@restore_max_logs do
@@ -422,20 +426,59 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
   defp encode_restore_logs(logs)
        when is_list(logs) and logs != [] and length(logs) <= @restore_max_logs do
-    logs
-    |> Enum.reduce_while({:ok, [], 0}, fn log, {:ok, acc, total} ->
-      case encode_restore_log(log) do
-        {:ok, encoded, bytes} -> {:cont, {:ok, [encoded | acc], total + bytes}}
-        error -> {:halt, error}
+    with :ok <- preflight_restore_logs(logs) do
+      logs
+      |> Enum.reduce_while({:ok, [], 0}, fn log, {:ok, acc, total} ->
+        case encode_restore_log(log) do
+          {:ok, encoded, bytes} -> {:cont, {:ok, [encoded | acc], total + bytes}}
+          error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, encoded, total} -> {:ok, Enum.reverse(encoded), total}
+        error -> error
       end
-    end)
-    |> case do
-      {:ok, encoded, total} -> {:ok, Enum.reverse(encoded), total}
-      error -> error
     end
   end
 
   defp encode_restore_logs(_logs), do: {:error, :invalid_logs}
+
+  defp preflight_restore_logs(logs) do
+    Enum.reduce_while(logs, {:ok, nil, 0}, fn log, {:ok, previous_id, total} ->
+      with true <- is_map(log),
+           :ok <- exact_input_keys(log, [:log_id, :archive_id, :writer_id, :entries]),
+           {:ok, log_id} <- bounded_restore_id(Map.get(log, :log_id)),
+           {:ok, _archive_id} <- bounded_restore_id(Map.get(log, :archive_id)),
+           {:ok, _writer_id} <- bounded_restore_id(Map.get(log, :writer_id)),
+           true <- previous_id === nil or previous_id < log_id,
+           entries
+           when is_list(entries) and entries != [] and length(entries) <= @restore_max_entries <-
+             Map.get(log, :entries),
+           {:ok, total} <- preflight_restore_entries(entries, total) do
+        {:cont, {:ok, log_id, total}}
+      else
+        _ -> {:halt, {:error, :invalid_logs}}
+      end
+    end)
+    |> case do
+      {:ok, _last_id, _total} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp preflight_restore_entries(entries, total) do
+    Enum.reduce_while(entries, {:ok, total}, fn raw, {:ok, running_total} ->
+      if is_binary(raw) and byte_size(raw) <= @restore_max_entry_bytes do
+        next_total = running_total + byte_size(raw)
+
+        if next_total <= @restore_max_bytes,
+          do: {:cont, {:ok, next_total}},
+          else: {:halt, {:error, :restore_bytes_too_large}}
+      else
+        {:halt, {:error, :invalid_entry}}
+      end
+    end)
+  end
 
   defp encode_restore_log(log) when is_map(log) do
     with :ok <- exact_input_keys(log, [:log_id, :archive_id, :writer_id, :entries]),
@@ -464,7 +507,8 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     |> Enum.with_index(1)
     |> Enum.reduce_while({:ok, [], 0, nil}, fn {raw, expected_seq},
                                                {:ok, acc, total, previous_id} ->
-      with {:ok, canonical} <- canonical_bytes(raw),
+      with :ok <- raw_entry_size(raw),
+           {:ok, canonical} <- canonical_bytes(raw),
            {:ok, parsed} <- parse_restore_entry(canonical),
            :ok <- restore_entry_shape(parsed, log_id, writer_id, expected_seq, previous_id) do
         entry = Base.encode64(canonical)
@@ -497,6 +541,12 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   end
 
   defp canonical_bytes(_bytes), do: {:error, :invalid_entry}
+
+  defp raw_entry_size(bytes)
+       when is_binary(bytes) and byte_size(bytes) <= @restore_max_entry_bytes,
+       do: :ok
+
+  defp raw_entry_size(_bytes), do: {:error, :invalid_entry}
 
   defp parse_restore_entry(canonical) do
     case Jason.decode(canonical) do
