@@ -38,6 +38,7 @@ fi
 inputs=(
   "$worker_dir/src/realm/schema.ts"
   "$worker_dir/src/realm/store.ts"
+  "$worker_dir/src/entry.ts"
   "$worker_dir/src/jcs.ts"
   "$worker_dir/test/realm/helpers.ts"
   "$worker_dir/test/realm/restore-capacity.workers.test.ts"

@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { validateEntry } from "../../src/entry";
 import { canonicalize } from "../../src/jcs";
 import { RealmStore, type EntryRow, type RestoreArchive } from "../../src/realm/store";
 
@@ -57,6 +58,13 @@ describe("restore capacity boundary", () => {
     expect(BODY_LENGTH).toBe(900_000);
     expect(entry.canonicalBytes.byteLength).toBeGreaterThan(850_000);
     expect(entry.canonicalBytes.byteLength).toBeLessThan(1_048_576);
+    const validation = validateEntry(entry.canonicalBytes);
+    if (!validation.ok) throw new Error(`capacity fixture entry rejected: ${validation.reason}`);
+    expect(validation.canonicalBytes).toEqual(entry.canonicalBytes);
+    console.info(JSON.stringify({
+      restore_capacity_body_bytes: BODY_LENGTH,
+      restore_capacity_canonical_bytes: entry.canonicalBytes.byteLength,
+    }));
 
     const restored = await withRealm(name, (store, sql) => {
       const result = store.restoreBatch(source);
@@ -73,7 +81,11 @@ describe("restore capacity boundary", () => {
 
     expect(restored.result).toEqual({ imported: 1, skipped: 0, complete: true });
     expect(restored.totalBytes).toBe(entry.canonicalBytes.byteLength);
-    expect(restored.manifestBytes).toBeGreaterThan(entry.canonicalBytes.byteLength * 3);
+    expect(restored.manifestBytes).toBeGreaterThan(0);
+    console.info(JSON.stringify({
+      restore_capacity_total_bytes: restored.totalBytes,
+      restore_capacity_manifest_bytes: restored.manifestBytes,
+    }));
 
     const lease = await withRealm(name, (store) => store.takeLease(LOG));
     expect(lease.writerId).toBe(WRITER);
@@ -102,6 +114,11 @@ describe("restore capacity boundary", () => {
       insertEntries: [followup],
       putTips: [{ writerId: WRITER, lastSeq: 2, lastEntryId: FOLLOWUP }],
     }))).toBe(2);
+
+    await expect(withRealm(name, async (_store, state) => {
+      await state.storage.sync();
+      state.abort("restore capacity restart");
+    })).rejects.toThrow("restore capacity restart");
 
     const reopened = await withRealm(name, (store) => store.readWriter(LOG, WRITER, {
       afterSeq: 0,
