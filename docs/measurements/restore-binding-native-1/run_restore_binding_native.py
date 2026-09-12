@@ -19,7 +19,7 @@ beam_root = pathlib.Path(
     )
 )
 source_commit = subprocess.check_output(
-    ["git", "rev-parse", "6c24cbe^{commit}"], cwd=repo, text=True
+    ["git", "rev-parse", "bc1ec30^{commit}"], cwd=repo, text=True
 ).strip()
 actual_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
 if subprocess.run(["git", "merge-base", "--is-ancestor", source_commit, actual_commit], cwd=repo).returncode:
