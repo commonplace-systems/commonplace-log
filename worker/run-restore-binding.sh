@@ -55,11 +55,12 @@ printf '%s\n' "provider_deps=$provider_deps" >"$output_dir/runner-inputs.txt"
 
 set +e
 cd "$worker_dir"
+vitest_args=(run --config "$worker_dir/vitest.config.ts" --project do "test/realm/restore-authority.workers.test.ts")
+if [[ -n "${RESTORE_BINDING_TEST_FILTER:-}" ]]; then
+  vitest_args+=(-t "$RESTORE_BINDING_TEST_FILTER")
+fi
 timeout --signal=TERM --kill-after=5s 180s \
-  env NODE_PATH="$provider_deps" "$provider_deps/.bin/vitest" run \
-  --config "$worker_dir/vitest.config.ts" \
-  --project do \
-  "test/realm/restore-authority.workers.test.ts" \
+  env NODE_PATH="$provider_deps" "$provider_deps/.bin/vitest" "${vitest_args[@]}" \
   >"$output_dir/stdout.txt" 2>"$output_dir/stderr.txt"
 native_rc=$?
 set -e

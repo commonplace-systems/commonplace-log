@@ -124,14 +124,26 @@ describe("internal restore binding", () => {
     const source = archive();
     await withRealm(pendingName, (store) => expect(store.restoreBatch(source, 1).complete).toBe(false));
     await withRealm(pendingName, (_store, state) => {
-      state.storage.sql.exec("UPDATE entries SET writer_seq = 2 WHERE log_id = ?", LOG);
+      state.storage.sql.exec("DROP TRIGGER entries_no_update");
+      try {
+        state.storage.sql.exec("UPDATE entries SET writer_seq = 2 WHERE log_id = ?", LOG);
+      } finally {
+        state.storage.sql.exec(`CREATE TRIGGER entries_no_update BEFORE UPDATE ON entries
+          BEGIN SELECT RAISE(ABORT, 'entries are immutable'); END`);
+      }
     });
     await withRealm(pendingName, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
 
     const completeName = `restore-binding-missing-${Date.now()}-${Math.random()}`;
     await withRealm(completeName, (store) => expect(store.restoreBatch(source).complete).toBe(true));
     await withRealm(completeName, (_store, state) => {
-      state.storage.sql.exec("DELETE FROM entries WHERE log_id = ? AND writer_seq = 2", LOG);
+      state.storage.sql.exec("DROP TRIGGER entries_no_delete");
+      try {
+        state.storage.sql.exec("DELETE FROM entries WHERE log_id = ? AND writer_seq = 2", LOG);
+      } finally {
+        state.storage.sql.exec(`CREATE TRIGGER entries_no_delete BEFORE DELETE ON entries
+          BEGIN SELECT RAISE(ABORT, 'entries are immutable'); END`);
+      }
     });
     await withRealm(completeName, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
   });
