@@ -1,4 +1,5 @@
 import { initSchema } from "./schema";
+import { validateEntry } from "../entry";
 
 export type RealmStorageErrorCode =
   | "not_found"
@@ -74,6 +75,19 @@ export interface Lease {
   writerId: string;
 }
 
+export interface RestoreArchive {
+  logId: string;
+  archiveId: string;
+  writerId: string;
+  entries: EntryRow[];
+}
+
+export interface RestoreResult {
+  imported: number;
+  skipped: number;
+  complete: boolean;
+}
+
 interface Transactor {
   transactionSync<T>(fn: () => T): T;
 }
@@ -120,10 +134,95 @@ export class RealmStore {
     }
   }
 
+  /** Internal provider-local restore primitive. It is intentionally not routed by HTTP. */
+  restoreBatch(archive: RestoreArchive, maxEntries = 4096): RestoreResult {
+    validateRestoreArchive(archive, maxEntries);
+    initSchema(this.sql);
+    const totalBytes = archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0);
+    try {
+      return this.txn.transactionSync(() => {
+        const marker = this.sql.exec(
+          `SELECT archive_id, writer_id, entry_count, total_bytes, state FROM restore_markers WHERE log_id = ?`,
+          archive.logId,
+        ).toArray()[0];
+        const existing = this.sql.exec(
+          `SELECT document_writer_id FROM logs WHERE log_id = ?`, archive.logId,
+        ).toArray()[0];
+        if (marker === undefined) {
+          // Existing unmarked logs are never eligible for rebinding.
+          if (existing !== undefined) throw new RealmStoreError("constraint");
+          this.sql.exec(
+            `INSERT INTO logs (log_id, format_version, revision, created_at, lease_epoch, document_writer_id)
+             VALUES (?, 1, 0, ?, 0, ?)`, archive.logId, new Date().toISOString(), archive.writerId,
+          );
+          this.sql.exec(
+            `INSERT INTO restore_markers (log_id, archive_id, writer_id, entry_count, total_bytes, state)
+             VALUES (?, ?, ?, ?, ?, 'pending')`, archive.logId, archive.archiveId, archive.writerId,
+            archive.entries.length, totalBytes,
+          );
+        } else if (
+          String(marker.archive_id) !== archive.archiveId || String(marker.writer_id) !== archive.writerId ||
+          Number(marker.entry_count) !== archive.entries.length || Number(marker.total_bytes) !== totalBytes ||
+          existing === undefined || String(existing.document_writer_id) !== archive.writerId
+        ) {
+          throw new RealmStoreError("constraint");
+        } else if (String(marker.state) === "complete") {
+          return { imported: 0, skipped: archive.entries.length, complete: true };
+        }
+
+        const rows = this.sql.exec(
+          `SELECT entry_id, writer_id, writer_seq, canonical_json FROM entries WHERE log_id = ?`, archive.logId,
+        ).toArray();
+        const byId = new Map(rows.map((row) => [String(row.entry_id), bytes(row.canonical_json)]));
+        const byCoordinate = new Map(rows.map((row) => [`${String(row.writer_id)}:${Number(row.writer_seq)}`, bytes(row.canonical_json)]));
+        const missing: EntryRow[] = [];
+        let skipped = 0;
+        for (const entry of archive.entries) {
+          const byIdBytes = byId.get(entry.entryId);
+          const byCoordinateBytes = byCoordinate.get(`${entry.writerId}:${entry.writerSeq}`);
+          if (byIdBytes !== undefined || byCoordinateBytes !== undefined) {
+            if (byIdBytes === undefined || byCoordinateBytes === undefined ||
+                !sameBytes(byIdBytes, entry.canonicalBytes) || !sameBytes(byCoordinateBytes, entry.canonicalBytes)) {
+              throw new RealmStoreError("constraint");
+            }
+            skipped += 1;
+          } else {
+            missing.push(entry);
+          }
+        }
+        const batch = missing.slice(0, maxEntries);
+        for (const entry of batch) {
+          this.sql.exec(
+            `INSERT INTO entries (log_id, entry_id, writer_id, writer_seq, prev_entry_id, created_at, canonical_json, received_at_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, archive.logId, entry.entryId, entry.writerId, entry.writerSeq,
+            entry.prevEntryId, entry.createdAt,
+            entry.canonicalBytes.buffer.slice(entry.canonicalBytes.byteOffset, entry.canonicalBytes.byteOffset + entry.canonicalBytes.byteLength),
+            Date.now(),
+          );
+        }
+        if (batch.length > 0) {
+          const tip = batch.at(-1)!;
+          this.sql.exec(
+            `INSERT INTO writer_tips (log_id, writer_id, last_seq, last_entry_id) VALUES (?, ?, ?, ?)
+             ON CONFLICT (log_id, writer_id) DO UPDATE SET last_seq = excluded.last_seq, last_entry_id = excluded.last_entry_id`,
+            archive.logId, tip.writerId, tip.writerSeq, tip.entryId,
+          );
+          this.sql.exec(`UPDATE logs SET revision = revision + 1 WHERE log_id = ?`, archive.logId);
+        }
+        const complete = batch.length === missing.length;
+        if (complete) this.sql.exec(`UPDATE restore_markers SET state = 'complete' WHERE log_id = ?`, archive.logId);
+        return { imported: batch.length, skipped, complete };
+      });
+    } catch (error) {
+      translateStorageError(error);
+    }
+  }
+
   takeLease(logId: string): Lease {
     try {
       return this.txn.transactionSync(() => {
         const log = this.requireLog(logId);
+        this.requireRestoreComplete(logId);
         const epoch = Number(log.lease_epoch);
         const writerId = log.document_writer_id === null
           ? crypto.randomUUID().toLowerCase()
@@ -154,6 +253,7 @@ export class RealmStore {
   readSet(logId: string, query: ReadQuery): RealmReadSet {
     return this.txn.transactionSync(() => {
       const log = this.requireLog(logId);
+      this.requireRestoreComplete(logId);
       const tips = query.writers.length === 0
         ? []
         : this.sql
@@ -221,6 +321,7 @@ export class RealmStore {
     try {
       return this.txn.transactionSync(() => {
         const log = this.requireLog(plan.logId);
+        this.requireRestoreComplete(plan.logId);
         if (Number(log.revision) !== plan.expectedRevision) {
           throw new RealmStoreError("stale_revision");
         }
@@ -281,6 +382,7 @@ export class RealmStore {
 
   frontier(logId: string): { writers: Array<{ writerId: string; seq: number; entryId: string }> } {
     this.requireLog(logId);
+    this.requireRestoreComplete(logId);
     const writers = this.sql
       .exec(
         `SELECT writer_id, last_seq, last_entry_id FROM writer_tips
@@ -301,6 +403,7 @@ export class RealmStore {
     nextAfterSeq: number | null;
   } {
     this.requireLog(logId);
+    this.requireRestoreComplete(logId);
     const through = options.throughSeq === undefined ? "" : " AND writer_seq <= ?";
     const params = options.throughSeq === undefined
       ? [logId, writerId, options.afterSeq, options.limit + 1]
@@ -330,6 +433,7 @@ export class RealmStore {
     nextAfterArrival: number | null;
   } {
     this.requireLog(logId);
+    this.requireRestoreComplete(logId);
     const rows = this.sql
       .exec(
         `SELECT canonical_json, arrival_seq FROM entries
@@ -365,5 +469,45 @@ export class RealmStore {
       .toArray()[0];
     if (row === undefined) throw new RealmStoreError("not_found");
     return row;
+  }
+
+  private requireRestoreComplete(logId: string): void {
+    const row = this.sql.exec(`SELECT state FROM restore_markers WHERE log_id = ?`, logId).toArray()[0];
+    if (row !== undefined && String(row.state) !== "complete") throw new RealmStoreError("obsolete_epoch");
+  }
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
+function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): void {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096 ||
+      archive.entries.length === 0 || archive.entries.length > 4096 ||
+      archive.archiveId.length === 0 || archive.writerId.length === 0) {
+    throw new RealmStoreError("constraint");
+  }
+  const ids = new Set<string>();
+  let totalBytes = 0;
+  let previous: EntryRow | undefined;
+  for (const entry of archive.entries) {
+    if (entry.writerId !== archive.writerId || ids.has(entry.entryId)) throw new RealmStoreError("constraint");
+    ids.add(entry.entryId);
+    totalBytes += entry.canonicalBytes.byteLength;
+    if (totalBytes > 16 * 1024 * 1024) throw new RealmStoreError("constraint");
+    const checked = validateEntry(entry.canonicalBytes);
+    if (!checked.ok || !sameBytes(checked.canonicalBytes, entry.canonicalBytes)) throw new RealmStoreError("constraint");
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(entry.canonicalBytes)) as Record<string, unknown>;
+    } catch {
+      throw new RealmStoreError("constraint");
+    }
+    if (parsed.log_id !== archive.logId || parsed.entry_id !== entry.entryId || parsed.writer_id !== entry.writerId ||
+        parsed.writer_seq !== entry.writerSeq || parsed.prev_entry_id !== entry.prevEntryId || parsed.created_at !== entry.createdAt ||
+        (previous !== undefined && (entry.writerSeq !== previous.writerSeq + 1 || entry.prevEntryId !== previous.entryId))) {
+      throw new RealmStoreError("constraint");
+    }
+    previous = entry;
   }
 }

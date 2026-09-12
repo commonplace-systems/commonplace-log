@@ -70,6 +70,15 @@ export const REALM_META_DDL = `CREATE TABLE realm_meta (
   created_at  TEXT NOT NULL
 ) STRICT;`;
 
+export const RESTORE_MARKERS_DDL = `CREATE TABLE IF NOT EXISTS restore_markers (
+  log_id TEXT PRIMARY KEY,
+  archive_id TEXT NOT NULL,
+  writer_id TEXT NOT NULL,
+  entry_count INTEGER NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
+) STRICT;`;
+
 function hasTable(sql: SqlStorage, name: string): boolean {
   return sql
     .exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name)
@@ -95,4 +104,5 @@ export function initSchema(sql: SqlStorage): void {
   sql.exec(IMMUTABILITY_TRIGGERS);
   sql.exec(ENTRY_SIZE_TRIGGER);
   initRealmMetaSchema(sql);
+  sql.exec(RESTORE_MARKERS_DDL);
 }
