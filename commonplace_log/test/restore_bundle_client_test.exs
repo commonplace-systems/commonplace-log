@@ -1,0 +1,116 @@
+defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
+  use ExUnit.Case, async: true
+
+  alias Commonplace.Log.Jcs
+  alias Commonplace.Log.Persistence.CloudflareSidecar
+
+  defmodule Transport do
+    @behaviour Commonplace.Log.Persistence.CloudflareSidecar.Transport
+
+    @impl true
+    def request(:post, url, _headers, body, {owner, response}) do
+      send(owner, {:restore_request, url, Jason.decode!(body)})
+
+      if response == :raise, do: raise("transport secret"), else: response
+    end
+  end
+
+  @log_a "018f5e2a-8b3c-7d4e-9f10-123456789aaa"
+  @log_b "018f5e2a-8b3c-7d4e-9f10-123456789aab"
+  @writer "018f5e2a-8b3c-7d4e-9f10-123456789abd"
+
+  test "encodes canonical entries, sends the complete sorted inventory, and parses result" do
+    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(1, 1, false)}))
+
+    assert {:ok, %{imported_logs: 1, skipped_logs: 1, complete: false}} =
+             CloudflareSidecar.restore_bundle_batch(store, bundle(), 1)
+
+    assert_receive {:restore_request, "https://sidecar.example/restore-bundle-batch", body}
+    assert body["bundle_id"] == "bundle-1"
+    assert body["max_logs"] == 1
+    assert Enum.map(body["logs"], & &1["log_id"]) == [@log_a, @log_b]
+    assert Enum.all?(body["logs"], &is_binary(hd(&1["entries"])["canonical_bytes"]))
+    refute Map.has_key?(body, "realm_id")
+    refute Map.has_key?(body, "target")
+  end
+
+  test "rejects invalid inventory before transport" do
+    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(0, 0, true)}))
+    malformed = %{bundle_id: "bundle-1", logs: Enum.map(1..65, &log(@log_a, "archive-#{&1}"))}
+
+    assert {:error, {:invalid_restore_bundle, :invalid_shape}} =
+             CloudflareSidecar.restore_bundle_batch(store, malformed)
+
+    refute_received {:restore_request, _, _}
+  end
+
+  test "rejects an oversized successful response without exposing its body" do
+    oversized = String.duplicate("x", 4_097)
+
+    store =
+      sidecar(
+        self(),
+        response(200, %{"ok" => true, "result" => result(0, 0, true), "pad" => oversized})
+      )
+
+    assert {:error, {:protocol_error, :response_body_too_large}} =
+             CloudflareSidecar.restore_bundle_batch(store, bundle())
+  end
+
+  test "closes transport exceptions and inconsistent result counts" do
+    raising = sidecar(self(), :raise)
+
+    assert {:error, {:transport_error, :transport_failed}} =
+             CloudflareSidecar.restore_bundle_batch(raising, bundle())
+
+    inconsistent = sidecar(self(), response(200, %{"ok" => true, "result" => result(2, 0, true)}))
+
+    assert {:error, {:protocol_error, "invalid restore result"}} =
+             CloudflareSidecar.restore_bundle_batch(inconsistent, bundle(), 1)
+  end
+
+  defp bundle do
+    %{bundle_id: "bundle-1", logs: [log(@log_a, "archive-a"), log(@log_b, "archive-b")]}
+  end
+
+  defp log(log_id, archive_id) do
+    %{
+      log_id: log_id,
+      archive_id: archive_id,
+      writer_id: @writer,
+      entries: [entry(log_id, 1, nil)]
+    }
+  end
+
+  defp entry(log_id, sequence, previous) do
+    Jcs.canonicalize(%{
+      "version" => 1,
+      "log_id" => log_id,
+      "entry_id" => "018f5e2a-8b3c-7d4e-9f10-123456789ac#{sequence}",
+      "writer_id" => @writer,
+      "writer_seq" => sequence,
+      "prev_entry_id" => previous,
+      "created_at" => "2026-09-12T00:00:00Z",
+      "body" => %{"restore" => true}
+    })
+  end
+
+  defp result(imported, skipped, complete),
+    do: %{"imported_logs" => imported, "skipped_logs" => skipped, "complete" => complete}
+
+  defp response(status, body),
+    do:
+      {:ok,
+       %{
+         status: status,
+         headers: [{"content-type", "application/json"}],
+         body: Jason.encode!(body)
+       }}
+
+  defp sidecar(owner, response) do
+    CloudflareSidecar.new("https://sidecar.example/",
+      transport: Transport,
+      transport_options: {owner, response}
+    )
+  end
+end

@@ -33,6 +33,11 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   @headers [{"content-type", "application/json"}]
   @commit_reconciliation_attempts 3
   @error_body_limit 4_096
+  @restore_max_logs 64
+  @restore_max_entries 4_096
+  @restore_max_bytes 16 * 1024 * 1024
+  @restore_max_id_bytes 256
+  @restore_response_limit 4_096
 
   @doc """
   Builds a handle.
@@ -171,16 +176,48 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     post(store, "/tail-local", payload, 200, &parse_local_page/1)
   end
 
-  defp post(store, path, payload, success_status, parse_success) do
+  @doc "Restore one complete, trusted bundle through an already configured sidecar target."
+  @spec restore_bundle_batch(t(), map(), pos_integer()) ::
+          {:ok,
+           %{
+             imported_logs: non_neg_integer(),
+             skipped_logs: non_neg_integer(),
+             complete: boolean()
+           }}
+          | {:error, term()}
+  def restore_bundle_batch(%__MODULE__{} = store, bundle, max_logs \\ @restore_max_logs) do
+    with {:ok, payload} <- encode_restore_bundle(bundle, max_logs) do
+      inventory_count = length(payload["logs"])
+
+      post(
+        store,
+        "/restore-bundle-batch",
+        payload,
+        200,
+        &parse_restore_result(&1, inventory_count, max_logs),
+        max_response_bytes: @restore_response_limit,
+        safe_transport: true
+      )
+    end
+  end
+
+  defp post(store, path, payload, success_status, parse_success, options \\ []) do
     body = Jason.encode!(payload)
 
-    case store.transport.request(
-           :post,
-           store.base_url <> path,
-           @headers ++ store.headers,
-           body,
-           store.transport_options
-         ) do
+    transport_result =
+      if Keyword.get(options, :safe_transport, false) do
+        safe_transport_request(store, path, body)
+      else
+        store.transport.request(
+          :post,
+          store.base_url <> path,
+          @headers ++ store.headers,
+          body,
+          store.transport_options
+        )
+      end
+
+    case transport_result do
       {:error, reason} ->
         {:error, {:transport_error, reason}}
 
@@ -196,7 +233,8 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
       {:ok, %{status: status, headers: headers, body: response_body}}
       when is_integer(status) and is_list(headers) and is_binary(response_body) ->
-        with {:ok, value} <- decode_json_object(response_body) do
+        with :ok <- response_size(response_body, Keyword.get(options, :max_response_bytes)),
+             {:ok, value} <- decode_json_object(response_body) do
           if status == success_status do
             parse_success.(value)
           else
@@ -216,6 +254,26 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   # the request (and so any bearer token in its headers) never enters an error.
   defp error_details(response_body) do
     %{body: binary_part(response_body, 0, min(byte_size(response_body), @error_body_limit))}
+  end
+
+  defp response_size(_body, nil), do: :ok
+
+  defp response_size(body, limit) when is_integer(limit) and byte_size(body) <= limit, do: :ok
+
+  defp response_size(_body, _limit), do: protocol(:response_body_too_large)
+
+  defp safe_transport_request(store, path, body) do
+    store.transport.request(
+      :post,
+      store.base_url <> path,
+      @headers ++ store.headers,
+      body,
+      store.transport_options
+    )
+  rescue
+    _ -> {:error, :transport_failed}
+  catch
+    _kind, _reason -> {:error, :transport_failed}
   end
 
   defp reconcile_commit(_store, %CommitPlan{insert_entries: []}, commit_error) do
@@ -288,6 +346,178 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
       false -> protocol("success has non-true ok")
       {:error, _reason} = error -> error
     end
+  end
+
+  defp parse_restore_result(value, inventory_count, max_logs) do
+    with :ok <- exact_keys(value, ["ok", "result"]),
+         true <- value["ok"] === true,
+         %{} = result <- value["result"],
+         :ok <- exact_keys(result, ["imported_logs", "skipped_logs", "complete"]),
+         {:ok, imported_logs} <- non_negative_integer(result["imported_logs"]),
+         {:ok, skipped_logs} <- non_negative_integer(result["skipped_logs"]),
+         complete when is_boolean(complete) <- result["complete"],
+         true <- imported_logs <= max_logs,
+         true <- skipped_logs <= inventory_count,
+         true <- imported_logs + skipped_logs <= inventory_count,
+         true <-
+           (complete and imported_logs + skipped_logs == inventory_count) or
+             (not complete and imported_logs + skipped_logs < inventory_count) do
+      {:ok, %{imported_logs: imported_logs, skipped_logs: skipped_logs, complete: complete}}
+    else
+      false -> protocol("restore success has non-true ok")
+      {:error, _reason} = error -> error
+      _ -> protocol("invalid restore result")
+    end
+  end
+
+  defp encode_restore_bundle(bundle, max_logs)
+       when is_map(bundle) and is_integer(max_logs) and max_logs in 1..@restore_max_logs do
+    with :ok <- exact_input_keys(bundle, [:bundle_id, :logs]),
+         {:ok, bundle_id} <- bounded_restore_id(Map.get(bundle, :bundle_id)),
+         {:ok, logs, total_bytes} <- encode_restore_logs(Map.get(bundle, :logs)),
+         :ok <- bounded_restore_logs(logs, total_bytes) do
+      {:ok, %{"bundle_id" => bundle_id, "max_logs" => max_logs, "logs" => logs}}
+    else
+      {:error, _reason} -> {:error, {:invalid_restore_bundle, :invalid_shape}}
+    end
+  end
+
+  defp encode_restore_bundle(_bundle, _max_logs),
+    do: {:error, {:invalid_restore_bundle, :invalid_shape}}
+
+  defp encode_restore_logs(logs) when is_list(logs) and logs != [] do
+    logs
+    |> Enum.reduce_while({:ok, [], 0}, fn log, {:ok, acc, total} ->
+      case encode_restore_log(log) do
+        {:ok, encoded, bytes} -> {:cont, {:ok, [encoded | acc], total + bytes}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, encoded, total} -> {:ok, Enum.reverse(encoded), total}
+      error -> error
+    end
+  end
+
+  defp encode_restore_logs(_logs), do: {:error, :invalid_logs}
+
+  defp encode_restore_log(log) when is_map(log) do
+    with :ok <- exact_input_keys(log, [:log_id, :archive_id, :writer_id, :entries]),
+         {:ok, log_id} <- bounded_restore_id(Map.get(log, :log_id)),
+         {:ok, archive_id} <- bounded_restore_id(Map.get(log, :archive_id)),
+         {:ok, writer_id} <- bounded_restore_id(Map.get(log, :writer_id)),
+         {:ok, entries} <- encode_restore_entries(Map.get(log, :entries), log_id, writer_id) do
+      {:ok,
+       %{
+         "log_id" => log_id,
+         "archive_id" => archive_id,
+         "writer_id" => writer_id,
+         "entries" => entries
+       },
+       Enum.reduce(entries, 0, fn entry, total ->
+         total + byte_size(Base.decode64!(entry["canonical_bytes"]))
+       end)}
+    else
+      _ -> {:error, :invalid_log}
+    end
+  end
+
+  defp encode_restore_log(_log), do: {:error, :invalid_log}
+
+  defp encode_restore_entries(entries, log_id, writer_id)
+       when is_list(entries) and entries != [] and length(entries) <= @restore_max_entries do
+    entries
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, [], 0, nil}, fn {raw, expected_seq},
+                                               {:ok, acc, total, previous_id} ->
+      with {:ok, canonical} <- canonical_bytes(raw),
+           {:ok, parsed} <- parse_restore_entry(canonical),
+           :ok <- restore_entry_shape(parsed, log_id, writer_id, expected_seq, previous_id) do
+        entry = %{
+          "log_id" => log_id,
+          "entry_id" => parsed["entry_id"],
+          "writer_id" => writer_id,
+          "writer_seq" => expected_seq,
+          "prev_entry_id" => parsed["prev_entry_id"],
+          "created_at" => parsed["created_at"],
+          "canonical_bytes" => Base.encode64(canonical)
+        }
+
+        next_total = total + byte_size(canonical)
+
+        if next_total > @restore_max_bytes do
+          {:halt, {:error, :restore_bytes_too_large}}
+        else
+          {:cont, {:ok, [entry | acc], next_total, parsed["entry_id"]}}
+        end
+      else
+        _ -> {:halt, {:error, :invalid_entry}}
+      end
+    end)
+    |> case do
+      {:ok, encoded, total, _previous} -> {:ok, Enum.reverse(encoded), total}
+      error -> error
+    end
+  end
+
+  defp encode_restore_entries(_entries, _log_id, _writer_id), do: {:error, :invalid_entries}
+
+  defp canonical_bytes(bytes) when is_binary(bytes) do
+    case Entry.validate_entry(bytes) do
+      {:ok, canonical} when canonical == bytes -> {:ok, canonical}
+      {:ok, _different} -> {:error, :non_canonical_entry}
+      _ -> {:error, :invalid_entry}
+    end
+  end
+
+  defp canonical_bytes(_bytes), do: {:error, :invalid_entry}
+
+  defp parse_restore_entry(canonical) do
+    case Jason.decode(canonical) do
+      {:ok, parsed} when is_map(parsed) -> {:ok, parsed}
+      _ -> {:error, :invalid_entry}
+    end
+  end
+
+  defp restore_entry_shape(parsed, log_id, writer_id, expected_seq, previous_id) do
+    with {:ok, entry_id} <- bounded_restore_id(Map.get(parsed, "entry_id")),
+         {:ok, parsed_log_id} <- bounded_restore_id(Map.get(parsed, "log_id")),
+         {:ok, parsed_writer_id} <- bounded_restore_id(Map.get(parsed, "writer_id")),
+         true <- parsed_log_id == log_id,
+         true <- parsed_writer_id == writer_id,
+         true <- Map.get(parsed, "writer_seq") == expected_seq,
+         true <- Map.get(parsed, "prev_entry_id") == previous_id,
+         true <- is_binary(Map.get(parsed, "created_at")) do
+      _ = entry_id
+      :ok
+    else
+      _ -> {:error, :invalid_entry}
+    end
+  end
+
+  defp bounded_restore_logs(logs, total_bytes) do
+    cond do
+      length(logs) > @restore_max_logs -> {:error, :too_many_logs}
+      total_bytes > @restore_max_bytes -> {:error, :restore_bytes_too_large}
+      logs != Enum.sort_by(logs, & &1["log_id"]) -> {:error, :logs_not_sorted}
+      length(Enum.uniq_by(logs, & &1["log_id"])) != length(logs) -> {:error, :duplicate_log}
+      true -> :ok
+    end
+  end
+
+  defp bounded_restore_id(value) when is_binary(value) do
+    if byte_size(value) > 0 and byte_size(value) <= @restore_max_id_bytes and
+         String.valid?(value),
+       do: {:ok, value},
+       else: {:error, :invalid_id}
+  end
+
+  defp bounded_restore_id(_value), do: {:error, :invalid_id}
+
+  defp exact_input_keys(map, expected) do
+    if Map.keys(map) |> Enum.sort() == Enum.sort(expected),
+      do: :ok,
+      else: {:error, :unexpected_keys}
   end
 
   defp parse_read_set(value, expected_log_id) do
@@ -500,6 +730,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
   defp storage_error(404, "not_found"), do: {:ok, :not_found}
   defp storage_error(400, "malformed_request"), do: {:ok, :malformed_request}
+  defp storage_error(413, "batch_too_large"), do: {:ok, :batch_too_large}
   defp storage_error(409, "stale_revision"), do: {:ok, :stale_revision}
   defp storage_error(409, "obsolete_epoch"), do: {:ok, :obsolete_epoch}
   defp storage_error(409, "constraint_violation"), do: {:ok, :constraint_violation}
