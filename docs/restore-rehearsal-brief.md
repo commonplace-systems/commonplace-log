@@ -20,3 +20,23 @@ does not enumerate or restore the application inventory: Directory documents,
 Chit histories, review/candidate journals, memberships, revocations, and
 external grants still require an explicit manifest/inventory API. Directory
 closure alone cannot establish that inventory.
+
+## Retained local result
+
+The focused run was executed once after correcting an initial orchestration
+path error that failed before Node started. The retained completion record is
+`tmp/restore-rehearsal-1/root-tool-completion.json`: session `51276`, native
+outer return code `0`, two tests passed, zero failed, and 10.91 seconds total.
+It records fixture commit `11a3666` and package-lock SHA
+`c58243da2b1d7e7fe64b079388e3c63bb6d9a30d21a9a2d2c9772df9f98b0947`, matching
+the fixture lock. Vitest reported `v3.2.7`; the worker pool was the existing
+local installation. The stderr record retains the expected workerd abort
+diagnostic from the simulated restart plus dependency sourcemap/deprecation
+warnings.
+
+This result establishes only the bounded local RealmStore primitive: exact
+synthetic rows can be admitted by the fixture verifier, restored into an empty
+test target, read after a real test-runtime object restart, and extended with
+fresh lease authority. It does not establish a production backup, portable
+archive format, application inventory, deployed Worker behavior, or recovery
+of Directory, Chit, journal, membership, grant, or revocation state.
