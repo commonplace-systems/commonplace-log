@@ -161,6 +161,8 @@ env["RESTORE_HTTP_RESULT_FILE"] = str(output / "test-result.json")
 
 owned_groups = []
 cleanup_in_progress = False
+signal_received = False
+blocked_signals = {signal.SIGTERM, signal.SIGINT}
 
 
 def group_exists(pgid):
@@ -177,7 +179,7 @@ def register_group(label, process):
     record = {
         "label": label,
         "pid": process.pid,
-        "pgid": os.getpgid(process.pid),
+        "pgid": process.pid,
         "term_sent": False,
         "kill_sent": False,
         "leader_exit": None,
@@ -203,6 +205,7 @@ def stop_record(record):
         pass
     deadline = time.monotonic() + 5
     while group_exists(pgid) and time.monotonic() < deadline:
+        process.poll()
         time.sleep(0.05)
     if group_exists(pgid):
         try:
@@ -212,26 +215,34 @@ def stop_record(record):
             pass
         deadline = time.monotonic() + 2
         while group_exists(pgid) and time.monotonic() < deadline:
+            process.poll()
             time.sleep(0.05)
     record["leader_exit"] = process.poll()
     record["group_absent"] = not group_exists(pgid)
-    record["forced_cleanup_hold"] = not record["group_absent"]
+    record["forced_cleanup_hold"] = record["kill_sent"] or not record["group_absent"]
 
 
 def cleanup_all():
     global cleanup_in_progress
-    if cleanup_in_progress:
-        return
-    cleanup_in_progress = True
-    for record in reversed(owned_groups):
-        try:
-            stop_record(record)
-        except BaseException as error:
-            record["cleanup_error"] = repr(error)
-            record["forced_cleanup_hold"] = True
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
+    try:
+        if cleanup_in_progress:
+            return
+        cleanup_in_progress = True
+        for record in reversed(owned_groups):
+            try:
+                stop_record(record)
+            except BaseException as error:
+                record["cleanup_error"] = repr(error)
+                record["forced_cleanup_hold"] = True
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 def on_signal(signum, _frame):
+    global signal_received
+    signal_received = True
+    signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
     cleanup_all()
     raise SystemExit(128 + signum)
 
@@ -240,13 +251,23 @@ signal.signal(signal.SIGTERM, on_signal)
 signal.signal(signal.SIGINT, on_signal)
 
 
+def spawn_owned(argv, cwd, child_env, stdout, stderr, label):
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
+    try:
+        process = subprocess.Popen(
+            argv, cwd=cwd, env=child_env, stdout=stdout, stderr=stderr,
+            start_new_session=True,
+            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask),
+        )
+        return register_group(label, process)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+
 def run_group(argv, cwd, timeout_seconds, stdout_path, stderr_path, label):
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-        process = subprocess.Popen(
-            argv, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
-            start_new_session=True,
-        )
-        record = register_group(label, process)
+        record = spawn_owned(argv, cwd, env, stdout, stderr, label)
+        process = record["process"]
         timed_out = False
         try:
             process.wait(timeout=timeout_seconds)
@@ -282,12 +303,11 @@ try:
             (output / "wrangler-stderr").open("wb"),
         ]
         try:
-            wrangler_process = subprocess.Popen(
-                wrangler_cmd, cwd=worker_dir, env=worker_env,
-                stdout=wrangler_handles[0], stderr=wrangler_handles[1],
-                start_new_session=True,
+            wrangler_record = spawn_owned(
+                wrangler_cmd, worker_dir, worker_env,
+                wrangler_handles[0], wrangler_handles[1], "wrangler",
             )
-            wrangler_record = register_group("wrangler", wrangler_process)
+            wrangler_process = wrangler_record["process"]
             ready_deadline = time.monotonic() + 30
             while time.monotonic() < ready_deadline:
                 if wrangler_process.poll() is not None:
@@ -362,6 +382,7 @@ finally:
     (output / "verdict.rc").write_text(str(verdict) + "\n")
     (output / "process-groups.json").write_text(json.dumps({
         "groups": owned_groups,
+        "first_signal_received": signal_received,
         "term_grace_seconds": 5,
         "kill_grace_seconds": 2,
         "cleanup_in_finally": True,
