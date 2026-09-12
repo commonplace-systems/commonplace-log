@@ -79,6 +79,15 @@ for relative in subprocess.check_output(
     + "\n"
 )
 
+def write_post_input_audit():
+    post_hashes = {str(path.relative_to(repo)): sha256(path) for path in tracked_inputs}
+    (out / "input-sha256-post.json").write_text(json.dumps(post_hashes, indent=2, sort_keys=True) + "\n")
+    (out / "input-equality.json").write_text(
+        json.dumps({"equal": post_hashes == input_hashes}, indent=2) + "\n"
+    )
+    if post_hashes != input_hashes:
+        raise SystemExit("input files changed during native run")
+
 beam_args = [part for ebin in sorted(beam_root.glob("*/ebin")) for part in ("-pa", str(ebin))]
 script = repo / "docs/measurements/restore-binding-native-1/restore_binding_native.exs"
 cmd = [
@@ -119,14 +128,20 @@ except subprocess.TimeoutExpired as error:
         stdout, stderr = proc.communicate()
     stdout = stdout or error.stdout or ""
     stderr = stderr or error.stderr or ""
+    write_post_input_audit()
     (out / "stdout").write_text(stdout)
     (out / "stderr").write_text(stderr)
-    (out / "native-exit.json").write_text(json.dumps({"native_exit": 124}) + "\n")
+    (out / "native-exit.json").write_text(
+        json.dumps({"native_exit": None, "timed_out": True, "timeout_exit": 124}) + "\n"
+    )
     raise SystemExit(124)
 
+write_post_input_audit()
 (out / "stdout").write_text(stdout or "")
 (out / "stderr").write_text(stderr or "")
-(out / "native-exit.json").write_text(json.dumps({"native_exit": proc.returncode}) + "\n")
+(out / "native-exit.json").write_text(
+    json.dumps({"native_exit": proc.returncode, "timed_out": False}) + "\n"
+)
 print(stdout or "")
 print(stderr or "", file=sys.stderr)
 raise SystemExit(proc.returncode)
