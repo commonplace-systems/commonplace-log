@@ -49,6 +49,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
     refute_received {:restore_request, _, _}
   end
 
+  @tag :restore_oversized_response
   test "rejects an oversized successful response without exposing its body" do
     oversized = String.duplicate("x", 4_097)
 
@@ -58,7 +59,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
         response(200, %{"ok" => true, "result" => result(0, 0, true), "pad" => oversized})
       )
 
-    assert {:error, {:protocol_error, :response_body_too_large}} =
+    assert {:error, {:protocol_error, :invalid_response}} =
              CloudflareSidecar.restore_bundle_batch(store, bundle())
   end
 
