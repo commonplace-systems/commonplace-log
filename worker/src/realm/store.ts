@@ -1,5 +1,6 @@
 import { initSchema } from "./schema";
 import { validateEntry } from "../entry";
+import { createHash } from "node:crypto";
 
 export type RealmStorageErrorCode =
   | "not_found"
@@ -96,6 +97,13 @@ function bytes(value: unknown): Uint8Array {
   return new Uint8Array(value as ArrayBuffer);
 }
 
+const UTF8 = new TextEncoder();
+const RESTORE_MARKER_PREFIX = UTF8.encode("commonplace-restore-marker-v2\0");
+const RESTORE_MARKER_DIGEST_BYTES = 32;
+const MAX_RESTORE_ID_BYTES = 256;
+// Legacy markers are retained only while their verification input is bounded.
+const MAX_LEGACY_MARKER_BYTES = 2 * 1024 * 1024;
+
 function placeholders(values: readonly unknown[]): string {
   return values.map(() => "?").join(", ");
 }
@@ -164,7 +172,7 @@ export class RealmStore {
         } else if (
           String(marker.archive_id) !== archive.archiveId || String(marker.writer_id) !== archive.writerId ||
           Number(marker.entry_count) !== archive.entries.length || Number(marker.total_bytes) !== totalBytes ||
-          !sameBytes(bytes(marker.manifest_json), manifest) ||
+          !matchesRestoreManifest(bytes(marker.manifest_json), archive, totalBytes, manifest) ||
           existing === undefined || String(existing.document_writer_id) !== archive.writerId
         ) {
           throw new RealmStoreError("constraint");
@@ -193,21 +201,25 @@ export class RealmStore {
         const targetTip = this.sql.exec(
           `SELECT writer_id, last_seq, last_entry_id FROM writer_tips WHERE log_id = ? ORDER BY writer_id`, archive.logId,
         ).toArray();
-        if (targetTip.length > 1 || (targetTip.length === 1 && String(targetTip[0].writer_id) !== archive.writerId)) {
+        const existingTip = targetTip[0];
+        if (targetTip.length > 1 || (existingTip !== undefined && String(existingTip.writer_id) !== archive.writerId)) {
           throw new RealmStoreError("constraint");
         }
         for (let index = 0; index < rows.length; index += 1) {
           const row = rows[index];
-          if (String(row.writer_id) !== archive.writerId || Number(row.writer_seq) !== index + 1 ||
-              (index === 0 ? row.prev_entry_id !== null : String(row.prev_entry_id) !== String(rows[index - 1].entry_id))) {
+          const previousRow = index === 0 ? undefined : rows[index - 1];
+          if (row === undefined || String(row.writer_id) !== archive.writerId || Number(row.writer_seq) !== index + 1 ||
+              (index === 0
+                ? row.prev_entry_id !== null
+                : previousRow === undefined || String(row.prev_entry_id) !== String(previousRow.entry_id))) {
             throw new RealmStoreError("constraint");
           }
         }
         if (
           (rows.length === 0 && targetTip.length !== 0) ||
           (rows.length > 0 &&
-            (targetTip.length !== 1 || Number(targetTip[0].last_seq) !== rows.length ||
-              String(targetTip[0].last_entry_id) !== String(rows.at(-1).entry_id)))
+            (targetTip.length !== 1 || existingTip === undefined || Number(existingTip.last_seq) !== rows.length ||
+              String(existingTip.last_entry_id) !== String(rows.at(-1)!.entry_id)))
         ) {
           throw new RealmStoreError("constraint");
         }
@@ -525,7 +537,8 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): void {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096 ||
       archive.entries.length === 0 || archive.entries.length > 4096 ||
-      archive.archiveId.length === 0 || archive.writerId.length === 0) {
+      !boundedRestoreId(archive.logId) || !boundedRestoreId(archive.archiveId) ||
+      !boundedRestoreId(archive.writerId)) {
     throw new RealmStoreError("constraint");
   }
   const ids = new Set<string>();
@@ -554,7 +567,61 @@ function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): vo
   }
 }
 
+function boundedRestoreId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    UTF8.encode(value).byteLength <= MAX_RESTORE_ID_BYTES;
+}
+
+function updateFrameLength(hash: ReturnType<typeof createHash>, length: number): void {
+  const frame = new Uint8Array(4);
+  new DataView(frame.buffer).setUint32(0, length);
+  hash.update(frame);
+}
+
+function updateFrameText(hash: ReturnType<typeof createHash>, value: string): void {
+  const encoded = UTF8.encode(value);
+  updateFrameLength(hash, encoded.byteLength);
+  hash.update(encoded);
+}
+
+function restoreManifestDigest(archive: RestoreArchive): Uint8Array {
+  const hash = createHash("sha256");
+  hash.update(RESTORE_MARKER_PREFIX);
+  updateFrameText(hash, archive.logId);
+  updateFrameText(hash, archive.archiveId);
+  updateFrameText(hash, archive.writerId);
+  updateFrameLength(hash, archive.entries.length);
+  for (const entry of archive.entries) {
+    updateFrameLength(hash, entry.canonicalBytes.byteLength);
+    hash.update(entry.canonicalBytes);
+  }
+  return new Uint8Array(hash.digest());
+}
+
 function restoreManifest(archive: RestoreArchive): Uint8Array {
+  const digest = restoreManifestDigest(archive);
+  const marker = new Uint8Array(RESTORE_MARKER_PREFIX.byteLength + RESTORE_MARKER_DIGEST_BYTES);
+  marker.set(RESTORE_MARKER_PREFIX);
+  marker.set(digest, RESTORE_MARKER_PREFIX.byteLength);
+  return marker;
+}
+
+function matchesRestoreManifest(
+  stored: Uint8Array,
+  archive: RestoreArchive,
+  totalBytes: number,
+  compact: Uint8Array,
+): boolean {
+  if (sameBytes(stored, compact)) return true;
+  // A legacy JSON marker cannot be smaller than the canonical bytes it embeds.
+  // This check avoids materializing an old whole-archive manifest for large data.
+  if (stored[0] !== 0x7b || stored.byteLength > MAX_LEGACY_MARKER_BYTES || totalBytes > stored.byteLength) {
+    return false;
+  }
+  return sameBytes(stored, legacyRestoreManifest(archive));
+}
+
+function legacyRestoreManifest(archive: RestoreArchive): Uint8Array {
   const value = {
     logId: archive.logId,
     archiveId: archive.archiveId,

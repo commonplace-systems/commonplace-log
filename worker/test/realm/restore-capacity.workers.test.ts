@@ -86,6 +86,7 @@ describe("restore capacity boundary", () => {
     expect(restored.result).toEqual({ imported: 1, skipped: 0, complete: true });
     expect(restored.totalBytes).toBe(entry.canonicalBytes.byteLength);
     expect(restored.manifestBytes).toBeGreaterThan(0);
+    expect(restored.manifestBytes).toBeLessThan(128);
     console.info(JSON.stringify({
       restore_capacity_total_bytes: restored.totalBytes,
       restore_capacity_manifest_bytes: restored.manifestBytes,

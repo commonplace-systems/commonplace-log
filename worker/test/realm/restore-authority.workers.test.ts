@@ -33,6 +33,28 @@ function archive(): RestoreArchive {
   return { logId: LOG, archiveId: "archive-101", writerId: WRITER, entries: [first, second] };
 }
 
+function legacyMarker(source: RestoreArchive): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({
+    logId: source.logId,
+    archiveId: source.archiveId,
+    writerId: source.writerId,
+    entries: source.entries.map((entry) => ({
+      entryId: entry.entryId,
+      writerId: entry.writerId,
+      writerSeq: entry.writerSeq,
+      prevEntryId: entry.prevEntryId,
+      createdAt: entry.createdAt,
+      canonicalBytes: Array.from(entry.canonicalBytes),
+    })),
+  }));
+}
+
+function blob(value: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy.buffer;
+}
+
 async function withRealm<T>(name: string, fn: (store: RealmStore, state: DurableObjectState) => T | Promise<T>): Promise<T> {
   const stub = env.REALM_CONTAINER.get(env.REALM_CONTAINER.idFromName(name));
   return await runInDurableObject(stub, (_instance, state) => fn(new RealmStore(state.storage.sql, state.storage), state));
@@ -146,6 +168,33 @@ describe("internal restore binding", () => {
       }
     });
     await withRealm(completeName, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
+  });
+
+  it("resumes a bounded legacy marker and rejects its changed-byte variant", async () => {
+    const name = `restore-binding-legacy-${Date.now()}-${Math.random()}`;
+    const source = archive();
+    await withRealm(name, (store) => store.restoreBatch(source, 1));
+    await withRealm(name, (_store, state) => {
+      state.storage.sql.exec("UPDATE restore_markers SET manifest_json = ? WHERE log_id = ?", blob(legacyMarker(source)), LOG);
+    });
+    expect(await withRealm(name, (store) => store.restoreBatch(source))).toEqual({
+      imported: 1,
+      skipped: 1,
+      complete: true,
+    });
+
+    const mismatchName = `restore-binding-legacy-mismatch-${Date.now()}-${Math.random()}`;
+    await withRealm(mismatchName, (store) => store.restoreBatch(source, 1));
+    const changed = row(source.entries[1]!.entryId, 2, source.entries[0]!.entryId, "six");
+    const changedArchive = { ...source, entries: [source.entries[0]!, changed] };
+    await withRealm(mismatchName, (_store, state) => {
+      state.storage.sql.exec(
+        "UPDATE restore_markers SET manifest_json = ? WHERE log_id = ?",
+        blob(legacyMarker(changedArchive)),
+        LOG,
+      );
+    });
+    await withRealm(mismatchName, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
   });
 
   it("keeps ordinary create behavior for an unrelated log", async () => {
