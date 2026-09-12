@@ -1,0 +1,97 @@
+{
+  "artifact_sha256": {
+    "restore-client-native-2/command.json": "5f825b094d7bcae146cf5679b1546998389ab45dd56c0c6fded63a47c9d963d6",
+    "restore-client-native-2/compile-stderr": "827303e2c507f7e49803cd3ba6a64aa041fbcb98f2d19078724e3c9a93896b29",
+    "restore-client-native-2/compile-stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "restore-client-native-2/input-equality.json": "d9115dc79df0418b8037c3010e58ef04bc222dc5872c5d0a9de52824266ef747",
+    "restore-client-native-2/input-sha256-post.json": "d767793b4ddb22731a6d329e35043dbb7e5f082ff69358875eeabd3f4b16d492",
+    "restore-client-native-2/input-sha256.json": "d767793b4ddb22731a6d329e35043dbb7e5f082ff69358875eeabd3f4b16d492",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Entry.beam": "bc4cf5603ae14965a4f9a1918f0b326a5e9fa3872de1aca7d64125161ca28fd5",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Jcs.beam": "142d7f85d90113738b451c0f209010c1ba8094659749168d3110ebb919eaae8f",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CloudflareSidecar.Httpc.beam": "7f4b073d4f2ceed6995d4dd0907882d9db9aa1c17656d8c68dbc6b079a6a9bf9",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CloudflareSidecar.Transport.beam": "044fbb35a5fd41739d2a34f5e710925bc9887c402c79d895931d5e78c3b1b26c",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CloudflareSidecar.beam": "da1349bd07614e827d7f27d0834800615d33f51238dc7a06088541924ec6e70d",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CommitPlan.beam": "940bb75c98499af64e60ae033b06881b49beafb0233c1cac2aed2034771d17c8",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.ReadSet.beam": "f07447c3df87f80c92a7403902c2087799256df3d62c0d5d71329db28f022c67",
+    "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.beam": "ad07fde82a14a83cbd876c9644ab5031547d90e36f94bc7c00b6b438b1416b5f",
+    "restore-client-native-2/native-exit.json": "13db9f3c901091c8f071ae12a4188f58d68a60b806ecd1107d9714cddf85798e",
+    "restore-client-native-2/root-tool-completion.json": "62d650b21420a0a4164779598bf65864ef385de65f62485df89f00f229d40fff",
+    "restore-client-native-2/source-pins.json": "3202f1e7b3b5c1f9ac00702761c70537414eaa2c2e22e6deae81881413fbac34",
+    "restore-client-native-2/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "restore-client-native-2/stdout": "2e9b9c907ec164d3111614350378b02ee90969ef45b142197517f846dee4094a",
+    "restore-client-native-2/verdict.json": "19e3f742326cec545ac997c2bda860586c316752bccec895426cb77de7eca501",
+    "restore-client-native-3/command.json": "10f4c4cb9786fc07315577c2fb13e7cf61b9463b4ddde8352cd678e53715a290",
+    "restore-client-native-3/input-equality.json": "d9115dc79df0418b8037c3010e58ef04bc222dc5872c5d0a9de52824266ef747",
+    "restore-client-native-3/input-sha256-post.json": "1e80dfd97a7593efcd2732b1ab131e1eabe29b87857e44e2654ea430bb991a90",
+    "restore-client-native-3/input-sha256.json": "1e80dfd97a7593efcd2732b1ab131e1eabe29b87857e44e2654ea430bb991a90",
+    "restore-client-native-3/native-exit.json": "f1d27fd91565db7a30e51b8e330debb9dce54ee12cff9db9fc18524f5ab540d2",
+    "restore-client-native-3/root-tool-completion.json": "46a4219e5709ca5e2431529245fae83800cd2f26f0857518c2cbaa168a70b35a",
+    "restore-client-native-3/source-pins.json": "b404cbf01359923dca81464daca6f26e3ec056430eb4189f4bfc283b7771ed2c",
+    "restore-client-native-3/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "restore-client-native-3/stdout": "66a15a2c3f56ba9e6fd75b06058db9fb45eb1de002a9f29af139200a8db96cca",
+    "restore-client-native-3/verdict.json": "597ee5db9f833c32c4660300c7469670c995707375383a50bf5aa0b0c92963a4"
+  },
+  "measurement": "restore-client-native-1",
+  "parent_compile": {
+    "cached_beam_count": 847,
+    "compile_exit": 0,
+    "emitted_isolated_beam_count": 8,
+    "emitted_isolated_beams": [
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Entry.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Jcs.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CloudflareSidecar.Httpc.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CloudflareSidecar.Transport.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CloudflareSidecar.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.CommitPlan.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.ReadSet.beam",
+      "restore-client-native-2/isolated-ebin/Elixir.Commonplace.Log.Persistence.beam"
+    ],
+    "source_input_count": 32,
+    "status": "passed_before_native2"
+  },
+  "runs": [
+    {
+      "artifact_root": "/home/jes/commonplace-log-restore-client/tmp/restore-client-native-2",
+      "command": "env PATH=/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin:/home/jes/.asdf/shims:/usr/bin:/bin ERL_FLAGS='+S 2:2' python3 docs/measurements/restore-client-native-1/run_restore_client.py /home/jes/commonplace-log-restore-client/tmp/restore-client-native-2",
+      "compile_exit": 0,
+      "failure": "stale oversized-response fixture expected response_body_too_large; product returned closed invalid_response",
+      "id": "restore-client-native-2",
+      "inputs_equal": true,
+      "native_exit": 2,
+      "source_commit": "4fa621db5d257260118fbf649049402ff09b5ef6",
+      "tests_defined": 7,
+      "tests_failed": 1,
+      "tests_passed": 6
+    },
+    {
+      "artifact_root": "/home/jes/commonplace-log-restore-client/tmp/restore-client-native-3",
+      "cached_beams": 847,
+      "command": "env PATH=/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin:/home/jes/.asdf/shims:/usr/bin:/bin ERL_FLAGS='+S 2:2' RESTORE_CLIENT_PARENT_OUTPUT=/home/jes/commonplace-log-restore-client/tmp/restore-client-native-2 python3 docs/measurements/restore-client-native-1/run_restore_client_continue.py /home/jes/commonplace-log-restore-client/tmp/restore-client-native-3",
+      "id": "restore-client-native-3-continuation",
+      "inputs_equal": true,
+      "native_exit": 0,
+      "retained_isolated_beams": 8,
+      "source_commit": "79e168f1ff2855ac320aed2e4583c7605e72b64d",
+      "target": "restore_oversized_response",
+      "tests_defined": 7,
+      "tests_excluded": 6,
+      "tests_executed": 1,
+      "tests_failed": 0
+    }
+  ],
+  "scope": {
+    "actual_http_provider_integration": false,
+    "client_provider_auth_integration": false,
+    "compile_replayed_in_continuation": false,
+    "green_cases_replayed_in_continuation": false,
+    "original_native2_preserved": true,
+    "transport": "injected transport fixture"
+  },
+  "source": {
+    "base_commit": "bc1ec30cdc813cc7cb6c4b2dbf78b3eb4ad40f7b",
+    "branch": "feature/restore-client-bounded",
+    "continuation_commit": "79e168f1ff2855ac320aed2e4583c7605e72b64d",
+    "parent_native2_commit": "4fa621db5d257260118fbf649049402ff09b5ef6"
+  },
+  "status": "continuation_pass_original_failure_preserved"
+}
