@@ -76,6 +76,7 @@ export const RESTORE_MARKERS_DDL = `CREATE TABLE IF NOT EXISTS restore_markers (
   writer_id TEXT NOT NULL,
   entry_count INTEGER NOT NULL,
   total_bytes INTEGER NOT NULL,
+  manifest_json BLOB NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
 ) STRICT;`;
 

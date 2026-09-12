@@ -44,12 +44,20 @@ describe("internal restore binding", () => {
     const source = archive();
     const first = await withRealm(name, (store) => store.restoreBatch(source, 1));
     expect(first).toEqual({ imported: 1, skipped: 0, complete: false });
+    await expect(withRealm(name, async (_store, state) => {
+      await state.storage.sync();
+      state.abort("restore binding pending restart");
+    })).rejects.toThrow("restore binding pending restart");
     await withRealm(name, (store) => {
       expect(() => store.frontier(LOG)).toThrow(RealmStoreError);
       expect(() => store.takeLease(LOG)).toThrow(RealmStoreError);
     });
     const second = await withRealm(name, (store) => store.restoreBatch(source));
     expect(second).toEqual({ imported: 1, skipped: 1, complete: true });
+    await expect(withRealm(name, async (_store, state) => {
+      await state.storage.sync();
+      state.abort("restore binding restart");
+    })).rejects.toThrow("restore binding restart");
     const repeated = await withRealm(name, (store) => store.restoreBatch(source));
     expect(repeated).toEqual({ imported: 0, skipped: 2, complete: true });
     const lease = await withRealm(name, (store) => store.takeLease(LOG));
@@ -73,6 +81,9 @@ describe("internal restore binding", () => {
         putTips: [{ writerId: WRITER, lastSeq: 3, lastEntryId: live.entryId }],
       })).toBe(3);
     });
+    await withRealm(name, (store) => {
+      expect(store.restoreBatch(source)).toEqual({ imported: 0, skipped: 2, complete: true });
+    });
   });
 
   it("refuses unmarked existing logs and archive identity conflicts without rebinding", async () => {
@@ -80,8 +91,31 @@ describe("internal restore binding", () => {
     const source = archive();
     await withRealm(name, (store) => store.createLog(LOG));
     await withRealm(name, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
-    const conflict = { ...source, archiveId: "different-archive" };
-    await withRealm(name, (store) => expect(() => store.restoreBatch(conflict)).toThrow(RealmStoreError));
+    const pendingName = `restore-binding-pending-conflict-${Date.now()}-${Math.random()}`;
+    await withRealm(pendingName, (store) => expect(store.restoreBatch(source, 1).complete).toBe(false));
+    const changed = row(source.entries[1]!.entryId, 2, source.entries[0]!.entryId, "six");
+    expect(changed.canonicalBytes.byteLength).toBe(source.entries[1]!.canonicalBytes.byteLength);
+    const conflict = { ...source, entries: [source.entries[0]!, changed] };
+    await withRealm(pendingName, (store) => expect(() => store.restoreBatch(conflict, 1)).toThrow(RealmStoreError));
+    await withRealm(pendingName, (store) => expect(store.restoreBatch(source).complete).toBe(true));
+    await withRealm(pendingName, (store) => expect(() => store.restoreBatch(conflict)).toThrow(RealmStoreError));
+  });
+
+  it("rejects a corrupted pending prefix and a missing completed row", async () => {
+    const pendingName = `restore-binding-gap-${Date.now()}-${Math.random()}`;
+    const source = archive();
+    await withRealm(pendingName, (store) => expect(store.restoreBatch(source, 1).complete).toBe(false));
+    await withRealm(pendingName, (_store, state) => {
+      state.storage.sql.exec("UPDATE entries SET writer_seq = 2 WHERE log_id = ?", LOG);
+    });
+    await withRealm(pendingName, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
+
+    const completeName = `restore-binding-missing-${Date.now()}-${Math.random()}`;
+    await withRealm(completeName, (store) => expect(store.restoreBatch(source).complete).toBe(true));
+    await withRealm(completeName, (_store, state) => {
+      state.storage.sql.exec("DELETE FROM entries WHERE log_id = ? AND writer_seq = 2", LOG);
+    });
+    await withRealm(completeName, (store) => expect(() => store.restoreBatch(source)).toThrow(RealmStoreError));
   });
 
   it("keeps ordinary create behavior for an unrelated log", async () => {

@@ -139,10 +139,11 @@ export class RealmStore {
     validateRestoreArchive(archive, maxEntries);
     initSchema(this.sql);
     const totalBytes = archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0);
+    const manifest = restoreManifest(archive);
     try {
       return this.txn.transactionSync(() => {
         const marker = this.sql.exec(
-          `SELECT archive_id, writer_id, entry_count, total_bytes, state FROM restore_markers WHERE log_id = ?`,
+          `SELECT archive_id, writer_id, entry_count, total_bytes, manifest_json, state FROM restore_markers WHERE log_id = ?`,
           archive.logId,
         ).toArray()[0];
         const existing = this.sql.exec(
@@ -156,25 +157,57 @@ export class RealmStore {
              VALUES (?, 1, 0, ?, 0, ?)`, archive.logId, new Date().toISOString(), archive.writerId,
           );
           this.sql.exec(
-            `INSERT INTO restore_markers (log_id, archive_id, writer_id, entry_count, total_bytes, state)
-             VALUES (?, ?, ?, ?, ?, 'pending')`, archive.logId, archive.archiveId, archive.writerId,
-            archive.entries.length, totalBytes,
+            `INSERT INTO restore_markers (log_id, archive_id, writer_id, entry_count, total_bytes, manifest_json, state)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending')`, archive.logId, archive.archiveId, archive.writerId,
+            archive.entries.length, totalBytes, manifest.buffer.slice(manifest.byteOffset, manifest.byteOffset + manifest.byteLength),
           );
         } else if (
           String(marker.archive_id) !== archive.archiveId || String(marker.writer_id) !== archive.writerId ||
           Number(marker.entry_count) !== archive.entries.length || Number(marker.total_bytes) !== totalBytes ||
+          !sameBytes(bytes(marker.manifest_json), manifest) ||
           existing === undefined || String(existing.document_writer_id) !== archive.writerId
         ) {
           throw new RealmStoreError("constraint");
-        } else if (String(marker.state) === "complete") {
-          return { imported: 0, skipped: archive.entries.length, complete: true };
         }
 
+        const markerState = marker === undefined ? "pending" : String(marker.state);
+        if (markerState !== "pending" && markerState !== "complete") throw new RealmStoreError("constraint");
+
         const rows = this.sql.exec(
-          `SELECT entry_id, writer_id, writer_seq, canonical_json FROM entries WHERE log_id = ?`, archive.logId,
+          `SELECT entry_id, writer_id, writer_seq, prev_entry_id, canonical_json FROM entries WHERE log_id = ? ORDER BY writer_seq`, archive.logId,
         ).toArray();
         const byId = new Map(rows.map((row) => [String(row.entry_id), bytes(row.canonical_json)]));
         const byCoordinate = new Map(rows.map((row) => [`${String(row.writer_id)}:${Number(row.writer_seq)}`, bytes(row.canonical_json)]));
+        const archiveIds = new Set(archive.entries.map((entry) => entry.entryId));
+        const archiveCoordinates = new Set(archive.entries.map((entry) => `${entry.writerId}:${entry.writerSeq}`));
+        for (const row of rows) {
+          const id = String(row.entry_id);
+          const coordinate = `${String(row.writer_id)}:${Number(row.writer_seq)}`;
+          if (!archiveIds.has(id) && !archiveCoordinates.has(coordinate)) {
+            if (markerState !== "complete" || String(row.writer_id) !== archive.writerId ||
+                Number(row.writer_seq) <= archive.entries.at(-1)!.writerSeq) {
+              throw new RealmStoreError("constraint");
+            }
+          }
+        }
+        const targetTip = this.sql.exec(
+          `SELECT writer_id, last_seq, last_entry_id FROM writer_tips WHERE log_id = ? ORDER BY writer_id`, archive.logId,
+        ).toArray();
+        if (targetTip.length > 1 || (targetTip.length === 1 && String(targetTip[0].writer_id) !== archive.writerId)) {
+          throw new RealmStoreError("constraint");
+        }
+        for (let index = 0; index < rows.length; index += 1) {
+          const row = rows[index];
+          if (String(row.writer_id) !== archive.writerId || Number(row.writer_seq) !== index + 1 ||
+              (index === 0 ? row.prev_entry_id !== null : String(row.prev_entry_id) !== String(rows[index - 1].entry_id))) {
+            throw new RealmStoreError("constraint");
+          }
+        }
+        if (rows.length > 0 && (targetTip.length !== 1 || Number(targetTip[0].last_seq) !== rows.length ||
+            String(targetTip[0].last_entry_id) !== String(rows.at(-1).entry_id))) {
+          throw new RealmStoreError("constraint");
+        }
+        if (markerState === "pending" && rows.length > archive.entries.length) throw new RealmStoreError("constraint");
         const missing: EntryRow[] = [];
         let skipped = 0;
         for (const entry of archive.entries) {
@@ -189,6 +222,10 @@ export class RealmStore {
           } else {
             missing.push(entry);
           }
+        }
+        if (markerState === "complete") {
+          if (missing.length > 0) throw new RealmStoreError("constraint");
+          return { imported: 0, skipped: archive.entries.length, complete: true };
         }
         const batch = missing.slice(0, maxEntries);
         for (const entry of batch) {
@@ -505,9 +542,27 @@ function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): vo
     }
     if (parsed.log_id !== archive.logId || parsed.entry_id !== entry.entryId || parsed.writer_id !== entry.writerId ||
         parsed.writer_seq !== entry.writerSeq || parsed.prev_entry_id !== entry.prevEntryId || parsed.created_at !== entry.createdAt ||
+        (previous === undefined && (entry.writerSeq !== 1 || entry.prevEntryId !== null)) ||
         (previous !== undefined && (entry.writerSeq !== previous.writerSeq + 1 || entry.prevEntryId !== previous.entryId))) {
       throw new RealmStoreError("constraint");
     }
     previous = entry;
   }
+}
+
+function restoreManifest(archive: RestoreArchive): Uint8Array {
+  const value = {
+    logId: archive.logId,
+    archiveId: archive.archiveId,
+    writerId: archive.writerId,
+    entries: archive.entries.map((entry) => ({
+      entryId: entry.entryId,
+      writerId: entry.writerId,
+      writerSeq: entry.writerSeq,
+      prevEntryId: entry.prevEntryId,
+      createdAt: entry.createdAt,
+      canonicalBytes: Array.from(entry.canonicalBytes),
+    })),
+  };
+  return new TextEncoder().encode(JSON.stringify(value));
 }
