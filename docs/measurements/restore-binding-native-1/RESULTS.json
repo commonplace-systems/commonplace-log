@@ -1,0 +1,58 @@
+{
+  "source_commit": "bc1ec30cdc813cc7cb6c4b2dbf78b3eb4ad40f7b",
+  "product_source": "commonplace_log",
+  "native_runs": [
+    {
+      "output": "tmp/restore-binding-native-1",
+      "session_id": 82500,
+      "native_exit": 1,
+      "timeout": false,
+      "tests_total": 28,
+      "failures": 1,
+      "skipped": 0,
+      "excluded": 0,
+      "scope": "full focused suite; one assertion shape failure retained"
+    },
+    {
+      "output": "tmp/restore-binding-native-2",
+      "session_id": 86070,
+      "native_exit": 0,
+      "timeout": false,
+      "tests_total": 23,
+      "failures": 0,
+      "skipped": 0,
+      "excluded": 22,
+      "scope": "single corrected existing test; original 27 passing tests were not replayed"
+    }
+  ],
+  "combined_outcome": {
+    "original_green_tests": 27,
+    "corrected_test": 1,
+    "failures": 0,
+    "timeouts": 0,
+    "input_pre_post_equal": true,
+    "beam_pre_post_equal": true
+  },
+  "artifact_sha256": {
+    "tmp/restore-binding-native-1/command.json": "4ee1738863c4323569afa25a087c7bc410b07c38be44810239b62d6eeac3fdb7",
+    "tmp/restore-binding-native-1/input-equality.json": "d9115dc79df0418b8037c3010e58ef04bc222dc5872c5d0a9de52824266ef747",
+    "tmp/restore-binding-native-1/input-sha256.json": "fd748a3e9c1a0705d1a30853c40b8d060598ea7661cdb90b8a5ee6ac4a3b7a24",
+    "tmp/restore-binding-native-1/native-exit.json": "d7b2f8a5da316d368fc96bbd7be5240d3d179b7db3b0b63aa4a56193a17437ee",
+    "tmp/restore-binding-native-1/native-result.raw.json": "cb224a4a0d5e9958e1d5bd93e07e79be38ae82d46cdbaaee234445669978e7a7",
+    "tmp/restore-binding-native-1/root-tool-completion.json": "8d3685646b5c348ff558167c121fdabf87791775666c39e49a99bc41f25c3f38",
+    "tmp/restore-binding-native-1/source-pins.json": "207c89f117fd528f9f10307bb15affe91fb4fc9bee646d336168802d693b2d85",
+    "tmp/restore-binding-native-1/stderr": "19c6cf1f237eb385832e8997aa0c407cbcc0650c695bb07d47cdf7ceee16bb14",
+    "tmp/restore-binding-native-1/stdout": "549055eac23b0ff2c5b6dba399492311506ff00ba8629be92506dd323e11bbcc",
+    "tmp/restore-binding-native-2/beam-equality.json": "d9115dc79df0418b8037c3010e58ef04bc222dc5872c5d0a9de52824266ef747",
+    "tmp/restore-binding-native-2/beam-sha256-pre.json": "f52a7209bd28630a51fa77b4a6baab9976ae778f2106a83d7a3ae52e1cbc1933",
+    "tmp/restore-binding-native-2/beam-sha256-post.json": "f52a7209bd28630a51fa77b4a6baab9976ae778f2106a83d7a3ae52e1cbc1933",
+    "tmp/restore-binding-native-2/command.json": "201c8019624a2a23603c7cd1e09b98af0513f9bd6af75a26117eb1abaf53b3fd",
+    "tmp/restore-binding-native-2/input-equality.json": "d9115dc79df0418b8037c3010e58ef04bc222dc5872c5d0a9de52824266ef747",
+    "tmp/restore-binding-native-2/native-exit.json": "9fa9f0c0fb83b0b198affe25d7eb5efe2954733f1bc3a8d94e43ffcfb76f184f",
+    "tmp/restore-binding-native-2/native-result.json": "1c02b79aaa654fb5aafe319a2c52f6b220ccea40ad2182f9a138253885e169c8",
+    "tmp/restore-binding-native-2/native-result.raw.json": "0dd7ec83967c7a48dae8d24b1ef976662b093ac834553cdfc7fc53d9e7375023",
+    "tmp/restore-binding-native-2/root-tool-completion.json": "31b641925a898f143d67299d3b558de335e8d7a2c87c3d79fa11d537be387e93",
+    "tmp/restore-binding-native-2/stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tmp/restore-binding-native-2/stdout": "6f5397c62c441ae8e7af39106def41c5e1b56b4d8ef4b12d6760fad21aa26a19"
+  }
+}
