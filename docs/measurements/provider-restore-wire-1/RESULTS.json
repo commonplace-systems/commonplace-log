@@ -76,7 +76,7 @@
   "raw_artifact_sha256": {
     "provider-restore-wire-1": {
       "native.rc": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
-      "verdict.rc": "4355a46b19d348dc2f57c046f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "verdict.rc": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
       "result.json": "c669e6766bdd07c05253a64e49d6040f214c8cb7c9e1bd8f403878984275ef81",
       "root-tool-completion.json": "b752e14fe0bb5afaf26e2c1e02cf0b17d6585298f404ae50b4d0685686fbcd01",
       "pre.sha256": "27a9ba0dc35531107d0366c83af87261e4e6cca2432f7fe6a9f220fd238ac425",
