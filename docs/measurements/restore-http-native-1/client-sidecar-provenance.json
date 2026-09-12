@@ -1,0 +1,7 @@
+{
+  "source_repository": "/home/jes/commonplace-log-restore-client",
+  "source_commit": "4fa621db5d257260118fbf649049402ff09b5ef6",
+  "source_path": "commonplace_log/lib/commonplace/log/persistence/cloudflare_sidecar.ex",
+  "copied_path": "commonplace_log/lib/commonplace/log/persistence/cloudflare_sidecar.ex",
+  "sha256": "2022de840fd71355f36b23116c60934918773a5dfd8363dc39e48b06fe1199ab"
+}
