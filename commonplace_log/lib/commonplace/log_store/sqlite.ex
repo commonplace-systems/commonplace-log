@@ -37,6 +37,8 @@ defmodule Commonplace.LogStore.SQLite do
   @behaviour Commonplace.LogStore
 
   alias Commonplace.Log.{Frontier, Jcs}
+  alias Commonplace.LogStore.SQLite.Restore
+  alias Commonplace.LogStore.SQLite.RestoreCapability
   alias Commonplace.LogStore.SQLite.Server
 
   @registry Commonplace.LogStore.SQLite.Registry
@@ -45,6 +47,26 @@ defmodule Commonplace.LogStore.SQLite do
 
   @impl true
   def create_log(log_id), do: dispatch(log_id, :create, &Server.create_log/1)
+
+  @doc false
+  @spec restore_capability(String.t(), Frontier.t()) :: RestoreCapability.t()
+  def restore_capability(log_id, expected_frontier),
+    do: Restore.capability(log_id, expected_frontier)
+
+  @doc "Restore a canonical single-writer prefix into an isolated target log."
+  @spec restore_log(String.t(), [binary()], RestoreCapability.t()) ::
+          {:ok, map()} | {:error, term()}
+  def restore_log(log_id, entries, %RestoreCapability{} = capability) do
+    with {:ok, spec} <- Restore.prepare(log_id, entries, capability),
+         {:ok, server} <- restore_server(log_id, spec),
+         {:ok, result} <- Server.restore(server, spec.entries, spec) do
+      {:ok, result}
+    end
+    |> normalize()
+  end
+
+  def restore_log(_log_id, _entries, _capability),
+    do: {:error, {:storage, %{reason: :restore_capability_required}}}
 
   @impl true
   def append(log_id, _writer_id, body, created_at) do
@@ -123,6 +145,26 @@ defmodule Commonplace.LogStore.SQLite do
       {:ok, server} -> {:ok, server}
       {:error, {:already_started, server}} -> {:ok, server}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp restore_server(log_id, spec) do
+    case Registry.lookup(@registry, log_id) do
+      [{_server, _value}] ->
+        {:error, :restore_target_in_use}
+
+      [] ->
+        data_dir = data_dir()
+        sqlite_path = Path.join(data_dir, log_id <> ".sqlite3")
+        writer_path = Path.join(data_dir, log_id <> ".writer")
+
+        cond do
+          File.regular?(writer_path) and not File.regular?(sqlite_path) ->
+            {:error, :restore_orphan_writer}
+
+          true ->
+            start_server(log_id, data_dir, {:restore, spec})
+        end
     end
   end
 

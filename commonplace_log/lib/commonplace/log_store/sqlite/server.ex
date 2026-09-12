@@ -23,7 +23,7 @@ defmodule Commonplace.LogStore.SQLite.Server do
   @registry Commonplace.LogStore.SQLite.Registry
 
   @enforce_keys [:data_dir, :log_id, :writer_id, :writer_path, :store, :lock_conn]
-  defstruct [:data_dir, :log_id, :writer_id, :writer_path, :store, :lock_conn]
+  defstruct [:data_dir, :log_id, :writer_id, :writer_path, :store, :lock_conn, :restore_spec]
 
   @type server :: GenServer.server()
 
@@ -84,6 +84,9 @@ defmodule Commonplace.LogStore.SQLite.Server do
     do: GenServer.call(server, {:merge_with_epoch, entries, expected_epoch})
 
   @doc false
+  def restore(server, entries, spec), do: GenServer.call(server, {:restore, entries, spec})
+
+  @doc false
   def frontier(server), do: GenServer.call(server, :frontier)
 
   @doc false
@@ -133,9 +136,56 @@ defmodule Commonplace.LogStore.SQLite.Server do
     {:reply, state.writer_id, state}
   end
 
+  def handle_call(:take_lease, _from, %{restore_spec: %{}} = state),
+    do: {:reply, {:error, :restore_incomplete}, state}
+
   def handle_call(:take_lease, _from, state) do
     {:reply, LocalSQLite.take_lease(state.store, state.log_id), state}
   end
+
+  def handle_call({:restore, entries, spec}, _from, %{restore_spec: restore_spec} = state) do
+    if restore_spec == nil or restore_spec.writer_id != spec.writer_id or
+         restore_spec.frontier_digest != spec.frontier_digest do
+      {:reply, {:error, :restore_capability_mismatch}, state}
+    else
+      result =
+        case LocalSQLite.restore_state(state.store, state.log_id) do
+          {:ok, %{state: :complete}} ->
+            {:ok, %{writer_id: state.writer_id, restored: true}}
+
+          {:ok, %{state: :pending}} ->
+            with {:ok, lease} <- LocalSQLite.take_lease(state.store, state.log_id),
+                 {:ok, _merge} <-
+                   Engine.merge(LocalSQLite, state.store, state.log_id, entries, lease),
+                 :ok <- LocalSQLite.complete_restore(state.store, state.log_id, spec) do
+              {:ok, %{writer_id: state.writer_id, restored: true}}
+            end
+
+          {:ok, :unmarked} ->
+            {:error, :restore_marker_missing}
+
+          error ->
+            error
+        end
+
+      case result do
+        {:ok, _value} ->
+          {:reply, result, %{state | restore_spec: nil}}
+
+        {:error, _reason} ->
+          # Leave the durable marker pending, but do not keep an owner process
+          # around that could bypass the open-path marker check after a failed
+          # restore attempt.
+          {:stop, :normal, result, %{state | restore_spec: nil}}
+      end
+    end
+  end
+
+  # A restore owner may be visible in the registry while its durable marker is
+  # pending. Queueing ordinary requests behind it would otherwise expose the
+  # partial target before the complete marker is committed.
+  def handle_call(_request, _from, %{restore_spec: %{}} = state),
+    do: {:reply, {:error, :restore_incomplete}, state}
 
   def handle_call(:rekey, _from, state) do
     writer_id = UUID.uuidv7()
@@ -288,8 +338,10 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   defp initialize_store(lock_conn, store, data_dir, log_id, mode) do
     with :ok <- initialize_log(store, log_id, mode),
+         :ok <- validate_restore_mode(store, log_id, mode),
          writer_path = Path.join(data_dir, log_id <> ".writer"),
-         {:ok, writer_id} <- load_writer(writer_path, mode) do
+         {:ok, writer_id} <- load_writer(writer_path, mode),
+         :ok <- validate_restore_binding(store, log_id, writer_id, mode) do
       {:ok,
        %__MODULE__{
          data_dir: data_dir,
@@ -297,7 +349,8 @@ defmodule Commonplace.LogStore.SQLite.Server do
          writer_id: writer_id,
          writer_path: writer_path,
          store: store,
-         lock_conn: lock_conn
+         lock_conn: lock_conn,
+         restore_spec: restore_spec(mode)
        }}
     else
       {:error, reason} ->
@@ -316,8 +369,56 @@ defmodule Commonplace.LogStore.SQLite.Server do
     end
   end
 
+  defp initialize_log(store, log_id, {:restore, spec}),
+    do: LocalSQLite.prepare_restore(store, log_id, spec)
+
   defp load_writer(writer_path, :create), do: read_or_create_writer(writer_path)
   defp load_writer(writer_path, :open), do: File.read(writer_path)
+
+  defp load_writer(writer_path, {:restore, %{writer_id: writer_id}}) do
+    case File.read(writer_path) do
+      {:ok, ^writer_id} -> {:ok, writer_id}
+      {:ok, _other} -> {:error, :restore_writer_mismatch}
+      {:error, :enoent} -> write_restore_writer(writer_path, writer_id)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp write_restore_writer(path, writer_id) do
+    tmp = path <> ".restore-" <> Integer.to_string(System.unique_integer([:positive]))
+
+    with {:ok, io} <- File.open(tmp, [:write, :binary]),
+         :ok <- IO.binwrite(io, writer_id),
+         :ok <- :file.sync(io),
+         :ok <- File.close(io),
+         :ok <- File.rename(tmp, path) do
+      {:ok, writer_id}
+    else
+      {:error, reason} ->
+        File.rm(tmp)
+        {:error, reason}
+    end
+  end
+
+  defp validate_restore_binding(store, log_id, writer_id, :open),
+    do: LocalSQLite.restore_binding(store, log_id, writer_id)
+
+  defp validate_restore_mode(store, log_id, :create),
+    do: LocalSQLite.restore_create_allowed(store, log_id)
+
+  defp validate_restore_mode(_store, _log_id, _mode), do: :ok
+
+  defp validate_restore_binding(store, log_id, writer_id, :create),
+    do: LocalSQLite.restore_binding(store, log_id, writer_id)
+
+  defp validate_restore_binding(_store, _log_id, writer_id, {:restore, %{writer_id: writer_id}}),
+    do: :ok
+
+  defp validate_restore_binding(_store, _log_id, _writer_id, {:restore, _spec}),
+    do: {:error, :restore_writer_mismatch}
+
+  defp restore_spec({:restore, spec}), do: spec
+  defp restore_spec(_mode), do: nil
 
   defp read_or_create_writer(writer_path) do
     case File.read(writer_path) do

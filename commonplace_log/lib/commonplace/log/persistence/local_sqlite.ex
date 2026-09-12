@@ -24,6 +24,18 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
   ) STRICT;
   """
 
+  @restore_ddl """
+  CREATE TABLE IF NOT EXISTS restore_meta (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'complete')),
+    writer_id TEXT NOT NULL,
+    writer_seq INTEGER NOT NULL CHECK (writer_seq > 0),
+    tip_entry_id TEXT NOT NULL,
+    frontier_digest BLOB NOT NULL,
+    entry_count INTEGER NOT NULL CHECK (entry_count > 0)
+  ) STRICT;
+  """
+
   @enforce_keys [:conn, :data_dir, :log_id, :path]
   defstruct [:conn, :data_dir, :log_id, :path]
 
@@ -61,6 +73,146 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
         create_or_check_log(store.conn, log_id, format_version(metadata))
       end)
     end
+  end
+
+  @doc false
+  def prepare_restore(%__MODULE__{} = store, log_id, spec) when is_map(spec) do
+    with :ok <- handle_matches(store, log_id),
+         {:ok, target_state} <- restore_target_state(store.conn, log_id),
+         :ok <- allow_restore_target(target_state),
+         :ok <- Schema.init_schema(store.conn),
+         :ok <- Sqlite3.execute(store.conn, @meta_ddl),
+         :ok <- ensure_lease_epoch_column(store.conn),
+         :ok <- Sqlite3.execute(store.conn, @restore_ddl) do
+      transaction(store.conn, "BEGIN IMMEDIATE", fn ->
+        with {:ok, log_rows} <-
+               query(store.conn, "SELECT log_id FROM log_meta WHERE singleton = 1"),
+             {:ok, restore_rows} <-
+               query(
+                 store.conn,
+                 "SELECT state, writer_id, writer_seq, tip_entry_id, frontier_digest, entry_count FROM restore_meta WHERE singleton = 1"
+               ) do
+          prepare_restore_rows(store.conn, log_id, spec, log_rows, restore_rows)
+        end
+      end)
+    end
+  end
+
+  defp restore_target_state(conn, log_id) do
+    with {:ok, log_tables} <-
+           query(
+             conn,
+             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'log_meta'"
+           ) do
+      case log_tables do
+        [] ->
+          {:ok, :new}
+
+        [_log_meta] ->
+          with {:ok, rows} <- query(conn, "SELECT log_id FROM log_meta WHERE singleton = 1") do
+            case rows do
+              [] -> {:ok, :new}
+              [[^log_id]] -> restore_marker_state(conn)
+              [[_other]] -> {:error, :log_mismatch}
+            end
+          end
+      end
+    end
+  end
+
+  defp restore_marker_state(conn) do
+    case query(
+           conn,
+           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'restore_meta'"
+         ) do
+      {:ok, []} -> {:ok, :unmarked_existing}
+      {:ok, [_restore_meta]} -> {:ok, :marked}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp allow_restore_target(:new), do: :ok
+  defp allow_restore_target(:marked), do: :ok
+  defp allow_restore_target(:unmarked_existing), do: {:error, :restore_target_not_new}
+
+  @doc false
+  def restore_state(%__MODULE__{} = store, log_id) do
+    with :ok <- stored_log_matches(store, log_id) do
+      case query(
+             store.conn,
+             "SELECT state, writer_id, writer_seq, tip_entry_id, frontier_digest, entry_count FROM restore_meta WHERE singleton = 1"
+           ) do
+        {:ok, []} ->
+          {:ok, :unmarked}
+
+        {:ok, [[state, writer_id, writer_seq, tip_entry_id, digest, entry_count]]} ->
+          {:ok,
+           %{
+             state: String.to_existing_atom(state),
+             writer_id: writer_id,
+             writer_seq: writer_seq,
+             tip_entry_id: tip_entry_id,
+             frontier_digest: digest,
+             entry_count: entry_count
+           }}
+
+        {:error, "no such table: restore_meta"} ->
+          {:ok, :unmarked}
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
+  @doc false
+  def restore_binding(%__MODULE__{} = store, log_id, writer_id) do
+    with {:ok, state} <- restore_state(store, log_id) do
+      case state do
+        :unmarked -> :ok
+        %{state: :complete, writer_id: ^writer_id} -> :ok
+        %{state: :complete} -> {:error, :restore_writer_mismatch}
+        %{state: :pending} -> {:error, :restore_incomplete}
+      end
+    end
+  end
+
+  @doc false
+  def restore_create_allowed(%__MODULE__{} = store, log_id) do
+    with {:ok, state} <- restore_state(store, log_id) do
+      case state do
+        :unmarked -> :ok
+        %{state: :complete} -> :ok
+        %{state: :pending} -> {:error, :restore_incomplete}
+      end
+    end
+  end
+
+  @doc false
+  def complete_restore(%__MODULE__{} = store, log_id, spec) when is_map(spec) do
+    transaction(store.conn, "BEGIN IMMEDIATE", fn ->
+      with :ok <- stored_log_matches(store, log_id),
+           {:ok, rows} <-
+             query(
+               store.conn,
+               "SELECT state, writer_id, writer_seq, tip_entry_id, frontier_digest, entry_count FROM restore_meta WHERE singleton = 1"
+             ),
+           :ok <- complete_restore_row(store.conn, rows, spec),
+           {:ok, [[count]]} <- query(store.conn, "SELECT COUNT(*) FROM entries"),
+           true <- count == spec.entry_count,
+           {:ok, [[writer_id, seq, tip_entry_id]]} <-
+             query(store.conn, "SELECT writer_id, last_seq, last_entry_id FROM writer_tips"),
+           true <-
+             writer_id == spec.writer_id and seq == spec.writer_seq and
+               tip_entry_id == spec.tip_entry_id,
+           :ok <-
+             run(store.conn, "UPDATE restore_meta SET state = 'complete' WHERE singleton = 1", []) do
+        :ok
+      else
+        false -> {:error, :restore_frontier_mismatch}
+        {:error, _reason} = error -> error
+      end
+    end)
   end
 
   @impl true
@@ -252,6 +404,68 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
           {:error, :log_mismatch}
       end
     end
+  end
+
+  defp prepare_restore_rows(conn, log_id, spec, [], []) do
+    with :ok <- create_or_check_log(conn, log_id, 1),
+         :ok <- insert_restore_row(conn, spec, "pending") do
+      :ok
+    end
+  end
+
+  defp prepare_restore_rows(_conn, _log_id, _spec, [], _restore_rows),
+    do: {:error, :restore_marker_without_log}
+
+  defp prepare_restore_rows(_conn, _log_id, _spec, [[_stored_log]], []),
+    do: {:error, :restore_target_not_new}
+
+  defp prepare_restore_rows(_conn, _log_id, spec, [[_stored_log]], [row]) do
+    if restore_row_matches?(row, spec) do
+      :ok
+    else
+      {:error, :restore_marker_mismatch}
+    end
+  end
+
+  defp insert_restore_row(conn, spec, state) do
+    run(
+      conn,
+      "INSERT INTO restore_meta (singleton, state, writer_id, writer_seq, tip_entry_id, frontier_digest, entry_count) VALUES (1, ?, ?, ?, ?, ?, ?)",
+      [
+        state,
+        spec.writer_id,
+        spec.writer_seq,
+        spec.tip_entry_id,
+        {:blob, spec.frontier_digest},
+        spec.entry_count
+      ]
+    )
+  end
+
+  defp complete_restore_row(_conn, [["complete", writer_id, seq, tip, digest, count]], spec) do
+    if writer_id == spec.writer_id and seq == spec.writer_seq and tip == spec.tip_entry_id and
+         digest == spec.frontier_digest and count == spec.entry_count do
+      :ok
+    else
+      {:error, :restore_marker_mismatch}
+    end
+  end
+
+  defp complete_restore_row(_conn, [["pending", writer_id, seq, tip, digest, count]], spec) do
+    if writer_id == spec.writer_id and seq == spec.writer_seq and tip == spec.tip_entry_id and
+         digest == spec.frontier_digest and count == spec.entry_count do
+      :ok
+    else
+      {:error, :restore_marker_mismatch}
+    end
+  end
+
+  defp complete_restore_row(_conn, [], _spec), do: {:error, :restore_marker_missing}
+
+  defp restore_row_matches?([state, writer_id, seq, tip, digest, count], spec) do
+    state in ["pending", "complete"] and writer_id == spec.writer_id and
+      seq == spec.writer_seq and tip == spec.tip_entry_id and
+      digest == spec.frontier_digest and count == spec.entry_count
   end
 
   defp format_version(metadata),

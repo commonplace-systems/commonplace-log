@@ -12,6 +12,10 @@ defmodule Commonplace.Log.DocumentProfile.Lane.Sidecar do
   end
 
   @impl true
+  def restore_log(_log_id, _entries, _capability),
+    do: {:error, {:storage, %{reason: :restore_lane_unsupported}}}
+
+  @impl true
   def open_log(log_id, %CloudflareSidecar{} = store) do
     case CloudflareSidecar.frontier(store, log_id) do
       {:ok, _frontier} -> :ok

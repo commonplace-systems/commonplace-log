@@ -162,6 +162,18 @@ defmodule Commonplace.Log.DocumentProfile do
     |> normalize_profile_error()
   end
 
+  @doc "Restore a canonical single-writer prefix into an isolated SQLite target."
+  @spec restore_log(String.t(), [binary()], term()) :: {:ok, handle()} | error()
+  def restore_log(log_id, entries, capability)
+      when is_binary(log_id) and is_list(entries) do
+    with {:ok, lane, lane_store} <- lane([]),
+         {:ok, _result} <- lane.restore_log(log_id, entries, capability),
+         {:ok, handle} <- activate(lane, lane_store, log_id) do
+      {:ok, handle}
+    end
+    |> normalize_profile_error()
+  end
+
   @doc "Append a body on the durable lane bound into `handle`."
   @spec append(handle(), map(), keyword()) :: {:ok, map()} | error()
   def append(%Handle{} = handle, body, opts) when is_map(body) and is_list(opts) do

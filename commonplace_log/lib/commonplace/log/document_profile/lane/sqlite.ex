@@ -14,6 +14,10 @@ defmodule Commonplace.Log.DocumentProfile.Lane.SQLite do
   def create_log(log_id, _store), do: SQLiteStore.create_log(log_id)
 
   @impl true
+  def restore_log(log_id, entries, capability),
+    do: SQLiteStore.restore_log(log_id, entries, capability)
+
+  @impl true
   def open_log(log_id, _store) do
     case SQLiteStore.frontier(log_id) do
       {:ok, _frontier} -> :ok
@@ -47,15 +51,15 @@ defmodule Commonplace.Log.DocumentProfile.Lane.SQLite do
   def writer_id(handle), do: safe_call(fn -> Server.writer_id(handle.store) end)
 
   @impl true
-  def frontier(handle), do: SQLiteStore.frontier(handle.log_id)
+  def frontier(handle), do: safe_call(fn -> Server.frontier(handle.store) end)
 
   @impl true
   def read_writer(handle, opts),
-    do: SQLiteStore.read_writer(handle.log_id, handle.writer_id, opts)
+    do: safe_call(fn -> Server.read_writer(handle.store, handle.writer_id, opts) end)
 
   @impl true
   def append_with_epoch(handle, body, created_at, expected_epoch) do
-    SQLiteStore.append_with_epoch(handle.log_id, body, created_at, expected_epoch)
+    safe_call(fn -> Server.append(handle.store, body, created_at, expected_epoch) end)
   end
 
   @impl true

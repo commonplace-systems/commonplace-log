@@ -12,6 +12,7 @@ defmodule Commonplace.Log.DocumentProfile.Lane do
   @callback create_log(String.t(), term()) :: :ok | {:error, term()}
   @callback open_log(String.t(), term()) :: :ok | {:error, term()}
   @callback activate(String.t(), term()) :: {:ok, activation()} | {:error, term()}
+  @callback restore_log(String.t(), [binary()], term()) :: {:ok, map()} | {:error, term()}
   @callback writer_id(map()) :: {:ok, String.t()} | {:error, term()}
   @callback frontier(map()) :: {:ok, Commonplace.Log.Persistence.frontier()} | {:error, term()}
   @callback read_writer(map(), keyword()) ::

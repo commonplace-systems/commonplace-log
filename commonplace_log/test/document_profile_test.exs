@@ -1,7 +1,7 @@
 defmodule Commonplace.Log.DocumentProfileTest do
   use ExUnit.Case, async: false
 
-  alias Commonplace.Log.{DocumentProfile, Engine, Entry, UUID}
+  alias Commonplace.Log.{DocumentProfile, Engine, Entry, Frontier, UUID}
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.LogStore.SQLite
   alias Exqlite.Sqlite3
@@ -427,7 +427,8 @@ defmodule Commonplace.Log.DocumentProfileTest do
                commit_prepared: 2,
                create_log: 2,
                open_log: 2,
-               prepare_append: 3
+               prepare_append: 3,
+               restore_log: 3
              ]
 
     refute function_exported?(DocumentProfile, :append, 4)
@@ -437,6 +438,105 @@ defmodule Commonplace.Log.DocumentProfileTest do
     refute function_exported?(DocumentProfile, :open_log, 3)
     refute function_exported?(DocumentProfile, :prepare_append, 4)
     refute function_exported?(DocumentProfile, :rekey, 1)
+  end
+
+  test "restores canonical bytes with the historical writer and resumes after restart", %{
+    data_dir: source_dir,
+    log_id: log_id
+  } do
+    assert {:ok, source_handle} = DocumentProfile.create_log(log_id, [])
+
+    for n <- 1..4 do
+      assert {:ok, %{writer_seq: ^n}} = DocumentProfile.append(source_handle, %{"n" => n}, [])
+    end
+
+    assert {:ok, frontier} = SQLite.frontier_value(log_id)
+    assert {:ok, source_bytes} = SQLite.read_through(log_id, frontier, [])
+    source_writer = only_writer(log_id)
+    stop_server(log_id)
+
+    target_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "commonplace-document-restore-target-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(target_dir)
+    target_previous = Application.get_env(:commonplace_log, SQLite)
+    Application.put_env(:commonplace_log, SQLite, data_dir: target_dir)
+
+    on_exit(fn ->
+      stop_all_servers()
+      File.rm_rf!(target_dir)
+
+      if target_previous do
+        Application.put_env(:commonplace_log, SQLite, target_previous)
+      else
+        Application.delete_env(:commonplace_log, SQLite)
+      end
+
+      File.rm_rf!(source_dir)
+    end)
+
+    capability = SQLite.restore_capability(log_id, frontier)
+    assert {:ok, target_handle} = DocumentProfile.restore_log(log_id, source_bytes, capability)
+    assert source_writer == only_writer(log_id)
+    assert {:ok, ^source_bytes} = SQLite.read_through(log_id, frontier, [])
+
+    assert {:ok, %{writer_seq: 5}} = DocumentProfile.append(target_handle, %{"n" => 5}, [])
+
+    assert {:error, {:storage, _reason}} =
+             DocumentProfile.append(source_handle, %{"must_not_write_target" => true}, [])
+
+    assert {:ok, %{writers: [%{seq: 5}]}} = SQLite.frontier(log_id)
+    stop_server(log_id)
+    assert {:ok, reopened} = DocumentProfile.open_log(log_id, [])
+    assert {:ok, %{writer_seq: 6}} = DocumentProfile.append(reopened, %{"n" => 6}, [])
+    assert source_writer == only_writer(log_id)
+  end
+
+  test "restore rejects multiwriter and wrong-frontier requests before creating a target", %{
+    data_dir: data_dir,
+    log_id: log_id
+  } do
+    assert {:ok, source_handle} = DocumentProfile.create_log(log_id, [])
+    assert {:ok, %{writer_seq: 1}} = DocumentProfile.append(source_handle, %{"n" => 1}, [])
+    assert {:ok, frontier} = SQLite.frontier_value(log_id)
+    assert {:ok, entries} = SQLite.read_through(log_id, frontier, [])
+    stop_server(log_id)
+
+    assert {:error, {:storage, %{reason: :restore_target_not_new}}} =
+             DocumentProfile.restore_log(
+               log_id,
+               entries,
+               SQLite.restore_capability(log_id, frontier)
+             )
+
+    assert {:ok, ^entries} = SQLite.read_through(log_id, frontier, [])
+    stop_server(log_id)
+    File.rm!(Path.join(data_dir, log_id <> ".sqlite3"))
+    File.rm!(Path.join(data_dir, log_id <> ".writer"))
+
+    multi = Frontier.new([frontier.tips |> hd(), UUID.uuidv7()])
+
+    assert {:error, {:storage, %{reason: :restore_single_writer_required}}} =
+             DocumentProfile.restore_log(
+               log_id,
+               entries,
+               SQLite.restore_capability(log_id, multi)
+             )
+
+    wrong = Frontier.new([UUID.uuidv7()])
+
+    assert {:error, {:storage, %{reason: :restore_frontier_mismatch}}} =
+             DocumentProfile.restore_log(
+               log_id,
+               entries,
+               SQLite.restore_capability(log_id, wrong)
+             )
+
+    refute File.exists?(Path.join(data_dir, log_id <> ".sqlite3"))
+    refute File.exists?(Path.join(data_dir, log_id <> ".writer"))
   end
 
   defp only_writer(log_id) do
