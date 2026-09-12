@@ -1,30 +1,30 @@
-defmodule Commonplace.LogStore.SQLite.RestoreCapability do
+defmodule Commonplace.LogStore.SQLite.RestoreRequest do
   @moduledoc false
 
-  @enforce_keys [:target, :frontier, :nonce]
-  defstruct [:target, :frontier, :nonce]
+  @enforce_keys [:target, :frontier]
+  defstruct [:target, :frontier]
 end
 
 defmodule Commonplace.LogStore.SQLite.Restore do
   @moduledoc false
 
   alias Commonplace.Log.{Entry, Frontier}
-  alias Commonplace.LogStore.SQLite.RestoreCapability
+  alias Commonplace.LogStore.SQLite.RestoreRequest
 
   @max_entries 4_096
   @max_bytes 32 * 1024 * 1024
 
-  @spec capability(String.t(), Frontier.t()) :: RestoreCapability.t()
-  def capability(log_id, %Frontier{} = frontier) when is_binary(log_id) do
-    %RestoreCapability{target: log_id, frontier: frontier, nonce: :crypto.strong_rand_bytes(32)}
+  @spec request(String.t(), Frontier.t()) :: RestoreRequest.t()
+  def request(log_id, %Frontier{} = frontier) when is_binary(log_id) do
+    %RestoreRequest{target: log_id, frontier: frontier}
   end
 
-  @spec prepare(String.t(), [binary()], RestoreCapability.t()) ::
+  @spec prepare(String.t(), [binary()], RestoreRequest.t()) ::
           {:ok, map()} | {:error, term()}
-  def prepare(log_id, entries, %RestoreCapability{} = capability)
+  def prepare(log_id, entries, %RestoreRequest{} = request)
       when is_binary(log_id) and is_list(entries) do
-    with :ok <- validate_capability(log_id, capability),
-         {:ok, expected} <- expected_frontier(capability.frontier),
+    with :ok <- validate_request(log_id, request),
+         {:ok, expected} <- expected_frontier(request.frontier),
          {:ok, canonical} <- canonical_entries(entries),
          {:ok, chain} <- validate_chain(log_id, canonical, expected) do
       {:ok,
@@ -40,13 +40,11 @@ defmodule Commonplace.LogStore.SQLite.Restore do
     end
   end
 
-  def prepare(_log_id, _entries, _capability), do: {:error, :restore_capability_required}
+  def prepare(_log_id, _entries, _request), do: {:error, :restore_request_required}
 
-  defp validate_capability(log_id, %RestoreCapability{target: log_id, nonce: nonce})
-       when is_binary(nonce) and byte_size(nonce) >= 16,
-       do: :ok
+  defp validate_request(log_id, %RestoreRequest{target: log_id}), do: :ok
 
-  defp validate_capability(_log_id, _capability), do: {:error, :restore_capability_mismatch}
+  defp validate_request(_log_id, _request), do: {:error, :restore_request_mismatch}
 
   defp expected_frontier(%Frontier{tips: [tip]}) when is_binary(tip) do
     with :ok <- valid_uuid(tip) do

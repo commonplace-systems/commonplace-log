@@ -478,8 +478,8 @@ defmodule Commonplace.Log.DocumentProfileTest do
       File.rm_rf!(source_dir)
     end)
 
-    capability = SQLite.restore_capability(log_id, frontier)
-    assert {:ok, target_handle} = DocumentProfile.restore_log(log_id, source_bytes, capability)
+    request = SQLite.restore_request(log_id, frontier)
+    assert {:ok, target_handle} = DocumentProfile.restore_log(log_id, source_bytes, request)
     assert source_writer == only_writer(log_id)
     assert {:ok, ^source_bytes} = SQLite.read_through(log_id, frontier, [])
 
@@ -509,7 +509,7 @@ defmodule Commonplace.Log.DocumentProfileTest do
              DocumentProfile.restore_log(
                log_id,
                entries,
-               SQLite.restore_capability(log_id, frontier)
+               SQLite.restore_request(log_id, frontier)
              )
 
     assert {:ok, ^entries} = SQLite.read_through(log_id, frontier, [])
@@ -523,7 +523,7 @@ defmodule Commonplace.Log.DocumentProfileTest do
              DocumentProfile.restore_log(
                log_id,
                entries,
-               SQLite.restore_capability(log_id, multi)
+               SQLite.restore_request(log_id, multi)
              )
 
     wrong = Frontier.new([UUID.uuidv7()])
@@ -532,7 +532,7 @@ defmodule Commonplace.Log.DocumentProfileTest do
              DocumentProfile.restore_log(
                log_id,
                entries,
-               SQLite.restore_capability(log_id, wrong)
+               SQLite.restore_request(log_id, wrong)
              )
 
     refute File.exists?(Path.join(data_dir, log_id <> ".sqlite3"))

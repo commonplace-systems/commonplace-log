@@ -38,7 +38,7 @@ defmodule Commonplace.LogStore.SQLite do
 
   alias Commonplace.Log.{Frontier, Jcs}
   alias Commonplace.LogStore.SQLite.Restore
-  alias Commonplace.LogStore.SQLite.RestoreCapability
+  alias Commonplace.LogStore.SQLite.RestoreRequest
   alias Commonplace.LogStore.SQLite.Server
 
   @registry Commonplace.LogStore.SQLite.Registry
@@ -49,15 +49,15 @@ defmodule Commonplace.LogStore.SQLite do
   def create_log(log_id), do: dispatch(log_id, :create, &Server.create_log/1)
 
   @doc false
-  @spec restore_capability(String.t(), Frontier.t()) :: RestoreCapability.t()
-  def restore_capability(log_id, expected_frontier),
-    do: Restore.capability(log_id, expected_frontier)
+  @spec restore_request(String.t(), Frontier.t()) :: RestoreRequest.t()
+  def restore_request(log_id, expected_frontier),
+    do: Restore.request(log_id, expected_frontier)
 
   @doc "Restore a canonical single-writer prefix into an isolated target log."
-  @spec restore_log(String.t(), [binary()], RestoreCapability.t()) ::
+  @spec restore_log(String.t(), [binary()], RestoreRequest.t()) ::
           {:ok, map()} | {:error, term()}
-  def restore_log(log_id, entries, %RestoreCapability{} = capability) do
-    with {:ok, spec} <- Restore.prepare(log_id, entries, capability),
+  def restore_log(log_id, entries, %RestoreRequest{} = request) do
+    with {:ok, spec} <- Restore.prepare(log_id, entries, request),
          {:ok, server} <- restore_server(log_id, spec),
          {:ok, result} <- Server.restore(server, spec.entries, spec) do
       {:ok, result}
@@ -66,7 +66,7 @@ defmodule Commonplace.LogStore.SQLite do
   end
 
   def restore_log(_log_id, _entries, _capability),
-    do: {:error, {:storage, %{reason: :restore_capability_required}}}
+    do: {:error, {:storage, %{reason: :restore_request_required}}}
 
   @impl true
   def append(log_id, _writer_id, body, created_at) do

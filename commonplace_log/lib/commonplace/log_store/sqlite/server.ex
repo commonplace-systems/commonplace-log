@@ -146,7 +146,7 @@ defmodule Commonplace.LogStore.SQLite.Server do
   def handle_call({:restore, entries, spec}, _from, %{restore_spec: restore_spec} = state) do
     if restore_spec == nil or restore_spec.writer_id != spec.writer_id or
          restore_spec.frontier_digest != spec.frontier_digest do
-      {:reply, {:error, :restore_capability_mismatch}, state}
+      {:reply, {:error, :restore_request_mismatch}, state}
     else
       result =
         case LocalSQLite.restore_state(state.store, state.log_id) do
