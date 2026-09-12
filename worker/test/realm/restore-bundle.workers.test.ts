@@ -300,4 +300,23 @@ describe("internal restore bundle", () => {
     await withRealm(name, (_store, _sql, state) => state.storage.sql.exec("DROP TRIGGER bundle_injected_failure"));
     expect((await withRealm(name, (store) => store.restoreBundleBatch(source, 1))).complete).toBe(true);
   });
+
+  it("refuses a missing completed log and marker without recreating either", async () => {
+    const name = `restore-bundle-missing-completed-${Date.now()}-${Math.random()}`;
+    const source = bundle();
+    await withRealm(name, (_store, sql) => provision(sql));
+    expect((await withRealm(name, (store) => store.restoreBundleBatch(source, 1))).complete).toBe(false);
+    await withRealm(name, (_store, sql) => {
+      sql.exec("DELETE FROM logs WHERE log_id = ?", A_LOG);
+      sql.exec("DELETE FROM restore_markers WHERE log_id = ?", A_LOG);
+    });
+    const before = await withRealm(name, (_store, sql) => stateSnapshot(sql));
+    await withRealm(name, (store) => expect(() => store.restoreBundleBatch(source, 1)).toThrow(RealmStoreError));
+    expect(await withRealm(name, (_store, sql) => stateSnapshot(sql))).toBe(before);
+    await withRealm(name, (_store, sql) => {
+      expect(sql.exec("SELECT state FROM restore_bundles WHERE singleton = 1").one().state).toBe("pending");
+      expect(sql.exec("SELECT COUNT(*) AS count FROM entries WHERE log_id = ?", A_LOG).one().count).toBe(2);
+      expect(sql.exec("SELECT COUNT(*) AS count FROM writer_tips WHERE log_id = ?", A_LOG).one().count).toBe(1);
+    });
+  });
 });

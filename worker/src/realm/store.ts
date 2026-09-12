@@ -361,7 +361,16 @@ export class RealmStore {
     const byLog = new Map(bundle.logs.map((archive) => [archive.logId, archive]));
     for (const row of completedRows) {
       const archive = byLog.get(String(row.log_id));
-      if (archive === undefined || !this.restoreArchiveInTransaction(archive, archive.entries.length).complete) {
+      const existingLog = this.sql.exec("SELECT log_id FROM logs WHERE log_id = ?", row.log_id).toArray()[0];
+      const existingMarker = this.sql.exec(
+        "SELECT state FROM restore_markers WHERE log_id = ?", row.log_id,
+      ).toArray()[0];
+      if (archive === undefined || existingLog === undefined || existingMarker === undefined ||
+          String(existingMarker.state) !== "complete") {
+        throw new RealmStoreError("constraint");
+      }
+      const verified = this.restoreArchiveInTransaction(archive, archive.entries.length);
+      if (!verified.complete || verified.imported !== 0 || verified.skipped !== archive.entries.length) {
         throw new RealmStoreError("constraint");
       }
     }
