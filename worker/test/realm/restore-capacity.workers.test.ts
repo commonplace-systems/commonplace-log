@@ -41,6 +41,18 @@ function archive(entry: EntryRow): RestoreArchive {
   };
 }
 
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function progress(phase: string, fields: Record<string, number | boolean> = {}): void {
+  console.info(JSON.stringify({ restore_capacity_phase: phase, ...fields }));
+}
+
 async function withRealm<T>(
   name: string,
   fn: (store: RealmStore, sql: SqlStorage, state: DurableObjectState) => T | Promise<T>,
@@ -58,18 +70,21 @@ describe("restore capacity boundary", () => {
     const name = `restore-capacity-${Date.now()}-${Math.random()}`;
     const entry = largeEntry();
     const source = archive(entry);
+    progress("fixture_built", { entry_count: source.entries.length });
 
     expect(BODY_LENGTH).toBe(900_000);
     expect(entry.canonicalBytes.byteLength).toBeGreaterThan(850_000);
     expect(entry.canonicalBytes.byteLength).toBeLessThan(1_048_576);
     const validation = validateEntry(entry.canonicalBytes);
     if (!validation.ok) throw new Error(`capacity fixture entry rejected: ${validation.reason}`);
-    expect(validation.canonicalBytes).toEqual(entry.canonicalBytes);
+    expect(sameBytes(validation.canonicalBytes, entry.canonicalBytes)).toBe(true);
+    progress("entry_validated", { validated_count: 1 });
     console.info(JSON.stringify({
       restore_capacity_body_bytes: BODY_LENGTH,
       restore_capacity_canonical_bytes: entry.canonicalBytes.byteLength,
     }));
 
+    progress("restore_started", { entry_count: source.entries.length });
     const restored = await withRealm(name, (store, sql) => {
       const result = store.restoreBatch(source);
       const marker = sql.exec(
@@ -87,6 +102,7 @@ describe("restore capacity boundary", () => {
     expect(restored.totalBytes).toBe(entry.canonicalBytes.byteLength);
     expect(restored.manifestBytes).toBeGreaterThan(0);
     expect(restored.manifestBytes).toBeLessThan(128);
+    progress("restore_marker_stored", { imported_count: restored.result.imported, marker_bytes: restored.manifestBytes });
     console.info(JSON.stringify({
       restore_capacity_total_bytes: restored.totalBytes,
       restore_capacity_manifest_bytes: restored.manifestBytes,
@@ -94,6 +110,7 @@ describe("restore capacity boundary", () => {
 
     const lease = await withRealm(name, (store) => store.takeLease(LOG));
     expect(lease.writerId).toBe(WRITER);
+    progress("lease_acquired", { lease_epoch: lease.leaseEpoch });
     const followup: EntryRow = {
       entryId: FOLLOWUP,
       writerId: WRITER,
@@ -119,11 +136,13 @@ describe("restore capacity boundary", () => {
       insertEntries: [followup],
       putTips: [{ writerId: WRITER, lastSeq: 2, lastEntryId: FOLLOWUP }],
     }))).toBe(2);
+    progress("followup_committed", { committed_count: 1 });
 
     await expect(withRealm(name, async (_store, _sql, state) => {
       await state.storage.sync();
       state.abort("restore capacity restart");
     })).rejects.toThrow("restore capacity restart");
+    progress("restart_completed", { reopened: true });
 
     const reopened = await withRealm(name, (store) => store.readWriter(LOG, WRITER, {
       afterSeq: 0,
@@ -131,7 +150,8 @@ describe("restore capacity boundary", () => {
       limit: 2,
     }));
     expect(reopened.entries.map((item) => item.writerSeq)).toEqual([1, 2]);
-    expect(reopened.entries[0]?.canonicalBytes).toEqual(entry.canonicalBytes);
-    expect(reopened.entries[1]?.canonicalBytes).toEqual(followup.canonicalBytes);
-  });
+    expect(reopened.entries[0] === undefined ? false : sameBytes(reopened.entries[0].canonicalBytes, entry.canonicalBytes)).toBe(true);
+    expect(reopened.entries[1] === undefined ? false : sameBytes(reopened.entries[1].canonicalBytes, followup.canonicalBytes)).toBe(true);
+    progress("readback_verified", { read_count: reopened.entries.length });
+  }, 20_000);
 });
