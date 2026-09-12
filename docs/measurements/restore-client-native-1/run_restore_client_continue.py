@@ -72,7 +72,9 @@ pre = hashes()
     "beam_root": str(beam_root),
     "retained_isolated_ebin": str(parent_isolated),
     "target_tag": "restore_oversized_response",
-    "expected_tests": 1,
+    "expected_total_tests": 7,
+    "expected_excluded": 6,
+    "expected_executed": 1,
     "expected_failures": 0,
 }, indent=2, sort_keys=True) + "\n")
 
@@ -142,16 +144,23 @@ finally:
     (out / "input-sha256-post.json").write_text(json.dumps(post, indent=2, sort_keys=True) + "\n")
     equal = post == pre
     (out / "input-equality.json").write_text(json.dumps({"equal": equal}, indent=2) + "\n")
-    match = re.search(r"(?m)^\s*(\d+) tests?, (\d+) failures?", stdout)
-    count_ok = match is not None and int(match.group(1)) == 1 and int(match.group(2)) == 0
+    match = re.search(r"(?m)^\s*(\d+) tests?, (\d+) failures?, (\d+) excluded", stdout)
+    count_ok = (
+        match is not None
+        and int(match.group(1)) == 7
+        and int(match.group(2)) == 0
+        and int(match.group(3)) == 6
+    )
     verdict = 125 if not equal or not count_ok else (timeout_rc if timed_out else native_rc)
     (out / "native-exit.json").write_text(json.dumps({
         "native_exit": native_rc,
         "timeout_exit": timeout_rc if timed_out else None,
         "timed_out": timed_out,
         "count_ok": count_ok,
-        "expected_tests": 1,
+        "expected_total_tests": 7,
         "expected_failures": 0,
+        "expected_excluded": 6,
+        "expected_executed": 1,
     }) + "\n")
     (out / "verdict.json").write_text(json.dumps({
         "native_exit": native_rc,
