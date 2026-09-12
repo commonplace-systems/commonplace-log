@@ -23,6 +23,14 @@ dep_ebin = native1 / "dependency-ebin"
 if not app_ebin.is_dir() or not dep_ebin.is_dir():
     raise SystemExit(f"native1 emitted BEAM directories missing under {native1}")
 
+beam_root = pathlib.Path(
+    os.environ.get(
+        "RESTORE_BINDING_BEAM_ROOT",
+        "/home/jes/codex-save-state-1/tmp/origin-receipt-1/_build/test/lib",
+    )
+)
+reused_roots = [app_ebin, dep_ebin] + sorted(beam_root.glob("*/ebin"))
+
 test_file = repo / "commonplace_log/test/document_profile_test.exs"
 test_name = 'restore rejects multiwriter and wrong-frontier requests before creating a target'
 lines = test_file.read_text().splitlines()
@@ -45,11 +53,17 @@ def sha256(path):
     return digest.hexdigest()
 
 input_hashes = {str(path.relative_to(repo)): sha256(path) for path in tracked_inputs}
+def beam_hashes():
+    files = sorted({path for root in reused_roots for path in root.rglob("*") if path.is_file()})
+    return {str(path): sha256(path) for path in files}
+
+beam_hashes_pre = beam_hashes()
 (out / "input-sha256.json").write_text(json.dumps(input_hashes, indent=2, sort_keys=True) + "\n")
+(out / "beam-sha256-pre.json").write_text(json.dumps(beam_hashes_pre, indent=2, sort_keys=True) + "\n")
 
 elixir = "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir"
 script = repo / "docs/measurements/restore-binding-native-1/restore_binding_continue.exs"
-cmd = [elixir, str(script), str(out), str(selected_line)]
+cmd = [elixir, str(script), str(out), str(selected_line), test_name]
 (out / "command.json").write_text(
     json.dumps(
         {
@@ -68,6 +82,7 @@ env.update(
     {
         "RESTORE_BINDING_NATIVE1_APP_EBIN": str(app_ebin),
         "RESTORE_BINDING_NATIVE1_DEP_EBIN": str(dep_ebin),
+        "RESTORE_BINDING_BEAM_ROOT": str(beam_root),
     }
 )
 
@@ -92,6 +107,11 @@ except subprocess.TimeoutExpired as error:
         stdout, stderr = proc.communicate()
     stdout = stdout or error.stdout or ""
     stderr = stderr or error.stderr or ""
+    beam_hashes_post = beam_hashes()
+    (out / "beam-sha256-post.json").write_text(json.dumps(beam_hashes_post, indent=2, sort_keys=True) + "\n")
+    (out / "beam-equality.json").write_text(
+        json.dumps({"equal": beam_hashes_post == beam_hashes_pre}, indent=2) + "\n"
+    )
     (out / "stdout").write_text(stdout)
     (out / "stderr").write_text(stderr)
     (out / "native-exit.json").write_text(
@@ -100,9 +120,14 @@ except subprocess.TimeoutExpired as error:
     raise SystemExit(124)
 
 post_hashes = {str(path.relative_to(repo)): sha256(path) for path in tracked_inputs}
+beam_hashes_post = beam_hashes()
 (out / "input-sha256-post.json").write_text(json.dumps(post_hashes, indent=2, sort_keys=True) + "\n")
 (out / "input-equality.json").write_text(
     json.dumps({"equal": post_hashes == input_hashes}, indent=2) + "\n"
+)
+(out / "beam-sha256-post.json").write_text(json.dumps(beam_hashes_post, indent=2, sort_keys=True) + "\n")
+(out / "beam-equality.json").write_text(
+    json.dumps({"equal": beam_hashes_post == beam_hashes_pre}, indent=2) + "\n"
 )
 (out / "stdout").write_text(stdout or "")
 (out / "stderr").write_text(stderr or "")

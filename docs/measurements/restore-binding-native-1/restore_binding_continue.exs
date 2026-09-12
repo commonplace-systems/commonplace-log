@@ -1,24 +1,27 @@
-[out, selected_line] = System.argv()
+[out, selected_line, selected_name] = System.argv()
 out = Path.expand(out)
 selected_line = String.to_integer(selected_line)
 root = Path.expand("../../..", __DIR__)
 
-for path <- [
-      System.get_env("RESTORE_BINDING_NATIVE1_APP_EBIN"),
-      System.get_env("RESTORE_BINDING_NATIVE1_DEP_EBIN")
-    ],
-    not is_nil(path) do
-  Code.prepend_path(path)
+beam_root = System.get_env("RESTORE_BINDING_BEAM_ROOT")
+
+if beam_root do
+  Path.wildcard(Path.join(beam_root, "*/ebin"))
+  |> Enum.sort()
+  |> Enum.each(&Code.prepend_path/1)
 end
+
+Code.prepend_path(System.fetch_env!("RESTORE_BINDING_NATIVE1_DEP_EBIN"))
+Code.prepend_path(System.fetch_env!("RESTORE_BINDING_NATIVE1_APP_EBIN"))
 
 {:ok, _started} = Application.ensure_all_started(:commonplace_log)
 ExUnit.start(autorun: false, exclude: [], include: [])
-ExUnit.configure(include: [line: selected_line])
+ExUnit.configure(exclude: [:test], include: [test: selected_name])
 Code.require_file(Path.join(root, "commonplace_log/test/document_profile_test.exs"))
 result = ExUnit.run()
 File.write!(Path.join(out, "native-result.raw.json"), Jason.encode!(result))
 
-unless result.total == 1 and result.failures == 0 and result.skipped == 0 and
+unless result.total == 23 and result.failures == 0 and result.skipped == 0 and
          result.excluded == 22,
        do: raise("continuation did not select exactly one existing test")
 
