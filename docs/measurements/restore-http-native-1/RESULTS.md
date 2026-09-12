@@ -1,6 +1,6 @@
 # Restore HTTP native results
 
-The retained native evidence covers one real loopback HTTP workflow through Elixir `Httpc`, local Wrangler, the fixed test-only Durable Object wrapper, and SQLite persistence. The accepted run completed the nine requests, including malformed reachability, provisioning, partial restore, pending ordinary-operation fence, restart/resume, exact two-log readback, and idempotent replay. The fixture makes no cloud, authentication, provisioning, or application-activation claim.
+The retained native evidence covers one real loopback HTTP workflow through Elixir `Httpc`, local Wrangler, the fixed test-only Durable Object wrapper, and SQLite persistence. The accepted run completed the nine requests, including malformed reachability, provisioning, partial restore, pending ordinary-operation fence, a next batch completing the pending restore in the same Wrangler process, exact two-log readback, and idempotent replay. This nine-request HTTP workflow does not test a process restart; the separate local DO suite covers restart behavior. The fixture makes no cloud, authentication, provisioning, or application-activation claim.
 
 ## Runs
 
@@ -27,18 +27,18 @@ The runs use the cached BEAM root `/home/jes/codex-save-state-1/tmp/origin-recei
 
 ## Hash and cleanup evidence
 
-Every run retains `input-sha256.json`, `post-sha256.json`, `input-equality.json`, `native.rc`, `process-groups.json`, `command.json`, `source-pins.json`, root completion, and captured stdout/stderr. Pre/post hashes compare equal in all four runs. The input sets contain 10 Elixir files, 23 worker source/config files, 847 cached BEAM files, and 3,220 or 3,221 worker runtime files.
+Every run retains `input-sha256.json`, `post-sha256.json`, `input-equality.json`, `native.rc`, `process-groups.json`, `command.json`, `source-pins.json`, root completion, and captured stdout/stderr. Pre/post hashes compare equal for each run’s captured PRE file list; because the runner enumerates runtime files once before hashing, this does not prove that no file appeared after PRE. The input sets contain 10 Elixir files, 23 worker source/config files, 847 cached BEAM files, and 3,220 or 3,221 worker runtime files.
 
 The runtime count changed from 3,220 in runs 1–2 to 3,221 in runs 3–4. Set difference found exactly one added file between runs 2 and 3:
 
 `/home/jes/commonplace-log/worker/node_modules/.mf/cf.json`
 
-It was present with the same hash in runs 3 and 4; no raw output was edited or replayed. The exact hash for every retained raw output file is in [`RESULTS.json`](./RESULTS.json).
+It was present with the same hash in runs 3 and 4. This is a cross-run inventory difference only; it does not attribute the file’s creation to a particular point during run 2, and no raw output was edited or replayed. The exact hash for every retained raw output file is in [`RESULTS.json`](./RESULTS.json).
 
 ## Limits
 
 - Bounds: compile 120 seconds, Wrangler startup 30 seconds, test 180 seconds, TERM grace 5 seconds, KILL grace 2 seconds.
-- Environment: private HOME/XDG/TMPDIR, `ERL_FLAGS=+S 2:2`, and `/home/jes/.asdf/installs/erlang/27.3.4.8/bin` prepended to PATH.
+- Runs 1–2 retain the original runner environment; run 1 records the missing Erlang PATH failure. Runs 3–4 use private HOME/XDG/TMPDIR, `ERL_FLAGS=+S 2:2`, and `/home/jes/.asdf/installs/erlang/27.3.4.8/bin` prepended to PATH.
 - Scope: local synthetic fixed-target Durable Object wrapper and SQLite persistence reached over real loopback HTTP.
 - Excluded claims: real cloud Durable Object RPC, provider authentication, cloud deployment, target provisioning, application activation, and public grants.
 

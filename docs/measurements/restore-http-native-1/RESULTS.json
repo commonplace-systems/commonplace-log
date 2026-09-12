@@ -14,6 +14,8 @@
     "cached_beam_root": "/home/jes/codex-save-state-1/tmp/origin-receipt-1/_build/test/lib",
     "compile_timeout_seconds": 120,
     "dependency_source": "/home/jes/commonplace-log/worker/node_modules",
+    "environment_runs_1_2": "Original runner environment; run 1 records the missing Erlang PATH failure.",
+    "environment_runs_3_4": "Private HOME/XDG/TMPDIR, ERL_FLAGS=+S 2:2, and /home/jes/.asdf/installs/erlang/27.3.4.8/bin prepended to PATH.",
     "excluded_claims": [
       "real cloud Durable Object RPC",
       "provider authentication",
@@ -221,6 +223,7 @@
         "wrangler_start_timeout_seconds": 30
       },
       "command_form": "retained command.json argv (root completion did not retain a shell command string)",
+      "environment_note": "Original runner environment; no Erlang bin prepend (retained pre-fix run).",
       "name": "restore-http-native-1",
       "outputs": {
         "input_equality": {
@@ -511,6 +514,7 @@
         "wrangler_start_timeout_seconds": 30
       },
       "command_form": "retained command.json argv (root completion did not retain a shell command string)",
+      "environment_note": "Original runner environment; no Erlang bin prepend (retained pre-fix run).",
       "name": "restore-http-native-2",
       "outputs": {
         "input_equality": {
@@ -856,6 +860,7 @@
         "wrangler_start_timeout_seconds": 30
       },
       "command_form": "retained command.json argv (root completion did not retain a shell command string)",
+      "environment_note": "Runner prepended /home/jes/.asdf/installs/erlang/27.3.4.8/bin and used private HOME/XDG/TMPDIR.",
       "name": "restore-http-native-3",
       "outputs": {
         "input_equality": {
@@ -1201,6 +1206,7 @@
         "wrangler_start_timeout_seconds": 30
       },
       "command_form": "retained command.json argv (root completion did not retain a shell command string)",
+      "environment_note": "Runner prepended /home/jes/.asdf/installs/erlang/27.3.4.8/bin and used private HOME/XDG/TMPDIR.",
       "name": "restore-http-native-4",
       "outputs": {
         "input_equality": {
@@ -1364,19 +1370,22 @@
     "run_1": 3220,
     "run_2": 3220,
     "run_3": 3221,
-    "run_4": 3221
+    "run_4": 3221,
+    "snapshot_semantics": "Each runner invocation enumerates runtime files once before hashing; PRE/POST equality binds the captured file list and does not prove that no file appeared after PRE. The cross-run difference is reported only as inventory evidence."
   },
   "workflow": {
     "entries": 4,
     "logs": 2,
     "native_scope": "Elixir Httpc over 127.0.0.1 to local Wrangler SQLite Durable Object test wrapper",
+    "pending_completion_process": "same Wrangler process; no restart in this nine-request workflow",
     "requests": 9,
+    "restart_tested": false,
     "steps": [
       "malformed request 400",
       "local fixed-realm provisioning 201",
       "partial restore",
       "ordinary API pending fence",
-      "restart/resume",
+      "next batch completes pending restore in the same Wrangler process",
       "exact canonical readback for both logs",
       "idempotent replay"
     ]
