@@ -18,12 +18,12 @@ beam_root = pathlib.Path(
         "/home/jes/codex-save-state-1/tmp/origin-receipt-1/_build/test/lib",
     )
 )
-source_commit = "6c24cbe"
-actual_commit = subprocess.check_output(
-    ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+source_commit = subprocess.check_output(
+    ["git", "rev-parse", "6c24cbe^{commit}"], cwd=repo, text=True
 ).strip()
-if actual_commit != source_commit:
-    raise SystemExit(f"runner must execute pinned source {source_commit}, got {actual_commit}")
+actual_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+if subprocess.run(["git", "merge-base", "--is-ancestor", source_commit, actual_commit], cwd=repo).returncode:
+    raise SystemExit(f"runner source {actual_commit} is not based on pinned source {source_commit}")
 
 test_cases = [
     "test existing DocumentProfile lane keeps one writer across restart",
@@ -32,13 +32,17 @@ test_cases = [
     "test restore owner fences pending append, merge, and lease calls",
     "test existing unmarked log is refused without adding restore schema",
 ]
-
 source_root = repo / "commonplace_log"
+existing_test = source_root / "test/document_profile_test.exs"
+existing_cases = [f"test {match}" for match in __import__("re").findall(r'test\s+"([^"]+)"', existing_test.read_text())]
+test_cases = sorted(existing_cases + test_cases)
+
 tracked_inputs = [
     repo / "docs/measurements/restore-binding-native-1/restore_binding_native.exs",
     pathlib.Path(__file__),
     source_root / "mix.exs",
     source_root / "mix.lock",
+    existing_test,
 ]
 tracked_inputs.extend(sorted((source_root / "lib").rglob("*.ex")))
 
@@ -50,6 +54,16 @@ def sha256(path):
     return digest.hexdigest()
 
 input_hashes = {str(path.relative_to(repo)): sha256(path) for path in tracked_inputs}
+
+for relative in subprocess.check_output(
+    ["git", "ls-tree", "-r", "--name-only", source_commit, "commonplace_log/lib", "commonplace_log/mix.exs", "commonplace_log/mix.lock"],
+    cwd=repo,
+    text=True,
+).splitlines():
+    source_path = repo / relative
+    source_blob = subprocess.check_output(["git", "show", f"{source_commit}:{relative}"], cwd=repo)
+    if source_path.read_bytes() != source_blob:
+        raise SystemExit(f"source input drifted from pinned revision: {relative}")
 (out / "input-sha256.json").write_text(json.dumps(input_hashes, indent=2, sort_keys=True) + "\n")
 (out / "source-pins.json").write_text(
     json.dumps(

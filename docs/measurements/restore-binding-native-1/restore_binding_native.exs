@@ -29,7 +29,7 @@ ExUnit.start(autorun: false, exclude: [], include: [])
 defmodule RestoreBindingNativeTest do
   use ExUnit.Case, async: false
 
-  alias Commonplace.Log.{DocumentProfile, Frontier, UUID}
+  alias Commonplace.Log.{DocumentProfile, Engine, Frontier, UUID}
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.LogStore.SQLite
   alias Commonplace.LogStore.SQLite.Restore
@@ -80,8 +80,8 @@ defmodule RestoreBindingNativeTest do
     Application.put_env(:commonplace_log, SQLite, data_dir: target_dir)
     on_exit(fn -> File.rm_rf!(target_dir) end)
 
-    capability = SQLite.restore_capability(log_id, frontier)
-    assert {:ok, target_handle} = DocumentProfile.restore_log(log_id, source_bytes, capability)
+    request = SQLite.restore_request(log_id, frontier)
+    assert {:ok, target_handle} = DocumentProfile.restore_log(log_id, source_bytes, request)
     assert source_writer == only_writer(log_id)
     assert {:ok, ^source_bytes} = SQLite.read_through(log_id, frontier, [])
     assert {:ok, %{writer_seq: 5}} = DocumentProfile.append(target_handle, %{"n" => 5}, [])
@@ -110,11 +110,13 @@ defmodule RestoreBindingNativeTest do
     target_dir = fresh_dir("pending")
     Application.put_env(:commonplace_log, SQLite, data_dir: target_dir)
     on_exit(fn -> File.rm_rf!(target_dir) end)
-    capability = SQLite.restore_capability(log_id, frontier)
-    assert {:ok, spec} = Restore.prepare(log_id, entries, capability)
+    request = SQLite.restore_request(log_id, frontier)
+    assert {:ok, spec} = Restore.prepare(log_id, entries, request)
 
     assert {:ok, store} = LocalSQLite.open(target_dir, log_id)
     assert :ok = LocalSQLite.prepare_restore(store, log_id, spec)
+    assert {:ok, lease} = LocalSQLite.take_lease(store, log_id)
+    assert {:ok, %{inserted: 1}} = Engine.merge(LocalSQLite, store, log_id, [hd(entries)], lease)
     assert :ok = LocalSQLite.close(store)
     writer_path = Path.join(target_dir, log_id <> ".writer")
     refute File.exists?(writer_path)
@@ -141,8 +143,8 @@ defmodule RestoreBindingNativeTest do
     target_dir = fresh_dir("owner-pending")
     Application.put_env(:commonplace_log, SQLite, data_dir: target_dir)
     on_exit(fn -> File.rm_rf!(target_dir) end)
-    capability = SQLite.restore_capability(log_id, frontier)
-    assert {:ok, spec} = Restore.prepare(log_id, entries, capability)
+    request = SQLite.restore_request(log_id, frontier)
+    assert {:ok, spec} = Restore.prepare(log_id, entries, request)
     assert {:ok, owner} = Server.start_link(data_dir: target_dir, log_id: log_id, mode: {:restore, spec})
 
     assert {:error, :restore_incomplete} = Server.append(owner, %{"blocked" => true}, @created_at)
@@ -164,7 +166,7 @@ defmodule RestoreBindingNativeTest do
     before = sqlite_tables(sqlite_path)
 
     assert {:error, {:storage, %{reason: refusal_reason}}} =
-             DocumentProfile.restore_log(log_id, entries, SQLite.restore_capability(log_id, frontier))
+             DocumentProfile.restore_log(log_id, entries, SQLite.restore_request(log_id, frontier))
     assert inspect(refusal_reason) =~ "restore_target_not_new"
 
     assert sqlite_tables(sqlite_path) == before
@@ -210,11 +212,12 @@ defmodule RestoreBindingNativeTest do
   defp stop_all_servers do
     if Process.whereis(Commonplace.LogStore.SQLite.Registry) do
       Registry.select(Commonplace.LogStore.SQLite.Registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
-      |> Enum.each(&GenServer.stop/1)
+      |> Enum.each(&stop_server/1)
     end
   end
 end
 
+Code.require_file(Path.join(root, "commonplace_log/test/document_profile_test.exs"))
 result = ExUnit.run()
 File.write!(Path.join(out, "native-result.raw.json"), Jason.encode!(result))
 
