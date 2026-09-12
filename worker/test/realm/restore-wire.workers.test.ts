@@ -119,11 +119,13 @@ describe("internal restore bundle wire", () => {
       method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" },
     });
     expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toEqual({ ok: false, error: { code: "unauthorized" } });
     const authenticated = await target.fetch("https://realm.invalid/restore-bundle-batch", {
       method: "POST", body: JSON.stringify(body),
       headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
     });
     expect(authenticated.status).toBe(404);
+    expect(await authenticated.json()).toEqual({ ok: false, error: { code: "not_found" } });
   });
 
   it("imports the full sorted inventory in bounded batches and resumes after a DO restart", async () => {
@@ -210,25 +212,24 @@ describe("internal restore bundle wire", () => {
     expect((await internal(target, { ...bundle(), logs: [{ ...bundle().logs[0], entries: ["AB=="] }] })).json)
       .toEqual({ ok: false, error: { code: "malformed" } });
 
-    let cancelled = false;
-    const chunk = new Uint8Array(1024 * 1024);
-    let sent = 0;
-    const raw = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (sent === 33) { controller.close(); return; }
-        controller.enqueue(chunk);
-        sent += 1;
-      },
-      cancel() { cancelled = true; },
-    });
     const rawResult = await runInDurableObject(target, async (instance) => {
+      let cancelled = false;
+      const chunk = new Uint8Array(1024 * 1024);
+      let sent = 0;
+      const raw = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent === 33) { controller.close(); return; }
+          controller.enqueue(chunk);
+          sent += 1;
+        },
+        cancel() { cancelled = true; },
+      });
       const rawResponse = await (instance as unknown as StorageInstance).storageFetch(new Request("https://storage.internal/restore-bundle-batch", {
         method: "POST", body: raw, duplex: "half", headers: { "content-type": "application/json" },
       } as RequestInit & { duplex: "half" }));
-      return { status: rawResponse.status, json: await rawResponse.json() as Json };
+      return { status: rawResponse.status, json: await rawResponse.json() as Json, cancelled };
     });
-    expect(rawResult).toEqual({ status: 413, json: { ok: false, error: { code: "oversize" } } });
-    expect(cancelled).toBe(true);
+    expect(rawResult).toEqual({ status: 413, json: { ok: false, error: { code: "oversize" } }, cancelled: true });
 
     const logs = Array.from({ length: 17 }, (_, index) => {
       const logId = `52000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
