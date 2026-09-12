@@ -65,8 +65,6 @@ defmodule Commonplace.Log.Persistence.Retention do
   @spec capability(CloudflareSidecar, CloudflareSidecar.t()) :: {:ok, Capability.t()}
   def capability(CloudflareSidecar, %CloudflareSidecar{base_url: _, transport: _, transport_options: _, headers: _} = store), do: capability(store)
 
-  def capability(_adapter, _store), do: {:error, :unsupported_retention_backend}
-
   @doc "Returns the same capability for the production serialized SQLiteServer owner."
   @spec capability(SQLiteServer, GenServer.server()) :: {:ok, Capability.t()} | {:error, term()}
   def capability(SQLiteServer, server) do
@@ -86,6 +84,8 @@ defmodule Commonplace.Log.Persistence.Retention do
   catch
     :exit, _ -> {:error, :unsupported_retention_backend}
   end
+
+  def capability(_adapter, _store), do: {:error, :unsupported_retention_backend}
 
   @doc "Verifies and records an exact closure using a bound adapter owner."
   @spec retain(module(), term(), verifier()) :: {:ok, Lease.t()} | {:error, term()}
