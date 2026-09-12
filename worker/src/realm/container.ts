@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { handleRealmRequest } from "./http";
+import { handleStorageRequest } from "./wire";
 import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
 import { RealmStore } from "./store";
 
@@ -22,6 +23,6 @@ export class RealmContainer extends DurableObject {
   async storageFetch(request: Request): Promise<Response> {
     const forwarded = new Request(request);
     forwarded.headers.delete("authorization");
-    return await handleRealmRequest(forwarded, this.store);
+    return await handleStorageRequest(forwarded, this.store);
   }
 }

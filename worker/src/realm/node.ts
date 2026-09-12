@@ -4,6 +4,7 @@ import { handleRealmRequest } from "./http";
 import { storageInternal } from "./outbound";
 import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
 import { RealmStore } from "./store";
+import { handleStorageRequest } from "./wire";
 
 interface Env {
   REALM_NODE: DurableObjectNamespace<RealmNode>;
@@ -32,7 +33,7 @@ export class RealmNode extends Container<Env> {
   async storageFetch(request: Request): Promise<Response> {
     const forwarded = new Request(request);
     forwarded.headers.delete("authorization");
-    return await handleRealmRequest(forwarded, this.store);
+    return await handleStorageRequest(forwarded, this.store);
   }
 
   private async fetchAuthorized(request: Request): Promise<Response> {
