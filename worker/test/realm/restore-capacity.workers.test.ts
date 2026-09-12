@@ -41,11 +41,15 @@ function archive(entry: EntryRow): RestoreArchive {
   };
 }
 
-async function withRealm<T>(name: string, fn: (store: RealmStore, sql: SqlStorage) => T | Promise<T>): Promise<T> {
+async function withRealm<T>(
+  name: string,
+  fn: (store: RealmStore, sql: SqlStorage, state: DurableObjectState) => T | Promise<T>,
+): Promise<T> {
   const stub = env.REALM_CONTAINER.get(env.REALM_CONTAINER.idFromName(name));
   return await runInDurableObject(stub, (_instance, state) => fn(
     new RealmStore(state.storage.sql, state.storage),
     state.storage.sql,
+    state,
   ));
 }
 
@@ -115,7 +119,7 @@ describe("restore capacity boundary", () => {
       putTips: [{ writerId: WRITER, lastSeq: 2, lastEntryId: FOLLOWUP }],
     }))).toBe(2);
 
-    await expect(withRealm(name, async (_store, state) => {
+    await expect(withRealm(name, async (_store, _sql, state) => {
       await state.storage.sync();
       state.abort("restore capacity restart");
     })).rejects.toThrow("restore capacity restart");
