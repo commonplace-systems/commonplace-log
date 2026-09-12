@@ -10,6 +10,7 @@ defmodule Commonplace.Log.Persistence.Retention do
 
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.Log.Persistence.SQLiteServer
+  alias Commonplace.Log.Persistence.CloudflareSidecar
   alias Commonplace.LogStore.SQLite.Server
 
   defmodule Capability do
@@ -48,13 +49,23 @@ defmodule Commonplace.Log.Persistence.Retention do
      }}
   end
 
-  def capability(_), do: {:error, :unsupported_retention_backend}
+  def capability(other) when not is_struct(other), do: {:error, :unsupported_retention_backend}
+
+  def capability(%CloudflareSidecar{}) do
+    {:ok,
+     %Capability{
+       adapter: CloudflareSidecar,
+       mode: :append_only,
+       durable_across_restart?: true,
+       deletion: :unsupported
+     }}
+  end
 
   @doc "Returns the same capability for the production serialized SQLiteServer owner."
   @spec capability(SQLiteServer, GenServer.server()) :: {:ok, Capability.t()} | {:error, term()}
   def capability(SQLiteServer, server) do
     case Server.log_id(server) do
-      _log_id when is_binary(_log_id) ->
+      log_id when is_binary(log_id) ->
         {:ok,
          %Capability{
            adapter: SQLiteServer,

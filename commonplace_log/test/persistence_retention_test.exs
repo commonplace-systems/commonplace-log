@@ -3,6 +3,8 @@ defmodule Commonplace.Log.Persistence.RetentionTest do
 
   alias Commonplace.Log.{Engine, UUID}
   alias Commonplace.Log.Persistence.{LocalSQLite, Retention}
+  alias Commonplace.Log.Persistence.CloudflareSidecar
+  alias Commonplace.Log.Test.{InMemoryPersistence, SidecarLoopback}
 
   test "SQLite closure survives close and reopen through the owner capability" do
     data_dir = Path.join(System.tmp_dir!(), "retention-#{System.unique_integer([:positive])}")
@@ -69,5 +71,27 @@ defmodule Commonplace.Log.Persistence.RetentionTest do
 
   test "retention does not infer support for an unknown persistence adapter" do
     assert {:error, :unsupported_retention_backend} = Retention.capability(%{})
+  end
+
+  test "sidecar loopback exposes append-only retention and survives a reopened handle" do
+    {:ok, base} = InMemoryPersistence.start_link()
+    log_id = UUID.uuidv7()
+    store = CloudflareSidecar.new("https://loopback.example", transport: SidecarLoopback, transport_options: {InMemoryPersistence, base})
+    assert :ok = CloudflareSidecar.create_log(store, log_id, %{format_version: 1})
+    assert {:ok, capability} = Retention.capability(store)
+    assert capability.adapter == CloudflareSidecar
+    assert capability.mode == :append_only
+    assert capability.durable_across_restart?
+    assert capability.deletion == :unsupported
+    verifier = fn candidate ->
+      with {:ok, %{writers: writers}} <- CloudflareSidecar.frontier(candidate, log_id),
+           {:ok, %{entries: entries}} <- CloudflareSidecar.tail_local(candidate, log_id, after_arrival: 0, limit: 10) do
+        {:ok, {writers, Enum.map(entries, & &1.operation_id)}}
+      end
+    end
+    assert {:ok, lease} = Retention.retain(store, verifier)
+    reopened = CloudflareSidecar.new("https://loopback.example", transport: SidecarLoopback, transport_options: {InMemoryPersistence, base})
+    assert {:ok, renewed} = Retention.renew(lease, reopened, verifier)
+    assert renewed.closure == lease.closure
   end
 end
