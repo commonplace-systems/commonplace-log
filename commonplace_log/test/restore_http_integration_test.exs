@@ -44,14 +44,14 @@ defmodule Commonplace.Log.RestoreHTTPIntegrationTest do
     assert {:ok, %{imported_logs: 1, skipped_logs: 0, complete: false}} =
              CloudflareSidecar.restore_bundle_batch(store, source, 1)
 
-    assert {:error, :constraint_violation} =
+    assert {:error, :obsolete_epoch} =
              CloudflareSidecar.create_log(
                store,
                "61000000-0000-4000-8000-000000000099",
                ordinary_metadata
              )
 
-    assert {:error, :constraint_violation} = CloudflareSidecar.take_lease(store, @log_a)
+    assert {:error, :obsolete_epoch} = CloudflareSidecar.take_lease(store, @log_a)
 
     assert {:ok, %{imported_logs: 1, skipped_logs: 1, complete: true}} =
              CloudflareSidecar.restore_bundle_batch(store, source, 1)
