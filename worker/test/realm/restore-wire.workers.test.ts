@@ -139,10 +139,11 @@ describe("internal restore bundle wire", () => {
       await state.storage.sync();
       state.abort("wire restart");
     })).rejects.toThrow("wire restart");
-    expect(await internal(target, source)).toEqual({ status: 200, json: {
+    const resumed = env.REALM_CONTAINER.get(target.id);
+    expect(await internal(resumed, source)).toEqual({ status: 200, json: {
       ok: true, result: { imported_logs: 1, skipped_logs: 1, complete: true },
     } });
-    const snapshot = await sqlSnapshot(target);
+    const snapshot = await sqlSnapshot(resumed);
     expect(snapshot.entries).toHaveLength(4);
     expect(snapshot.bundles).toEqual([{ bundle_id: "wire-bundle-1", state: "complete" }]);
     const expected = source.logs.flatMap((log) => log.entries.map((value) => ({ log_id: log.log_id, bytes: Array.from(Uint8Array.from(atob(value), (char) => char.charCodeAt(0))) })));
@@ -187,11 +188,22 @@ describe("internal restore bundle wire", () => {
         get(id) {
           const selectedTarget = targets.get(id.value);
           if (selectedTarget === undefined) throw new Error("unknown test target");
-          return { storageFetch(request) {
-            return runInDurableObject(selectedTarget, async (instance) => {
-              const response = await (instance as unknown as StorageInstance).storageFetch(request);
-              return new Response(await response.text(), { status: response.status, headers: response.headers });
+          return { async storageFetch(request) {
+            const url = request.url;
+            const method = request.method;
+            const headers = [...request.headers];
+            const body = request.body === null ? null : await request.arrayBuffer();
+            if (body !== null && body.byteLength > 32 * 1024 * 1024) throw new Error("request body exceeds wire limit");
+            const result = await runInDurableObject(selectedTarget, async (instance) => {
+              const forwarded = new Request(url, {
+                method,
+                headers,
+                body: body === null ? undefined : body,
+              });
+              const response = await (instance as unknown as StorageInstance).storageFetch(forwarded);
+              return { status: response.status, headers: [...response.headers], text: await response.text() };
             });
+            return new Response(result.text, { status: result.status, headers: result.headers });
           } };
         },
       },
