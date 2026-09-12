@@ -61,6 +61,12 @@ defmodule Commonplace.Log.Persistence.Retention do
      }}
   end
 
+  @doc "Returns the append-only capability for a bound Sidecar owner."
+  @spec capability(CloudflareSidecar, CloudflareSidecar.t()) :: {:ok, Capability.t()}
+  def capability(CloudflareSidecar, %CloudflareSidecar{}), do: capability(%CloudflareSidecar{})
+
+  def capability(_adapter, _store), do: {:error, :unsupported_retention_backend}
+
   @doc "Returns the same capability for the production serialized SQLiteServer owner."
   @spec capability(SQLiteServer, GenServer.server()) :: {:ok, Capability.t()} | {:error, term()}
   def capability(SQLiteServer, server) do
