@@ -505,7 +505,7 @@ defmodule Commonplace.Log.DocumentProfileTest do
     assert {:ok, entries} = SQLite.read_through(log_id, frontier, [])
     stop_server(log_id)
 
-    assert {:error, {:storage, %{reason: :restore_target_not_new}}} =
+    assert {:error, {:storage, %{reason: {:initialization_failed, :restore_target_not_new}}}} =
              DocumentProfile.restore_log(
                log_id,
                entries,
