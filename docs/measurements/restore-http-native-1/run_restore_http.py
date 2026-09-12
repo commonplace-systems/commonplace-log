@@ -28,7 +28,8 @@ elixir = os.environ.get(
 )
 node = os.environ.get("RESTORE_HTTP_NODE", "node")
 client_source_commit = "4fa621db5d257260118fbf649049402ff09b5ef6"
-wire_source_commit = "6194033"
+wire_product_commit = "6194033"
+wire_fixture_base_commit = "5245b1b"
 client_sidecar = client_lib / "persistence/cloudflare_sidecar.ex"
 test_file = root / "commonplace_log/test/restore_http_integration_test.exs"
 script_file = root / "docs/measurements/restore-http-native-1/restore_http.exs"
@@ -82,7 +83,8 @@ pre = hashes()
 (output / "input-sha256.json").write_text(json.dumps(pre, indent=2, sort_keys=True) + "\n")
 (output / "source-pins.json").write_text(json.dumps({
     "client_source_commit": client_source_commit,
-    "wire_source_commit": wire_source_commit,
+    "wire_product_commit": wire_product_commit,
+    "wire_fixture_base_commit": wire_fixture_base_commit,
     "worker_worktree": str(root),
     "beam_root": str(beam_root),
     "cached_beam_count": len(cached_beams),
