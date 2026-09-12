@@ -63,7 +63,7 @@ defmodule Commonplace.Log.Persistence.Retention do
 
   @doc "Returns the append-only capability for a bound Sidecar owner."
   @spec capability(CloudflareSidecar, CloudflareSidecar.t()) :: {:ok, Capability.t()}
-  def capability(CloudflareSidecar, %CloudflareSidecar{}), do: capability(%CloudflareSidecar{})
+  def capability(CloudflareSidecar, %CloudflareSidecar{base_url: _, transport: _, transport_options: _, headers: _} = store), do: capability(store)
 
   def capability(_adapter, _store), do: {:error, :unsupported_retention_backend}
 
