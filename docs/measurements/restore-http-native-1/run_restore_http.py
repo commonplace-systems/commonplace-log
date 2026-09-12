@@ -27,6 +27,7 @@ elixir = os.environ.get(
     "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir",
 )
 node = os.environ.get("RESTORE_HTTP_NODE", "node")
+erlang_bin = "/home/jes/.asdf/installs/erlang/27.3.4.8/bin"
 client_source_commit = "4fa621db5d257260118fbf649049402ff09b5ef6"
 wire_product_commit = "6194033"
 wire_fixture_base_commit = "5245b1b"
@@ -105,6 +106,7 @@ pre = hashes()
     "cached_beam_count": len(cached_beams),
     "worker_runtime_root": str(provider_deps),
     "worker_runtime_file_count": len(runtime_files),
+    "erlang_bin": erlang_bin,
     "client_sidecar": str(client_sidecar),
     "client_sidecar_expected_sha256": expected_client_sidecar_sha256,
     "client_sidecar_provenance": str(provenance_file),
@@ -141,12 +143,13 @@ test_cmd = [elixir, *beam_args, "-pa", str(client_ebin), str(script_file)]
     "term_grace_seconds": 5,
     "kill_grace_seconds": 2,
     "worker_target": "elixir-real-socket-integration",
+    "erlang_bin": erlang_bin,
 }, indent=2) + "\n")
 
 for private_dir in (output / "home", output / "config", output / "tmp"):
     private_dir.mkdir(parents=True, exist_ok=True)
 env = {
-    "PATH": os.environ.get("PATH", ""),
+    "PATH": erlang_bin + os.pathsep + os.environ.get("PATH", ""),
     "HOME": str(output / "home"),
     "XDG_CONFIG_HOME": str(output / "config"),
     "TMPDIR": str(output / "tmp"),

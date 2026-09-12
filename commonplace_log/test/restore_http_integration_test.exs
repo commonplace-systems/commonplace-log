@@ -39,12 +39,17 @@ defmodule Commonplace.Log.RestoreHTTPIntegrationTest do
       CloudflareSidecar.new(base_url, transport_options: [timeout: 5_000, connect_timeout: 5_000])
 
     source = bundle()
+    ordinary_metadata = %{format_version: 1, created_at: "2026-09-12T00:00:00Z"}
 
     assert {:ok, %{imported_logs: 1, skipped_logs: 0, complete: false}} =
              CloudflareSidecar.restore_bundle_batch(store, source, 1)
 
     assert {:error, :constraint_violation} =
-             CloudflareSidecar.create_log(store, "61000000-0000-4000-8000-000000000099", %{})
+             CloudflareSidecar.create_log(
+               store,
+               "61000000-0000-4000-8000-000000000099",
+               ordinary_metadata
+             )
 
     assert {:error, :constraint_violation} = CloudflareSidecar.take_lease(store, @log_a)
 
