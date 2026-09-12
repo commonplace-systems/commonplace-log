@@ -33,7 +33,7 @@ if [[ "$(readlink -f "$worker_dir/node_modules")" != "$(readlink -f "$provider_d
 fi
 
 inputs=(
-  "$worker_dir/test/realm/restore.binding.workers.test.ts"
+  "$worker_dir/test/realm/restore-authority.workers.test.ts"
   "$worker_dir/test/realm/schema.workers.test.ts"
   "$worker_dir/src/realm/store.ts"
   "$worker_dir/src/entry.ts"
@@ -49,7 +49,7 @@ for input in "${inputs[@]}"; do
 done
 sha256sum "${inputs[@]}" >"$output_dir/pre.sha256"
 printf '%s\n' "$(git -C "$root_dir" rev-parse HEAD)" >"$output_dir/source-revision.txt"
-printf '%s\n' "control=test/realm/schema.workers.test.ts" "target=test/realm/restore.binding.workers.test.ts" \
+printf '%s\n' "control=test/realm/schema.workers.test.ts" "target=test/realm/restore-authority.workers.test.ts" \
   "provider_deps=$provider_deps" >"$output_dir/diagnostic-inputs.txt"
 
 set +e
@@ -57,7 +57,7 @@ cd "$worker_dir"
 timeout --signal=TERM --kill-after=5s 180s env \
   NODE_PATH="$provider_deps" DEBUG="vite:resolve,vite:transform" \
   "$provider_deps/.bin/vitest" run --config "$worker_dir/vitest.config.ts" --project do \
-  "test/realm/schema.workers.test.ts" "test/realm/restore.binding.workers.test.ts" \
+  "test/realm/schema.workers.test.ts" "test/realm/restore-authority.workers.test.ts" \
   >"$output_dir/stdout.txt" 2>"$output_dir/stderr.txt"
 native_rc=$?
 set -e

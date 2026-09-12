@@ -38,7 +38,7 @@ fi
 inputs=(
   "$worker_dir/src/realm/schema.ts"
   "$worker_dir/src/realm/store.ts"
-  "$worker_dir/test/realm/restore.binding.workers.test.ts"
+  "$worker_dir/test/realm/restore-authority.workers.test.ts"
   "$worker_dir/package-lock.json"
   "$provider_deps/.package-lock.json"
   "$worker_dir/vitest.workers.config.ts"
@@ -59,7 +59,7 @@ timeout --signal=TERM --kill-after=5s 180s \
   env NODE_PATH="$provider_deps" "$provider_deps/.bin/vitest" run \
   --config "$worker_dir/vitest.config.ts" \
   --project do \
-  "test/realm/restore.binding.workers.test.ts" \
+  "test/realm/restore-authority.workers.test.ts" \
   >"$output_dir/stdout.txt" 2>"$output_dir/stderr.txt"
 native_rc=$?
 set -e
