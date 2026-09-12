@@ -81,6 +81,17 @@ defmodule Commonplace.Log.Persistence.Retention do
     :exit, _ -> {:error, :unsupported_retention_backend}
   end
 
+  @doc "Verifies and records an exact closure using a bound adapter owner."
+  @spec retain(module(), term(), verifier()) :: {:ok, Lease.t()} | {:error, term()}
+  def retain(adapter, store, verifier) when is_atom(adapter) and is_function(verifier, 1) do
+    with {:ok, policy} <- capability(adapter, store),
+         {:ok, closure} <- verifier.(store) do
+      {:ok, %Lease{capability: policy, closure: closure, status: :retained}}
+    end
+  end
+
+  def retain(_adapter, _store, _verifier), do: {:error, :invalid_retention_verifier}
+
   @doc "Verifies and records an exact closure using the adapter capability."
   @spec retain(LocalSQLite.t(), verifier()) :: {:ok, Lease.t()} | {:error, term()}
   def retain(store, verifier) when is_function(verifier, 1) do
