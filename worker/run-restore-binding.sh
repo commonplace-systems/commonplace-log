@@ -1,35 +1,64 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-worker_dir="$(cd "$runner_dir/worker" && pwd)"
+worker_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runner_dir="$(cd "$worker_dir/.." && pwd)"
 provider_deps="/home/jes/commonplace-log/worker/node_modules"
 output_dir="${RESTORE_BINDING_OUTPUT:-$runner_dir/tmp/restore-binding-native-$(date -u +%Y%m%dT%H%M%SZ)}"
+if [[ -e "$output_dir" ]]; then
+  echo "output already exists: $output_dir" >&2
+  exit 2
+fi
 mkdir -p "$output_dir"
+
+cleanup() {
+  if [[ -L "$worker_dir/node_modules" ]]; then rm -f "$worker_dir/node_modules"; fi
+}
+trap cleanup EXIT
 
 if [[ ! -x "$provider_deps/.bin/vitest" ]]; then
   echo "missing pinned provider node_modules: $provider_deps" >&2
   exit 2
 fi
+if [[ -e "$worker_dir/node_modules" ]]; then
+  echo "worker node_modules path is occupied; refusing to replace it" >&2
+  exit 2
+fi
+ln -s "$provider_deps" "$worker_dir/node_modules"
+if [[ "$(readlink -f "$worker_dir/node_modules")" != "$(readlink -f "$provider_deps")" ]]; then
+  echo "node_modules identity check failed" >&2
+  exit 2
+fi
 
-sha256sum "$runner_dir/worker/src/realm/schema.ts" "$runner_dir/worker/src/realm/store.ts" \
-  "$runner_dir/worker/test/realm/restore.binding.workers.test.ts" "$worker_dir/package-lock.json" \
-  "$provider_deps/.package-lock.json" 2>/dev/null >"$output_dir/pre.sha256"
+inputs=(
+  "$worker_dir/src/realm/schema.ts"
+  "$worker_dir/src/realm/store.ts"
+  "$worker_dir/test/realm/restore.binding.workers.test.ts"
+  "$worker_dir/package-lock.json"
+  "$provider_deps/.package-lock.json"
+)
+for input in "${inputs[@]}"; do
+  [[ -f "$input" ]] || { echo "missing runner input: $input" >&2; exit 2; }
+done
+
+sha256sum "${inputs[@]}" >"$output_dir/pre.sha256"
 printf '%s\n' "$(git -C "$runner_dir" rev-parse HEAD)" >"$output_dir/source-revision.txt"
 printf '%s\n' "provider_deps=$provider_deps" >"$output_dir/runner-inputs.txt"
 
 set +e
 timeout --signal=TERM --kill-after=5s 180s \
   env NODE_PATH="$provider_deps" "$provider_deps/.bin/vitest" run \
-  --config "$runner_dir/worker/vitest.workers.config.ts" \
-  "$runner_dir/worker/test/realm/restore.binding.workers.test.ts" \
+  --config "$worker_dir/vitest.workers.config.ts" \
+  "$worker_dir/test/realm/restore.binding.workers.test.ts" \
   >"$output_dir/stdout.txt" 2>"$output_dir/stderr.txt"
 native_rc=$?
 set -e
 
-sha256sum "$runner_dir/worker/src/realm/schema.ts" "$runner_dir/worker/src/realm/store.ts" \
-  "$runner_dir/worker/test/realm/restore.binding.workers.test.ts" "$worker_dir/package-lock.json" \
-  "$provider_deps/.package-lock.json" 2>/dev/null >"$output_dir/post.sha256"
+sha256sum "${inputs[@]}" >"$output_dir/post.sha256"
+if ! cmp -s "$output_dir/pre.sha256" "$output_dir/post.sha256"; then
+  echo "runner inputs changed during execution" >&2
+  native_rc=125
+fi
 printf '%s\n' "$native_rc" >"$output_dir/native.rc"
 printf '{"native_rc":%s,"output_dir":"%s"}\n' "$native_rc" "$output_dir" >"$output_dir/result.json"
 exit "$native_rc"

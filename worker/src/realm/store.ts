@@ -203,8 +203,12 @@ export class RealmStore {
             throw new RealmStoreError("constraint");
           }
         }
-        if (rows.length > 0 && (targetTip.length !== 1 || Number(targetTip[0].last_seq) !== rows.length ||
-            String(targetTip[0].last_entry_id) !== String(rows.at(-1).entry_id))) {
+        if (
+          (rows.length === 0 && targetTip.length !== 0) ||
+          (rows.length > 0 &&
+            (targetTip.length !== 1 || Number(targetTip[0].last_seq) !== rows.length ||
+              String(targetTip[0].last_entry_id) !== String(rows.at(-1).entry_id)))
+        ) {
           throw new RealmStoreError("constraint");
         }
         if (markerState === "pending" && rows.length > archive.entries.length) throw new RealmStoreError("constraint");

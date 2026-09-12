@@ -38,6 +38,20 @@ async function withRealm<T>(name: string, fn: (store: RealmStore, state: Durable
   return await runInDurableObject(stub, (_instance, state) => fn(new RealmStore(state.storage.sql, state.storage), state));
 }
 
+async function snapshot(name: string): Promise<string> {
+  return await withRealm(name, (_store, state) => JSON.stringify({
+    entries: state.storage.sql.exec("SELECT entry_id, writer_id, writer_seq, prev_entry_id, canonical_json FROM entries WHERE log_id = ? ORDER BY writer_seq", LOG).toArray().map((row) => ({
+      ...row,
+      canonical_json: Array.from(new Uint8Array(row.canonical_json as ArrayBuffer)),
+    })),
+    tips: state.storage.sql.exec("SELECT writer_id, last_seq, last_entry_id FROM writer_tips WHERE log_id = ?", LOG).toArray(),
+    marker: state.storage.sql.exec("SELECT archive_id, writer_id, entry_count, total_bytes, manifest_json, state FROM restore_markers WHERE log_id = ?", LOG).toArray().map((row) => ({
+      ...row,
+      manifest_json: Array.from(new Uint8Array(row.manifest_json as ArrayBuffer)),
+    })),
+  }));
+}
+
 describe("internal restore binding", () => {
   it("preserves the historical writer, fences pending operations, resumes durably, and leases fresh authority", async () => {
     const name = `restore-binding-${Date.now()}-${Math.random()}`;
@@ -96,9 +110,13 @@ describe("internal restore binding", () => {
     const changed = row(source.entries[1]!.entryId, 2, source.entries[0]!.entryId, "six");
     expect(changed.canonicalBytes.byteLength).toBe(source.entries[1]!.canonicalBytes.byteLength);
     const conflict = { ...source, entries: [source.entries[0]!, changed] };
+    const pendingBefore = await snapshot(pendingName);
     await withRealm(pendingName, (store) => expect(() => store.restoreBatch(conflict, 1)).toThrow(RealmStoreError));
+    expect(await snapshot(pendingName)).toBe(pendingBefore);
     await withRealm(pendingName, (store) => expect(store.restoreBatch(source).complete).toBe(true));
+    const completeBefore = await snapshot(pendingName);
     await withRealm(pendingName, (store) => expect(() => store.restoreBatch(conflict)).toThrow(RealmStoreError));
+    expect(await snapshot(pendingName)).toBe(completeBefore);
   });
 
   it("rejects a corrupted pending prefix and a missing completed row", async () => {
