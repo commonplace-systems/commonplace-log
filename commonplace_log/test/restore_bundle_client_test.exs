@@ -11,7 +11,12 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
     def request(:post, url, _headers, body, {owner, response}) do
       send(owner, {:restore_request, url, Jason.decode!(body)})
 
-      if response == :raise, do: raise("transport secret"), else: response
+      case response do
+        :raise -> raise("transport secret")
+        :throw -> throw("transport secret")
+        :exit -> exit("transport secret")
+        response -> response
+      end
     end
   end
 
@@ -20,16 +25,16 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
   @writer "018f5e2a-8b3c-7d4e-9f10-123456789abd"
 
   test "encodes canonical entries, sends the complete sorted inventory, and parses result" do
-    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(1, 1, false)}))
+    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(1, 0, false)}))
 
-    assert {:ok, %{imported_logs: 1, skipped_logs: 1, complete: false}} =
+    assert {:ok, %{imported_logs: 1, skipped_logs: 0, complete: false}} =
              CloudflareSidecar.restore_bundle_batch(store, bundle(), 1)
 
     assert_receive {:restore_request, "https://sidecar.example/restore-bundle-batch", body}
     assert body["bundle_id"] == "bundle-1"
     assert body["max_logs"] == 1
     assert Enum.map(body["logs"], & &1["log_id"]) == [@log_a, @log_b]
-    assert Enum.all?(body["logs"], &is_binary(hd(&1["entries"])["canonical_bytes"]))
+    assert Enum.all?(body["logs"], &is_binary(hd(&1["entries"])))
     refute Map.has_key?(body, "realm_id")
     refute Map.has_key?(body, "target")
   end
@@ -58,15 +63,34 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
   end
 
   test "closes transport exceptions and inconsistent result counts" do
-    raising = sidecar(self(), :raise)
-
-    assert {:error, {:transport_error, :transport_failed}} =
-             CloudflareSidecar.restore_bundle_batch(raising, bundle())
+    for failure <- [:raise, :throw, :exit] do
+      assert {:error, {:transport_error, :transport_failed}} =
+               CloudflareSidecar.restore_bundle_batch(sidecar(self(), failure), bundle())
+    end
 
     inconsistent = sidecar(self(), response(200, %{"ok" => true, "result" => result(2, 0, true)}))
 
     assert {:error, {:protocol_error, "invalid restore result"}} =
              CloudflareSidecar.restore_bundle_batch(inconsistent, bundle(), 1)
+  end
+
+  test "maps provider failures without returning body or URL" do
+    cases = [
+      {400, %{"ok" => false, "error" => %{"code" => "malformed_request"}},
+       {:provider_error, :malformed_request}},
+      {401, %{"secret" => "sentinel"}, {:unauthorized, :provider_rejected}},
+      {500, %{"secret" => "sentinel"}, {:transport_error, :provider_failed}},
+      {409, %{"ok" => false, "error" => %{"code" => "constraint_violation"}},
+       {:provider_error, :constraint_violation}}
+    ]
+
+    for {status, body, reason} <- cases do
+      assert {:error, ^reason} =
+               CloudflareSidecar.restore_bundle_batch(
+                 sidecar(self(), response(status, body)),
+                 bundle()
+               )
+    end
   end
 
   defp bundle do

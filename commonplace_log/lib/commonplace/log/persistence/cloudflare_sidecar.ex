@@ -189,35 +189,26 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     with {:ok, payload} <- encode_restore_bundle(bundle, max_logs) do
       inventory_count = length(payload["logs"])
 
-      post(
+      restore_post(
         store,
         "/restore-bundle-batch",
         payload,
         200,
-        &parse_restore_result(&1, inventory_count, max_logs),
-        max_response_bytes: @restore_response_limit,
-        safe_transport: true
+        &parse_restore_result(&1, inventory_count, max_logs)
       )
     end
   end
 
-  defp post(store, path, payload, success_status, parse_success, options \\ []) do
+  defp post(store, path, payload, success_status, parse_success) do
     body = Jason.encode!(payload)
 
-    transport_result =
-      if Keyword.get(options, :safe_transport, false) do
-        safe_transport_request(store, path, body)
-      else
-        store.transport.request(
-          :post,
-          store.base_url <> path,
-          @headers ++ store.headers,
-          body,
-          store.transport_options
-        )
-      end
-
-    case transport_result do
+    case store.transport.request(
+           :post,
+           store.base_url <> path,
+           @headers ++ store.headers,
+           body,
+           store.transport_options
+         ) do
       {:error, reason} ->
         {:error, {:transport_error, reason}}
 
@@ -233,8 +224,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
       {:ok, %{status: status, headers: headers, body: response_body}}
       when is_integer(status) and is_list(headers) and is_binary(response_body) ->
-        with :ok <- response_size(response_body, Keyword.get(options, :max_response_bytes)),
-             {:ok, value} <- decode_json_object(response_body) do
+        with {:ok, value} <- decode_json_object(response_body) do
           if status == success_status do
             parse_success.(value)
           else
@@ -250,30 +240,75 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     end
   end
 
+  defp restore_post(store, path, payload, success_status, parse_success) do
+    body = Jason.encode!(payload)
+
+    result =
+      try do
+        store.transport.request(
+          :post,
+          store.base_url <> path,
+          @headers ++ store.headers,
+          body,
+          store.transport_options
+        )
+      rescue
+        _ -> {:error, :transport_failed}
+      catch
+        _kind, _reason -> {:error, :transport_failed}
+      end
+
+    case result do
+      {:error, _reason} ->
+        {:error, {:transport_error, :transport_failed}}
+
+      {:ok, %{status: status, body: response_body}}
+      when is_integer(status) and is_binary(response_body) and
+             byte_size(response_body) <= @restore_response_limit ->
+        cond do
+          status in [401, 403] ->
+            {:error, {:unauthorized, :provider_rejected}}
+
+          status >= 500 and status != 507 ->
+            {:error, {:transport_error, :provider_failed}}
+
+          true ->
+            case decode_json_object(response_body) do
+              {:ok, value} when status == success_status -> parse_success.(value)
+              {:ok, value} -> parse_restore_error(status, value)
+              _ -> {:error, {:protocol_error, :invalid_response}}
+            end
+        end
+
+      {:ok, _response} ->
+        {:error, {:protocol_error, :invalid_response}}
+
+      _response ->
+        {:error, {:protocol_error, :invalid_response}}
+    end
+  end
+
+  defp parse_restore_error(400, %{"ok" => false, "error" => %{"code" => "malformed_request"}}),
+    do: {:error, {:provider_error, :malformed_request}}
+
+  defp parse_restore_error(409, %{"ok" => false, "error" => %{"code" => "constraint_violation"}}),
+    do: {:error, {:provider_error, :constraint_violation}}
+
+  defp parse_restore_error(409, %{"ok" => false, "error" => %{"code" => "obsolete_epoch"}}),
+    do: {:error, {:provider_error, :obsolete_epoch}}
+
+  defp parse_restore_error(413, %{"ok" => false, "error" => %{"code" => "batch_too_large"}}),
+    do: {:error, {:provider_error, :batch_too_large}}
+
+  defp parse_restore_error(507, %{"ok" => false, "error" => %{"code" => "storage_full"}}),
+    do: {:error, {:provider_error, :storage_full}}
+
+  defp parse_restore_error(_status, _value), do: {:error, {:protocol_error, :invalid_response}}
+
   # Response details for a rejected request. Only the response is described;
   # the request (and so any bearer token in its headers) never enters an error.
   defp error_details(response_body) do
     %{body: binary_part(response_body, 0, min(byte_size(response_body), @error_body_limit))}
-  end
-
-  defp response_size(_body, nil), do: :ok
-
-  defp response_size(body, limit) when is_integer(limit) and byte_size(body) <= limit, do: :ok
-
-  defp response_size(_body, _limit), do: protocol(:response_body_too_large)
-
-  defp safe_transport_request(store, path, body) do
-    store.transport.request(
-      :post,
-      store.base_url <> path,
-      @headers ++ store.headers,
-      body,
-      store.transport_options
-    )
-  rescue
-    _ -> {:error, :transport_failed}
-  catch
-    _kind, _reason -> {:error, :transport_failed}
   end
 
   defp reconcile_commit(_store, %CommitPlan{insert_entries: []}, commit_error) do
@@ -385,7 +420,8 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   defp encode_restore_bundle(_bundle, _max_logs),
     do: {:error, {:invalid_restore_bundle, :invalid_shape}}
 
-  defp encode_restore_logs(logs) when is_list(logs) and logs != [] do
+  defp encode_restore_logs(logs)
+       when is_list(logs) and logs != [] and length(logs) <= @restore_max_logs do
     logs
     |> Enum.reduce_while({:ok, [], 0}, fn log, {:ok, acc, total} ->
       case encode_restore_log(log) do
@@ -406,17 +442,15 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
          {:ok, log_id} <- bounded_restore_id(Map.get(log, :log_id)),
          {:ok, archive_id} <- bounded_restore_id(Map.get(log, :archive_id)),
          {:ok, writer_id} <- bounded_restore_id(Map.get(log, :writer_id)),
-         {:ok, entries} <- encode_restore_entries(Map.get(log, :entries), log_id, writer_id) do
+         {:ok, entries, total_bytes} <-
+           encode_restore_entries(Map.get(log, :entries), log_id, writer_id) do
       {:ok,
        %{
          "log_id" => log_id,
          "archive_id" => archive_id,
          "writer_id" => writer_id,
          "entries" => entries
-       },
-       Enum.reduce(entries, 0, fn entry, total ->
-         total + byte_size(Base.decode64!(entry["canonical_bytes"]))
-       end)}
+       }, total_bytes}
     else
       _ -> {:error, :invalid_log}
     end
@@ -433,15 +467,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
       with {:ok, canonical} <- canonical_bytes(raw),
            {:ok, parsed} <- parse_restore_entry(canonical),
            :ok <- restore_entry_shape(parsed, log_id, writer_id, expected_seq, previous_id) do
-        entry = %{
-          "log_id" => log_id,
-          "entry_id" => parsed["entry_id"],
-          "writer_id" => writer_id,
-          "writer_seq" => expected_seq,
-          "prev_entry_id" => parsed["prev_entry_id"],
-          "created_at" => parsed["created_at"],
-          "canonical_bytes" => Base.encode64(canonical)
-        }
+        entry = Base.encode64(canonical)
 
         next_total = total + byte_size(canonical)
 
