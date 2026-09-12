@@ -22,7 +22,7 @@ File.mkdir_p!(app_ebin)
 
 Code.prepend_path(app_ebin)
 
-Application.ensure_all_started(:commonplace_log)
+{:ok, _started} = Application.ensure_all_started(:commonplace_log)
 
 ExUnit.start(autorun: false, exclude: [], include: [])
 
@@ -103,6 +103,7 @@ defmodule RestoreBindingNativeTest do
   } do
     assert {:ok, source_handle} = DocumentProfile.create_log(log_id, [])
     assert {:ok, %{writer_seq: 1}} = DocumentProfile.append(source_handle, %{"n" => 1}, [])
+    assert {:ok, %{writer_seq: 2}} = DocumentProfile.append(source_handle, %{"n" => 2}, [])
     assert {:ok, frontier} = SQLite.frontier_value(log_id)
     assert {:ok, entries} = SQLite.read_through(log_id, frontier, [])
     stop_server(log_id)
@@ -126,9 +127,9 @@ defmodule RestoreBindingNativeTest do
     refute File.exists?(writer_path)
     assert match?({:error, _}, SQLite.frontier(log_id))
 
-    assert {:ok, restored} = DocumentProfile.restore_log(log_id, entries, capability)
+    assert {:ok, restored} = DocumentProfile.restore_log(log_id, entries, request)
     assert File.exists?(writer_path)
-    assert {:ok, %{writer_seq: 2}} = DocumentProfile.append(restored, %{"n" => 2}, [])
+    assert {:ok, %{writer_seq: 3}} = DocumentProfile.append(restored, %{"n" => 3}, [])
 
     File.rm_rf!(source_dir)
   end
@@ -145,7 +146,9 @@ defmodule RestoreBindingNativeTest do
     on_exit(fn -> File.rm_rf!(target_dir) end)
     request = SQLite.restore_request(log_id, frontier)
     assert {:ok, spec} = Restore.prepare(log_id, entries, request)
-    assert {:ok, owner} = Server.start_link(data_dir: target_dir, log_id: log_id, mode: {:restore, spec})
+
+    assert {:ok, owner} =
+             Server.start_link(data_dir: target_dir, log_id: log_id, mode: {:restore, spec})
 
     assert {:error, :restore_incomplete} = Server.append(owner, %{"blocked" => true}, @created_at)
     assert {:error, :restore_incomplete} = Server.merge(owner, entries)
@@ -162,18 +165,32 @@ defmodule RestoreBindingNativeTest do
     assert {:ok, frontier} = SQLite.frontier_value(log_id)
     assert {:ok, entries} = SQLite.read_through(log_id, frontier, [])
     stop_server(log_id)
-    sqlite_path = Path.join(Application.fetch_env!(:commonplace_log, SQLite)[:data_dir], log_id <> ".sqlite3")
+
+    sqlite_path =
+      Path.join(Application.fetch_env!(:commonplace_log, SQLite)[:data_dir], log_id <> ".sqlite3")
+
     before = sqlite_tables(sqlite_path)
 
     assert {:error, {:storage, %{reason: refusal_reason}}} =
-             DocumentProfile.restore_log(log_id, entries, SQLite.restore_request(log_id, frontier))
+             DocumentProfile.restore_log(
+               log_id,
+               entries,
+               SQLite.restore_request(log_id, frontier)
+             )
+
     assert inspect(refusal_reason) =~ "restore_target_not_new"
 
     assert sqlite_tables(sqlite_path) == before
     refute "restore_meta" in before
   end
 
-  defp fresh_dir(label), do: Path.join(System.tmp_dir!(), "restore-binding-native-#{label}-#{System.unique_integer([:positive])}") |> tap(&File.mkdir_p!/1)
+  defp fresh_dir(label),
+    do:
+      Path.join(
+        System.tmp_dir!(),
+        "restore-binding-native-#{label}-#{System.unique_integer([:positive])}"
+      )
+      |> tap(&File.mkdir_p!/1)
 
   defp only_writer(log_id) do
     assert {:ok, %{writers: [%{writer_id: writer_id}]}} = SQLite.frontier(log_id)
