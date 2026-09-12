@@ -8,7 +8,9 @@ export type RealmStorageErrorCode =
   | "stale_revision"
   | "obsolete_epoch"
   | "constraint"
-  | "storage_full";
+  | "storage_full"
+  | "inventory_oversize"
+  | "inventory_invalid";
 
 export class RealmStoreError extends Error {
   constructor(
@@ -94,6 +96,26 @@ export interface RestoreBundleResult {
   complete: boolean;
 }
 
+export interface LogInventoryWriter {
+  writerId: string;
+  lastSeq: number;
+  lastEntryId: string;
+}
+
+export interface LogInventoryRow {
+  logId: string;
+  formatVersion: number;
+  revision: number;
+  createdAt: string;
+  documentWriterId: string | null;
+  writers: LogInventoryWriter[];
+}
+
+export interface LogInventory {
+  generation: string;
+  logs: LogInventoryRow[];
+}
+
 export interface RestoreResult {
   imported: number;
   skipped: number;
@@ -116,6 +138,10 @@ const MAX_RESTORE_ID_BYTES = 256;
 const MAX_LEGACY_MARKER_BYTES = 2 * 1024 * 1024;
 const MAX_BUNDLE_LOGS = 64;
 const BUNDLE_MARKER_PREFIX = UTF8.encode("commonplace-restore-bundle-v1\0");
+const MAX_INVENTORY_LOGS = 64;
+const MAX_INVENTORY_WRITERS = 4096;
+const MAX_INVENTORY_BYTES = 256 * 1024;
+const INVENTORY_MARKER_PREFIX = UTF8.encode("commonplace-log-inventory-v1\0");
 
 function placeholders(values: readonly unknown[]): string {
   return values.map(() => "?").join(", ");
@@ -183,6 +209,159 @@ export class RealmStore {
     } catch (error) {
       translateStorageError(error);
     }
+  }
+
+  /** Return one bounded, deterministic snapshot of every stored application log. */
+  listLogInventory(maxLogs = MAX_INVENTORY_LOGS): LogInventory {
+    if (!Number.isSafeInteger(maxLogs) || maxLogs < 1 || maxLogs > MAX_INVENTORY_LOGS) {
+      throw new RealmStoreError("inventory_oversize");
+    }
+    if (!hasSqlTable(this.sql, "realm_meta")) {
+      throw new RealmStoreError("inventory_invalid");
+    }
+    const realmMeta = this.sql.exec(
+      `SELECT singleton, length(secret_hash) AS secret_bytes,
+              length(CAST(created_at AS BLOB)) AS created_at_bytes
+       FROM realm_meta LIMIT 2`,
+    ).toArray();
+    if (realmMeta.length !== 1 || realmMeta[0] === undefined ||
+        Number(realmMeta[0].singleton) !== 1 || Number(realmMeta[0].secret_bytes) !== 32 ||
+        Number(realmMeta[0].created_at_bytes) > MAX_RESTORE_ID_BYTES) {
+      throw new RealmStoreError("inventory_invalid");
+    }
+
+    return this.txn.transactionSync(() => {
+      this.requireInventoryRestoreState();
+      const hasLogs = hasSqlTable(this.sql, "logs");
+      const hasEntries = hasSqlTable(this.sql, "entries");
+      const hasTips = hasSqlTable(this.sql, "writer_tips");
+      const hasMarkers = hasSqlTable(this.sql, "restore_markers");
+      const hasBundleLogs = hasSqlTable(this.sql, "restore_bundle_logs");
+
+      if (!hasLogs) {
+        if ([hasEntries, hasTips, hasMarkers, hasBundleLogs].some(Boolean)) {
+          throw new RealmStoreError("inventory_invalid");
+        }
+        return { generation: inventoryDigest([]), logs: [] };
+      }
+      if (!hasEntries || !hasTips) throw new RealmStoreError("inventory_invalid");
+
+      const logColumns = this.sql.exec("PRAGMA table_info(logs)").toArray();
+      const hasDocumentWriter = logColumns.some((column) => column.name === "document_writer_id");
+      const logSummary = this.sql.exec(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(length(CAST(log_id AS BLOB)) + length(CAST(format_version AS BLOB)) +
+                  length(CAST(revision AS BLOB)) + length(CAST(created_at AS BLOB)) +
+                  ${hasDocumentWriter ? "length(CAST(COALESCE(document_writer_id, '') AS BLOB)) +" : ""} 64), 0) AS bytes,
+                COALESCE(MAX(length(CAST(log_id AS BLOB))), 0) AS max_log_id_bytes,
+                COALESCE(MAX(length(CAST(created_at AS BLOB))), 0) AS max_created_at_bytes
+                ${hasDocumentWriter ? ", COALESCE(MAX(length(CAST(COALESCE(document_writer_id, '') AS BLOB))), 0) AS max_document_writer_bytes" : ""}
+         FROM logs`,
+      ).one();
+      if (Number(logSummary.count) > maxLogs || Number(logSummary.bytes) > MAX_INVENTORY_BYTES ||
+          Number(logSummary.max_log_id_bytes) > MAX_RESTORE_ID_BYTES ||
+          Number(logSummary.max_created_at_bytes) > MAX_RESTORE_ID_BYTES ||
+          (hasDocumentWriter && Number(logSummary.max_document_writer_bytes) > MAX_RESTORE_ID_BYTES)) {
+        throw new RealmStoreError("inventory_oversize");
+      }
+      const logRows = this.sql.exec(
+        `SELECT substr(log_id, 1, ? ) AS log_id, format_version, revision,
+                substr(created_at, 1, ?) AS created_at${hasDocumentWriter ? ", substr(document_writer_id, 1, ?) AS document_writer_id" : ""}
+         FROM logs ORDER BY log_id LIMIT ?`,
+        ...(hasDocumentWriter ? [MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1, maxLogs + 1] :
+          [MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1, maxLogs + 1]),
+      ).toArray();
+      if (logRows.length > maxLogs) throw new RealmStoreError("inventory_oversize");
+
+      const logIds = new Set<string>();
+      const logs = logRows.map((row) => {
+        const logId = String(row.log_id);
+        const formatVersion = Number(row.format_version);
+        const revision = Number(row.revision);
+        const createdAt = String(row.created_at);
+        const documentWriterId = hasDocumentWriter && row.document_writer_id !== null
+          ? String(row.document_writer_id)
+          : null;
+        if (!boundedRestoreId(logId) || logIds.has(logId) ||
+            !Number.isSafeInteger(formatVersion) || formatVersion < 1 ||
+            !Number.isSafeInteger(revision) || revision < 0 ||
+            !boundedRestoreId(createdAt) ||
+            (documentWriterId !== null && !boundedRestoreId(documentWriterId))) {
+          throw new RealmStoreError("inventory_invalid");
+        }
+        logIds.add(logId);
+        return {
+          logId,
+          formatVersion,
+          revision,
+          createdAt,
+          documentWriterId,
+          writers: [],
+        };
+      });
+
+      const writerSummary = this.sql.exec(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(length(CAST(log_id AS BLOB)) + length(CAST(writer_id AS BLOB)) +
+                  length(CAST(last_entry_id AS BLOB)) + 32), 0) AS bytes,
+                COALESCE(MAX(length(CAST(log_id AS BLOB))), 0) AS max_log_id_bytes,
+                COALESCE(MAX(length(CAST(writer_id AS BLOB))), 0) AS max_writer_id_bytes,
+                COALESCE(MAX(length(CAST(last_entry_id AS BLOB))), 0) AS max_entry_id_bytes
+         FROM writer_tips`,
+      ).one();
+      if (Number(writerSummary.count) > MAX_INVENTORY_WRITERS ||
+          Number(writerSummary.bytes) > MAX_INVENTORY_BYTES ||
+          Number(writerSummary.max_log_id_bytes) > MAX_RESTORE_ID_BYTES ||
+          Number(writerSummary.max_writer_id_bytes) > MAX_RESTORE_ID_BYTES ||
+          Number(writerSummary.max_entry_id_bytes) > MAX_RESTORE_ID_BYTES) {
+        throw new RealmStoreError("inventory_oversize");
+      }
+
+      const writersByLog = new Map<string, LogInventoryWriter[]>();
+      for (const row of this.sql.exec(
+        `SELECT substr(log_id, 1, ?) AS log_id, substr(writer_id, 1, ?) AS writer_id,
+                last_seq, substr(last_entry_id, 1, ?) AS last_entry_id
+         FROM writer_tips ORDER BY log_id, writer_id`,
+        MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1,
+      ).toArray()) {
+        const logId = String(row.log_id);
+        const writerId = String(row.writer_id);
+        const lastEntryId = String(row.last_entry_id);
+        if (!logIds.has(logId) || !boundedRestoreId(writerId) || !boundedRestoreId(lastEntryId) ||
+            !Number.isSafeInteger(Number(row.last_seq)) || Number(row.last_seq) < 1) {
+          throw new RealmStoreError("inventory_invalid");
+        }
+        const writers = writersByLog.get(logId) ?? [];
+        writers.push({ writerId, lastSeq: Number(row.last_seq), lastEntryId });
+        writersByLog.set(logId, writers);
+      }
+
+      if (this.sql.exec(
+        `SELECT 1 FROM entries e LEFT JOIN logs l ON l.log_id = e.log_id
+         WHERE l.log_id IS NULL LIMIT 1`,
+      ).toArray().length > 0 || this.sql.exec(
+        `SELECT 1 FROM writer_tips w LEFT JOIN logs l ON l.log_id = w.log_id
+         WHERE l.log_id IS NULL LIMIT 1`,
+      ).toArray().length > 0) {
+        throw new RealmStoreError("inventory_invalid");
+      }
+
+      if (hasMarkers && this.sql.exec(
+        `SELECT 1 FROM restore_markers rm
+         LEFT JOIN logs l ON l.log_id = rm.log_id
+         WHERE l.log_id IS NULL OR rm.state <> 'complete' LIMIT 1`,
+      ).toArray().length > 0) {
+        throw new RealmStoreError("inventory_invalid");
+      }
+
+      const result = logs.map((log) => ({
+        ...log,
+        writers: writersByLog.get(log.logId) ?? [],
+      }));
+      const encodedSize = UTF8.encode(JSON.stringify(result)).byteLength;
+      if (encodedSize > MAX_INVENTORY_BYTES) throw new RealmStoreError("inventory_oversize");
+      return { generation: inventoryDigest(result), logs: result };
+    });
   }
 
   private restoreArchiveInTransaction(archive: RestoreArchive, maxEntries: number): RestoreResult {
@@ -671,6 +850,133 @@ export class RealmStore {
     if (row !== undefined && String(row.state) !== "complete") throw new RealmStoreError("obsolete_epoch");
   }
 
+  /**
+   * Inventory is read-only, so it uses a bounded version of the normal bundle
+   * fence. The normal helper intentionally materializes restore manifests for
+   * restore/reconciliation; listing must preflight every count and blob length
+   * before selecting any variable-sized field.
+   */
+  private requireInventoryRestoreState(): void {
+    const hasBundles = hasSqlTable(this.sql, "restore_bundles");
+    const hasInventory = hasSqlTable(this.sql, "restore_bundle_logs");
+    if (!hasBundles) {
+      if (hasInventory) throw new RealmStoreError("obsolete_epoch");
+      return;
+    }
+    if (!hasInventory) throw new RealmStoreError("obsolete_epoch");
+    if (!hasSqlTable(this.sql, "restore_markers")) throw new RealmStoreError("obsolete_epoch");
+
+    const bundleCount = Number(this.sql.exec("SELECT COUNT(*) AS count FROM restore_bundles").one().count);
+    const inventoryCount = Number(this.sql.exec("SELECT COUNT(*) AS count FROM restore_bundle_logs").one().count);
+    if (bundleCount === 0) {
+      if (inventoryCount !== 0) throw new RealmStoreError("obsolete_epoch");
+      return;
+    }
+    if (bundleCount !== 1) throw new RealmStoreError("obsolete_epoch");
+
+    const bundle = this.sql.exec(
+      `SELECT singleton, substr(bundle_id, 1, ?) AS bundle_id, log_count,
+              length(CAST(bundle_id AS BLOB)) AS bundle_id_bytes,
+              length(digest) AS digest_bytes, substr(state, 1, 16) AS state
+       FROM restore_bundles LIMIT 2`,
+      MAX_RESTORE_ID_BYTES + 1,
+    ).toArray();
+    const storedBundle = bundle[0];
+    if (bundle.length !== 1 || storedBundle === undefined) throw new RealmStoreError("obsolete_epoch");
+    const logCount = Number(storedBundle.log_count);
+    if (Number(storedBundle.singleton) !== 1 || !boundedRestoreId(storedBundle.bundle_id) ||
+        Number(storedBundle.bundle_id_bytes) > MAX_RESTORE_ID_BYTES ||
+        !Number.isInteger(logCount) || logCount < 1 || logCount > MAX_BUNDLE_LOGS ||
+        Number(storedBundle.digest_bytes) !== 32 || String(storedBundle.state) !== "complete" ||
+        inventoryCount !== logCount) {
+      throw new RealmStoreError("obsolete_epoch");
+    }
+
+    const bundleId = String(storedBundle.bundle_id);
+    const inventorySummary = this.sql.exec(
+      `SELECT COUNT(*) AS count,
+              COALESCE(SUM(length(CAST(bundle_id AS BLOB)) + length(CAST(log_id AS BLOB)) +
+                length(CAST(archive_id AS BLOB)) + length(CAST(writer_id AS BLOB)) +
+                length(CAST(entry_count AS BLOB)) + length(CAST(total_bytes AS BLOB)) + 32 + 1), 0) AS bytes,
+              COALESCE(SUM(CASE WHEN state <> 'complete' THEN 1 ELSE 0 END), 0) AS bad_state,
+              COALESCE(MAX(length(CAST(log_id AS BLOB))), 0) AS max_log_id_bytes,
+              COALESCE(MAX(length(CAST(archive_id AS BLOB))), 0) AS max_archive_id_bytes,
+              COALESCE(MAX(length(CAST(writer_id AS BLOB))), 0) AS max_writer_id_bytes,
+              COALESCE(MAX(length(CAST(state AS BLOB))), 0) AS max_state_bytes,
+              COALESCE(MAX(length(digest)), 0) AS max_digest_bytes
+       FROM restore_bundle_logs WHERE bundle_id = ?`, bundleId,
+    ).one();
+    if (Number(inventorySummary.count) !== logCount || Number(inventorySummary.bad_state) !== 0 ||
+        Number(inventorySummary.bytes) > MAX_INVENTORY_BYTES ||
+        Number(inventorySummary.max_log_id_bytes) > MAX_RESTORE_ID_BYTES ||
+        Number(inventorySummary.max_archive_id_bytes) > MAX_RESTORE_ID_BYTES ||
+        Number(inventorySummary.max_writer_id_bytes) > MAX_RESTORE_ID_BYTES ||
+        Number(inventorySummary.max_state_bytes) > 16 || Number(inventorySummary.max_digest_bytes) !== 32) {
+      throw new RealmStoreError("obsolete_epoch");
+    }
+    if (this.sql.exec(
+      `SELECT 1 FROM restore_bundle_logs WHERE bundle_id <> ? LIMIT 1`, bundleId,
+    ).toArray().length > 0) throw new RealmStoreError("obsolete_epoch");
+
+    const inventoryRows = this.sql.exec(
+      `SELECT substr(bundle_id, 1, ?) AS bundle_id, substr(log_id, 1, ?) AS log_id,
+              substr(archive_id, 1, ?) AS archive_id, substr(writer_id, 1, ?) AS writer_id,
+              entry_count, total_bytes, substr(digest, 1, 33) AS digest, substr(state, 1, 16) AS state,
+              length(CAST(log_id AS BLOB)) AS log_id_bytes,
+              length(CAST(archive_id AS BLOB)) AS archive_id_bytes,
+              length(CAST(writer_id AS BLOB)) AS writer_id_bytes,
+              length(digest) AS digest_bytes
+       FROM restore_bundle_logs WHERE bundle_id = ? ORDER BY log_id LIMIT ?`,
+      MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1,
+      MAX_RESTORE_ID_BYTES + 1, bundleId, MAX_BUNDLE_LOGS + 1,
+    ).toArray();
+    if (inventoryRows.length !== logCount || inventoryRows.some((row) =>
+      String(row.state) === "pending" || String(row.bundle_id) !== bundleId ||
+      !boundedRestoreId(row.log_id) || !boundedRestoreId(row.archive_id) || !boundedRestoreId(row.writer_id) ||
+      Number(row.log_id_bytes) > MAX_RESTORE_ID_BYTES || Number(row.archive_id_bytes) > MAX_RESTORE_ID_BYTES ||
+      Number(row.writer_id_bytes) > MAX_RESTORE_ID_BYTES || Number(row.digest_bytes) !== 32 ||
+      !Number.isSafeInteger(Number(row.entry_count)) || Number(row.entry_count) < 1 ||
+      !Number.isSafeInteger(Number(row.total_bytes)) || Number(row.total_bytes) < 0)) {
+      throw new RealmStoreError("obsolete_epoch");
+    }
+
+    const logIds = inventoryRows.map((row) => String(row.log_id));
+    if (new Set(logIds).size !== logIds.length) throw new RealmStoreError("obsolete_epoch");
+    const clauses = logIds.map(() => "?").join(", ");
+    const markerSummary = this.sql.exec(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(length(manifest_json)), 0) AS bytes,
+              COALESCE(MAX(length(manifest_json)), 0) AS max_bytes,
+              COALESCE(MAX(length(CAST(archive_id AS BLOB))), 0) AS max_archive_id_bytes,
+              COALESCE(MAX(length(CAST(writer_id AS BLOB))), 0) AS max_writer_id_bytes,
+              COALESCE(MAX(length(CAST(state AS BLOB))), 0) AS max_state_bytes
+       FROM restore_markers WHERE log_id IN (${clauses})`, ...logIds,
+    ).one();
+    if (Number(markerSummary.count) !== logCount || Number(markerSummary.bytes) > MAX_INVENTORY_BYTES ||
+        Number(markerSummary.max_bytes) !== RESTORE_MARKER_PREFIX.byteLength + RESTORE_MARKER_DIGEST_BYTES ||
+        Number(markerSummary.max_archive_id_bytes) > MAX_RESTORE_ID_BYTES ||
+        Number(markerSummary.max_writer_id_bytes) > MAX_RESTORE_ID_BYTES ||
+        Number(markerSummary.max_state_bytes) > 16) {
+      throw new RealmStoreError("obsolete_epoch");
+    }
+    const markers = this.sql.exec(
+      `SELECT substr(rm.log_id, 1, ?) AS log_id, substr(rm.archive_id, 1, ?) AS archive_id,
+              substr(rm.writer_id, 1, ?) AS writer_id, rm.entry_count, rm.total_bytes,
+              substr(rm.state, 1, 16) AS state, substr(rm.manifest_json, 1, ?) AS manifest_json
+       FROM restore_markers rm WHERE rm.log_id IN (${clauses}) ORDER BY rm.log_id LIMIT ?`,
+      MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1, MAX_RESTORE_ID_BYTES + 1,
+      RESTORE_MARKER_PREFIX.byteLength + RESTORE_MARKER_DIGEST_BYTES, ...logIds, MAX_BUNDLE_LOGS + 1,
+    ).toArray();
+    if (markers.length !== logCount || markers.some((marker) => {
+      const inventoryRow = inventoryRows.find((row) => String(row.log_id) === String(marker.log_id));
+      return inventoryRow === undefined || String(marker.state) !== "complete" ||
+        String(marker.archive_id) !== String(inventoryRow.archive_id) ||
+        String(marker.writer_id) !== String(inventoryRow.writer_id) ||
+        Number(marker.entry_count) !== Number(inventoryRow.entry_count) ||
+        Number(marker.total_bytes) !== Number(inventoryRow.total_bytes) ||
+        !compactMarkerContainsDigest(bytes(marker.manifest_json), bytes(inventoryRow.digest));
+    })) throw new RealmStoreError("obsolete_epoch");
+  }
+
   private requireNoPendingRestoreBundle(): void {
     const hasBundles = hasSqlTable(this.sql, "restore_bundles");
     const hasInventory = hasSqlTable(this.sql, "restore_bundle_logs");
@@ -866,6 +1172,26 @@ function restoreBundleDigest(bundle: RestoreBundle): Uint8Array {
   updateFrameLength(hash, bundle.logs.length);
   for (const archive of bundle.logs) hash.update(restoreManifestDigest(archive));
   return new Uint8Array(hash.digest());
+}
+
+function inventoryDigest(logs: LogInventoryRow[]): string {
+  const hash = createHash("sha256");
+  hash.update(INVENTORY_MARKER_PREFIX);
+  updateFrameLength(hash, logs.length);
+  for (const log of logs) {
+    updateFrameText(hash, log.logId);
+    updateFrameLength(hash, log.formatVersion);
+    updateFrameLength(hash, log.revision);
+    updateFrameText(hash, log.createdAt);
+    updateFrameText(hash, log.documentWriterId ?? "");
+    updateFrameLength(hash, log.writers.length);
+    for (const writer of log.writers) {
+      updateFrameText(hash, writer.writerId);
+      updateFrameLength(hash, writer.lastSeq);
+      updateFrameText(hash, writer.lastEntryId);
+    }
+  }
+  return hash.digest("hex");
 }
 
 function compactMarkerContainsDigest(marker: Uint8Array, digest: Uint8Array): boolean {

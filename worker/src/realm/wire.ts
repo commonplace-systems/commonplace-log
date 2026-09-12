@@ -8,6 +8,7 @@ const MAX_ENTRIES_PER_LOG = 4096;
 const MAX_ENTRY_BYTES = 1_048_576;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const MAX_ID_BYTES = 256;
+const MAX_INVENTORY_RESPONSE_BYTES = 256 * 1024;
 const UTF8 = new TextEncoder();
 
 class WireMalformed extends Error {}
@@ -127,6 +128,20 @@ function parseBundle(value: unknown): ParsedBundle {
   return { bundle: { bundleId, logs }, maxLogs };
 }
 
+async function parseInventoryRequest(request: Request): Promise<number> {
+  if (request.method !== "POST") throw new WireMalformed();
+  const raw = await readRawBody(request);
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(raw));
+  } catch {
+    throw new WireMalformed();
+  }
+  const root = object(value);
+  strictKeys(root, ["max_logs"]);
+  return boundedInteger(root.max_logs, MAX_LOGS);
+}
+
 async function readRawBody(request: Request): Promise<Uint8Array> {
   if (request.body === null) throw new WireMalformed();
   const reader = request.body.getReader();
@@ -169,13 +184,48 @@ async function parseRequest(request: Request): Promise<ParsedBundle> {
 
 function storeFailure(error: RealmStoreError): Response {
   if (error.code === "storage_full") return failure("storage_full", 507);
+  if (error.code === "inventory_oversize") return failure("oversize", 413);
   if (error.code === "obsolete_epoch") return failure("obsolete_epoch", 409);
   return failure("constraint", 409);
 }
 
 /** Internal storage wire adapter. Public realm dispatch never calls this function. */
 export async function handleStorageRequest(request: Request, store: RealmStore): Promise<Response> {
-  if (new URL(request.url).pathname !== "/restore-bundle-batch") return await handleRealmRequest(request, store);
+  const path = new URL(request.url).pathname;
+  if (path === "/list-logs") {
+    try {
+      const maxLogs = await parseInventoryRequest(request);
+      const result = store.listLogInventory(maxLogs);
+      const payload = {
+        ok: true,
+        result: {
+          generation: result.generation,
+          logs: result.logs.map((log) => ({
+            log_id: log.logId,
+            format_version: log.formatVersion,
+            revision: log.revision,
+            created_at: log.createdAt,
+            document_writer_id: log.documentWriterId,
+            writers: log.writers.map((writer) => ({
+              writer_id: writer.writerId,
+              last_seq: writer.lastSeq,
+              last_entry_id: writer.lastEntryId,
+            })),
+          })),
+        },
+      };
+      if (UTF8.encode(JSON.stringify(payload)).byteLength > MAX_INVENTORY_RESPONSE_BYTES) {
+        return failure("oversize", 413);
+      }
+      return response(payload, 200);
+    } catch (error) {
+      if (error instanceof WireOversize) return failure("oversize", 413);
+      if (error instanceof WireMalformed) return failure("malformed", 400);
+      if (error instanceof RealmStoreError) return storeFailure(error);
+      return failure("internal", 500);
+    }
+  }
+  if (path !== "/restore-bundle-batch") return await handleRealmRequest(request, store);
   try {
     const { bundle, maxLogs } = await parseRequest(request);
     const result = store.restoreBundleBatch(bundle, maxLogs);
