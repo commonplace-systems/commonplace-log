@@ -83,6 +83,17 @@ export interface RestoreArchive {
   entries: EntryRow[];
 }
 
+export interface RestoreBundle {
+  bundleId: string;
+  logs: RestoreArchive[];
+}
+
+export interface RestoreBundleResult {
+  importedLogs: number;
+  skippedLogs: number;
+  complete: boolean;
+}
+
 export interface RestoreResult {
   imported: number;
   skipped: number;
@@ -103,6 +114,8 @@ const RESTORE_MARKER_DIGEST_BYTES = 32;
 const MAX_RESTORE_ID_BYTES = 256;
 // Legacy markers are retained only while their verification input is bounded.
 const MAX_LEGACY_MARKER_BYTES = 2 * 1024 * 1024;
+const MAX_BUNDLE_LOGS = 64;
+const BUNDLE_MARKER_PREFIX = UTF8.encode("commonplace-restore-bundle-v1\0");
 
 function placeholders(values: readonly unknown[]): string {
   return values.map(() => "?").join(", ");
@@ -129,6 +142,7 @@ export class RealmStore {
     initSchema(this.sql);
     try {
       this.txn.transactionSync(() => {
+        this.requireNoPendingRestoreBundle();
         this.sql.exec(
           `INSERT INTO logs (log_id, format_version, revision, created_at, lease_epoch)
            VALUES (?, ?, 0, ?, 0) ON CONFLICT (log_id) DO NOTHING`,
@@ -146,10 +160,43 @@ export class RealmStore {
   restoreBatch(archive: RestoreArchive, maxEntries = 4096): RestoreResult {
     validateRestoreArchive(archive, maxEntries);
     initSchema(this.sql);
-    const totalBytes = archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0);
-    const manifest = restoreManifest(archive);
     try {
       return this.txn.transactionSync(() => {
+        this.requireNoPendingRestoreBundle();
+        return this.restoreArchiveInTransaction(archive, maxEntries);
+      });
+    } catch (error) {
+      translateStorageError(error);
+    }
+  }
+
+  /** Internal provider-local bundle restore primitive. It is intentionally not routed by HTTP. */
+  restoreBundleBatch(bundle: RestoreBundle, maxLogs = MAX_BUNDLE_LOGS): RestoreBundleResult {
+    validateRestoreBundle(bundle, maxLogs);
+    if (!hasSqlTable(this.sql, "realm_meta") ||
+        Number(this.sql.exec("SELECT COUNT(*) AS count FROM realm_meta").one().count) !== 1) {
+      throw new RealmStoreError("constraint");
+    }
+    initSchema(this.sql);
+    try {
+      return this.txn.transactionSync(() => this.restoreBundleInTransaction(bundle, maxLogs));
+    } catch (error) {
+      translateStorageError(error);
+    }
+  }
+
+  private restoreArchiveInTransaction(archive: RestoreArchive, maxEntries: number): RestoreResult {
+    const totalBytes = archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0);
+    const manifest = restoreManifest(archive);
+    return this.restoreArchiveRowsInTransaction(archive, maxEntries, totalBytes, manifest);
+  }
+
+  private restoreArchiveRowsInTransaction(
+    archive: RestoreArchive,
+    maxEntries: number,
+    totalBytes: number,
+    manifest: Uint8Array,
+  ): RestoreResult {
         const marker = this.sql.exec(
           `SELECT archive_id, writer_id, entry_count, total_bytes, manifest_json, state FROM restore_markers WHERE log_id = ?`,
           archive.logId,
@@ -265,15 +312,96 @@ export class RealmStore {
         const complete = batch.length === missing.length;
         if (complete) this.sql.exec(`UPDATE restore_markers SET state = 'complete' WHERE log_id = ?`, archive.logId);
         return { imported: batch.length, skipped, complete };
-      });
-    } catch (error) {
-      translateStorageError(error);
+  }
+
+  private restoreBundleInTransaction(bundle: RestoreBundle, maxLogs: number): RestoreBundleResult {
+    const digest = restoreBundleDigest(bundle);
+    const storedBundle = this.sql.exec(
+      `SELECT bundle_id, log_count, digest, state FROM restore_bundles WHERE singleton = 1`,
+    ).toArray()[0];
+    const inventoryRows = this.sql.exec(
+      `SELECT bundle_id, log_id, archive_id, writer_id, entry_count, total_bytes, digest, state
+       FROM restore_bundle_logs ORDER BY log_id`,
+    ).toArray();
+    const existingState = storedBundle === undefined ? "pending" : String(storedBundle.state);
+    if (storedBundle === undefined) {
+      if (inventoryRows.length > 0) throw new RealmStoreError("constraint");
+      this.requireEmptyTargetForBundle();
+      this.sql.exec(
+        `INSERT INTO restore_bundles (singleton, bundle_id, log_count, digest, state)
+         VALUES (1, ?, ?, ?, 'pending')`,
+        bundle.bundleId, bundle.logs.length, digest.buffer.slice(digest.byteOffset, digest.byteOffset + digest.byteLength),
+      );
+      for (const archive of bundle.logs) {
+        const archiveDigest = restoreManifestDigest(archive);
+        this.sql.exec(
+          `INSERT INTO restore_bundle_logs
+           (bundle_id, log_id, archive_id, writer_id, entry_count, total_bytes, digest, state)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          bundle.bundleId,
+          archive.logId,
+          archive.archiveId,
+          archive.writerId,
+          archive.entries.length,
+          archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0),
+          archiveDigest.buffer.slice(archiveDigest.byteOffset, archiveDigest.byteOffset + archiveDigest.byteLength),
+        );
+      }
+    } else {
+      this.verifyBundleRecord(storedBundle, inventoryRows, bundle, digest);
+      if (String(storedBundle.state) === "pending") this.rejectUnexpectedPendingBundleRows(bundle);
     }
+
+    const alreadyComplete = Number(this.sql.exec(
+      `SELECT COUNT(*) AS count FROM restore_bundle_logs WHERE state = 'complete'`,
+    ).one().count);
+    const completedRows = this.sql.exec(
+      `SELECT log_id FROM restore_bundle_logs WHERE state = 'complete' ORDER BY log_id`,
+    ).toArray();
+    const byLog = new Map(bundle.logs.map((archive) => [archive.logId, archive]));
+    for (const row of completedRows) {
+      const archive = byLog.get(String(row.log_id));
+      if (archive === undefined || !this.restoreArchiveInTransaction(archive, archive.entries.length).complete) {
+        throw new RealmStoreError("constraint");
+      }
+    }
+    const rows = this.sql.exec(
+      existingState === "complete"
+        ? `SELECT log_id, state FROM restore_bundle_logs WHERE 1 = 0`
+        : `SELECT log_id, state FROM restore_bundle_logs WHERE state = 'pending' ORDER BY log_id LIMIT ?`,
+      ...(existingState === "complete" ? [] : [maxLogs]),
+    ).toArray();
+    let importedLogs = 0;
+    for (const row of rows) {
+      const archive = byLog.get(String(row.log_id));
+      if (archive === undefined) throw new RealmStoreError("constraint");
+      const result = this.restoreArchiveInTransaction(archive, archive.entries.length);
+      if (!result.complete) throw new RealmStoreError("constraint");
+      if (String(row.state) === "pending") {
+        this.sql.exec(
+          `UPDATE restore_bundle_logs SET state = 'complete' WHERE bundle_id = ? AND log_id = ?`,
+          bundle.bundleId, archive.logId,
+        );
+        importedLogs += 1;
+      }
+    }
+
+    const remaining = Number(this.sql.exec(
+      `SELECT COUNT(*) AS count FROM restore_bundle_logs WHERE state <> 'complete'`,
+    ).one().count);
+    const complete = remaining === 0;
+    if (complete) this.sql.exec(`UPDATE restore_bundles SET state = 'complete' WHERE singleton = 1`);
+    return {
+      importedLogs,
+      skippedLogs: alreadyComplete,
+      complete,
+    };
   }
 
   takeLease(logId: string): Lease {
     try {
       return this.txn.transactionSync(() => {
+        this.requireNoPendingRestoreBundle();
         const log = this.requireLog(logId);
         this.requireRestoreComplete(logId);
         const epoch = Number(log.lease_epoch);
@@ -305,6 +433,7 @@ export class RealmStore {
 
   readSet(logId: string, query: ReadQuery): RealmReadSet {
     return this.txn.transactionSync(() => {
+      this.requireNoPendingRestoreBundle();
       const log = this.requireLog(logId);
       this.requireRestoreComplete(logId);
       const tips = query.writers.length === 0
@@ -373,6 +502,7 @@ export class RealmStore {
   commit(plan: CommitPlan): number {
     try {
       return this.txn.transactionSync(() => {
+        this.requireNoPendingRestoreBundle();
         const log = this.requireLog(plan.logId);
         this.requireRestoreComplete(plan.logId);
         if (Number(log.revision) !== plan.expectedRevision) {
@@ -434,6 +564,7 @@ export class RealmStore {
   }
 
   frontier(logId: string): { writers: Array<{ writerId: string; seq: number; entryId: string }> } {
+    this.requireNoPendingRestoreBundle();
     this.requireLog(logId);
     this.requireRestoreComplete(logId);
     const writers = this.sql
@@ -455,6 +586,7 @@ export class RealmStore {
     entries: Array<{ canonicalBytes: Uint8Array; writerSeq: number }>;
     nextAfterSeq: number | null;
   } {
+    this.requireNoPendingRestoreBundle();
     this.requireLog(logId);
     this.requireRestoreComplete(logId);
     const through = options.throughSeq === undefined ? "" : " AND writer_seq <= ?";
@@ -485,6 +617,7 @@ export class RealmStore {
     entries: Array<{ canonicalBytes: Uint8Array; arrivalSeq: number }>;
     nextAfterArrival: number | null;
   } {
+    this.requireNoPendingRestoreBundle();
     this.requireLog(logId);
     this.requireRestoreComplete(logId);
     const rows = this.sql
@@ -528,6 +661,107 @@ export class RealmStore {
     const row = this.sql.exec(`SELECT state FROM restore_markers WHERE log_id = ?`, logId).toArray()[0];
     if (row !== undefined && String(row.state) !== "complete") throw new RealmStoreError("obsolete_epoch");
   }
+
+  private requireNoPendingRestoreBundle(): void {
+    const hasBundles = hasSqlTable(this.sql, "restore_bundles");
+    const hasInventory = hasSqlTable(this.sql, "restore_bundle_logs");
+    if (!hasBundles) {
+      if (hasInventory) throw new RealmStoreError("obsolete_epoch");
+      return;
+    }
+    if (!hasInventory) throw new RealmStoreError("obsolete_epoch");
+    const bundles = this.sql.exec(
+      `SELECT singleton, bundle_id, log_count, digest, state FROM restore_bundles ORDER BY singleton`,
+    ).toArray();
+    const inventory = this.sql.exec(
+      `SELECT bundle_id, log_id, archive_id, writer_id, entry_count, total_bytes, digest, state
+       FROM restore_bundle_logs ORDER BY log_id`,
+    ).toArray();
+    if (bundles.length === 0) {
+      if (inventory.length > 0) throw new RealmStoreError("obsolete_epoch");
+      return;
+    }
+    if (bundles.length !== 1) throw new RealmStoreError("obsolete_epoch");
+    const bundle = bundles[0];
+    if (bundle === undefined || Number(bundle.singleton) !== 1 ||
+        !boundedRestoreId(bundle.bundle_id) || bytes(bundle.digest).byteLength !== 32 ||
+        !Number.isInteger(Number(bundle.log_count)) || Number(bundle.log_count) < 1 || Number(bundle.log_count) > MAX_BUNDLE_LOGS ||
+        (String(bundle.state) !== "pending" && String(bundle.state) !== "complete") ||
+        inventory.length !== Number(bundle.log_count) ||
+        inventory.some((row) => String(row.bundle_id) !== String(bundle.bundle_id) || String(row.state) !== "complete")) {
+      throw new RealmStoreError("obsolete_epoch");
+    }
+    const logIds = inventory.map((row) => String(row.log_id));
+    const clauses = logIds.map(() => "?").join(", ");
+    const logs = this.sql.exec(`SELECT log_id FROM logs WHERE log_id IN (${clauses})`, ...logIds).toArray();
+    const markers = this.sql.exec(
+      `SELECT log_id, archive_id, writer_id, entry_count, total_bytes, manifest_json, state
+       FROM restore_markers WHERE log_id IN (${clauses})`, ...logIds,
+    ).toArray();
+    if (logs.length !== logIds.length || markers.length !== logIds.length ||
+        markers.some((row) => {
+          const inventoryRow = inventory.find((item) => String(item.log_id) === String(row.log_id));
+          return inventoryRow === undefined || String(row.state) !== "complete" ||
+            String(row.archive_id) !== String(inventoryRow.archive_id) ||
+            String(row.writer_id) !== String(inventoryRow.writer_id) ||
+            Number(row.entry_count) !== Number(inventoryRow.entry_count) ||
+            Number(row.total_bytes) !== Number(inventoryRow.total_bytes) ||
+            !compactMarkerContainsDigest(bytes(row.manifest_json), bytes(inventoryRow.digest));
+        })) {
+      throw new RealmStoreError("obsolete_epoch");
+    }
+    if (String(bundle.state) === "pending") throw new RealmStoreError("obsolete_epoch");
+  }
+
+  private requireEmptyTargetForBundle(): void {
+    for (const table of ["logs", "entries", "writer_tips", "restore_markers", "restore_bundles", "restore_bundle_logs"]) {
+      if (hasSqlTable(this.sql, table) && Number(this.sql.exec(`SELECT COUNT(*) AS count FROM ${table}`).one().count) !== 0) {
+        throw new RealmStoreError("constraint");
+      }
+    }
+  }
+
+  private rejectUnexpectedPendingBundleRows(bundle: RestoreBundle): void {
+    const expected = new Set(bundle.logs.map((archive) => archive.logId));
+    for (const table of ["logs", "entries", "writer_tips", "restore_markers"]) {
+      const rows = this.sql.exec(`SELECT DISTINCT log_id FROM ${table}`).toArray();
+      if (rows.some((row) => !expected.has(String(row.log_id)))) throw new RealmStoreError("constraint");
+    }
+  }
+
+  private verifyBundleRecord(
+    storedBundle: Record<string, unknown>,
+    inventoryRows: Array<Record<string, unknown>>,
+    bundle: RestoreBundle,
+    digest: Uint8Array,
+  ): void {
+    if (String(storedBundle.bundle_id) !== bundle.bundleId ||
+        Number(storedBundle.log_count) !== bundle.logs.length ||
+        !sameBytes(bytes(storedBundle.digest), digest) ||
+        (String(storedBundle.state) !== "pending" && String(storedBundle.state) !== "complete") ||
+        inventoryRows.length !== bundle.logs.length ||
+        (String(storedBundle.state) === "complete" && inventoryRows.some((row) => String(row.state) !== "complete"))) {
+      throw new RealmStoreError("constraint");
+    }
+    const expected = new Map(bundle.logs.map((archive) => [archive.logId, archive]));
+    for (const row of inventoryRows) {
+      const archive = expected.get(String(row.log_id));
+      if (archive === undefined || String(row.bundle_id) !== bundle.bundleId ||
+          String(row.archive_id) !== archive.archiveId || String(row.writer_id) !== archive.writerId ||
+          Number(row.entry_count) !== archive.entries.length ||
+          Number(row.total_bytes) !== archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0) ||
+          !sameBytes(bytes(row.digest), restoreManifestDigest(archive)) ||
+          (String(row.state) !== "pending" && String(row.state) !== "complete")) {
+        throw new RealmStoreError("constraint");
+      }
+      expected.delete(archive.logId);
+    }
+    if (expected.size !== 0) throw new RealmStoreError("constraint");
+  }
+}
+
+function hasSqlTable(sql: SqlStorage, name: string): boolean {
+  return sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).toArray().length > 0;
 }
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -567,6 +801,24 @@ function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): vo
   }
 }
 
+function validateRestoreBundle(bundle: RestoreBundle, maxLogs: number): void {
+  if (!Number.isSafeInteger(maxLogs) || maxLogs < 1 || maxLogs > MAX_BUNDLE_LOGS ||
+      !boundedRestoreId(bundle.bundleId) || !Array.isArray(bundle.logs) ||
+      bundle.logs.length === 0 || bundle.logs.length > MAX_BUNDLE_LOGS) {
+    throw new RealmStoreError("constraint");
+  }
+  let totalBytes = 0;
+  let previousLogId: string | undefined;
+  // Inventory policy: callers provide logs in strictly ascending log_id order.
+  for (const archive of bundle.logs) {
+    validateRestoreArchive(archive, 4096);
+    if (previousLogId !== undefined && archive.logId <= previousLogId) throw new RealmStoreError("constraint");
+    previousLogId = archive.logId;
+    totalBytes += archive.entries.reduce((sum, entry) => sum + entry.canonicalBytes.byteLength, 0);
+    if (totalBytes > 16 * 1024 * 1024) throw new RealmStoreError("constraint");
+  }
+}
+
 function boundedRestoreId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 &&
     UTF8.encode(value).byteLength <= MAX_RESTORE_ID_BYTES;
@@ -596,6 +848,21 @@ function restoreManifestDigest(archive: RestoreArchive): Uint8Array {
     hash.update(entry.canonicalBytes);
   }
   return new Uint8Array(hash.digest());
+}
+
+function restoreBundleDigest(bundle: RestoreBundle): Uint8Array {
+  const hash = createHash("sha256");
+  hash.update(BUNDLE_MARKER_PREFIX);
+  updateFrameText(hash, bundle.bundleId);
+  updateFrameLength(hash, bundle.logs.length);
+  for (const archive of bundle.logs) hash.update(restoreManifestDigest(archive));
+  return new Uint8Array(hash.digest());
+}
+
+function compactMarkerContainsDigest(marker: Uint8Array, digest: Uint8Array): boolean {
+  return marker.byteLength === RESTORE_MARKER_PREFIX.byteLength + RESTORE_MARKER_DIGEST_BYTES &&
+    sameBytes(marker.slice(0, RESTORE_MARKER_PREFIX.byteLength), RESTORE_MARKER_PREFIX) &&
+    sameBytes(marker.slice(RESTORE_MARKER_PREFIX.byteLength), digest);
 }
 
 function restoreManifest(archive: RestoreArchive): Uint8Array {

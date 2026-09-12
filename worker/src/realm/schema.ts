@@ -80,6 +80,26 @@ export const RESTORE_MARKERS_DDL = `CREATE TABLE IF NOT EXISTS restore_markers (
   state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
 ) STRICT;`;
 
+/** Internal provider-local bundle inventory. The digest is compact; entries remain in entries. */
+export const RESTORE_BUNDLES_DDL = `CREATE TABLE IF NOT EXISTS restore_bundles (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  bundle_id TEXT NOT NULL,
+  log_count INTEGER NOT NULL,
+  digest BLOB NOT NULL CHECK (length(digest) = 32),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS restore_bundle_logs (
+  bundle_id TEXT NOT NULL,
+  log_id TEXT PRIMARY KEY,
+  archive_id TEXT NOT NULL,
+  writer_id TEXT NOT NULL,
+  entry_count INTEGER NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  digest BLOB NOT NULL CHECK (length(digest) = 32),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
+) STRICT;`;
+
 function hasTable(sql: SqlStorage, name: string): boolean {
   return sql
     .exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name)
@@ -106,4 +126,5 @@ export function initSchema(sql: SqlStorage): void {
   sql.exec(ENTRY_SIZE_TRIGGER);
   initRealmMetaSchema(sql);
   sql.exec(RESTORE_MARKERS_DDL);
+  sql.exec(RESTORE_BUNDLES_DDL);
 }
