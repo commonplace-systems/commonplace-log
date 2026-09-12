@@ -9,6 +9,8 @@ defmodule Commonplace.Log.Persistence.Retention do
   """
 
   alias Commonplace.Log.Persistence.LocalSQLite
+  alias Commonplace.Log.Persistence.SQLiteServer
+  alias Commonplace.LogStore.SQLite.Server
 
   defmodule Capability do
     @type t :: %__MODULE__{
@@ -47,6 +49,26 @@ defmodule Commonplace.Log.Persistence.Retention do
   end
 
   def capability(_), do: {:error, :unsupported_retention_backend}
+
+  @doc "Returns the same capability for the production serialized SQLiteServer owner."
+  @spec capability(SQLiteServer, GenServer.server()) :: {:ok, Capability.t()} | {:error, term()}
+  def capability(SQLiteServer, server) do
+    case Server.log_id(server) do
+      _log_id when is_binary(_log_id) ->
+        {:ok,
+         %Capability{
+           adapter: SQLiteServer,
+           mode: :append_only,
+           durable_across_restart?: true,
+           deletion: :unsupported
+         }}
+
+      _ ->
+        {:error, :unsupported_retention_backend}
+    end
+  catch
+    :exit, _ -> {:error, :unsupported_retention_backend}
+  end
 
   @doc "Verifies and records an exact closure using the adapter capability."
   @spec retain(LocalSQLite.t(), verifier()) :: {:ok, Lease.t()} | {:error, term()}
