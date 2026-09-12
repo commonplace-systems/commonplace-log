@@ -5,7 +5,8 @@
       "name": "provider-restore-capacity-1",
       "path": "tmp/provider-restore-capacity-1",
       "session_id": 15959,
-      "command": "RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-1 worker/run-restore-capacity.sh",
+      "command_form": "illustrative; exact shell invocation was not retained",
+      "illustrative_command": "RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-1 worker/run-restore-capacity.sh",
       "source": "2ad737d19518650e8a31c463b5c877493756d0d5",
       "native_rc": 1,
       "verdict_rc": 1,
@@ -34,7 +35,8 @@
       "name": "provider-restore-capacity-2",
       "path": "tmp/provider-restore-capacity-2",
       "session_id": 31970,
-      "command": "RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-2 worker/run-restore-capacity.sh",
+      "command_form": "illustrative; exact shell invocation was not retained",
+      "illustrative_command": "RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-2 worker/run-restore-capacity.sh",
       "source": "d462bef6e993f8eb0e4744b96c8ab55df8e12212",
       "native_rc": 1,
       "verdict_rc": 1,
@@ -64,7 +66,8 @@
       "name": "provider-restore-capacity-3",
       "path": "tmp/provider-restore-capacity-3",
       "session_id": 49859,
-      "command": "RESTORE_CAPACITY_CONTINUE_OUTPUT=tmp/provider-restore-capacity-3 worker/run-restore-capacity-continue.sh",
+      "command": "RESTORE_CAPACITY_CONTINUE_OUTPUT=/home/jes/commonplace-log-restore-capacity/tmp/provider-restore-capacity-3 bash worker/run-restore-capacity-continue.sh",
+      "command_recorded": true,
       "source": "d733434d336b0e70a2708ed1acf69080dae42193",
       "native_rc": 0,
       "verdict_rc": 0,
@@ -104,6 +107,7 @@
     "dependency_source": "/home/jes/commonplace-log/worker/node_modules",
     "scope": "local Durable Object RealmStore SQLite only",
     "claims_excluded": ["HTTP", "cloud", "public grant", "sidecar/provider lane"],
-    "replayed_prior_failures": false
+    "prior_green_cases_replayed_in_continuation": false,
+    "originals_preserved": true
   }
 }

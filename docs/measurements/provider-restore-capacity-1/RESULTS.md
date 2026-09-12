@@ -5,7 +5,7 @@ These results summarize the three retained root-run artifacts under `tmp/`. The 
 ## provider-restore-capacity-1
 
 - Session `15959`; source `2ad737d19518650e8a31c463b5c877493756d0d5`.
-- Command: `RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-1 worker/run-restore-capacity.sh`.
+- Command form (illustrative; exact shell invocation was not retained): `RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-1 worker/run-restore-capacity.sh`.
 - Native/verdict rc `1/1`; one test, one failure. The valid canonical entry was `900265` bytes, but inserting the old whole JSON manifest failed with `SQLITE_TOOBIG`.
 - Root receipt records twelve pre/post input hashes equal and the dependency symlink absent.
 
@@ -27,7 +27,7 @@ Raw artifact SHA-256:
 ## provider-restore-capacity-2
 
 - Session `31970`; source `d462bef6e993f8eb0e4744b96c8ab55df8e12212`.
-- Command: `RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-2 worker/run-restore-capacity.sh`.
+- Command form (illustrative; exact shell invocation was not retained): `RESTORE_CAPACITY_OUTPUT=tmp/provider-restore-capacity-2 worker/run-restore-capacity.sh`.
 - Native/verdict rc `1/1`; six tests, five passes, one failure. All five authority/legacy tests passed; the capacity test stored a `62`-byte marker but timed out at Vitest's default `5000ms` before final readback was accepted.
 - Root receipt records thirteen pre/post input hashes equal, canonical bytes `900265`, marker bytes `62`, and the dependency symlink absent.
 
@@ -49,7 +49,7 @@ Raw artifact SHA-256:
 ## provider-restore-capacity-3
 
 - Session `49859`; source `d733434d336b0e70a2708ed1acf69080dae42193`.
-- Command: `RESTORE_CAPACITY_CONTINUE_OUTPUT=tmp/provider-restore-capacity-3 worker/run-restore-capacity-continue.sh`.
+- Recorded command: `RESTORE_CAPACITY_CONTINUE_OUTPUT=/home/jes/commonplace-log-restore-capacity/tmp/provider-restore-capacity-3 bash worker/run-restore-capacity-continue.sh`.
 - Native/verdict rc `0/0`; one test passed. The `900265`-byte canonical entry restored with a `62`-byte marker, acquired a lease, appended one entry, performed an actual abort/restart, and verified exact two-entry byte readback. Test time was `179ms`; runner time was `2.82s`.
 - Root receipt records twelve pre/post input hashes equal and the dependency symlink absent.
 
@@ -74,4 +74,4 @@ Raw artifact SHA-256:
 - Product source for the second run: `d462bef6e993f8eb0e4744b96c8ab55df8e12212`.
 - Fixture/runner source for the passing continuation: `d733434d336b0e70a2708ed1acf69080dae42193`.
 - The continuation used a 20-second per-test timeout and a 180-second outer timeout with the pinned provider dependencies.
-- Scope is local Durable Object `RealmStore` SQLite behavior. These runs make no HTTP, cloud, public-grant, or sidecar/provider claim; the retained first two failures were not replayed.
+- Scope is local Durable Object `RealmStore` SQLite behavior. These runs make no HTTP, cloud, public-grant, or sidecar/provider claim; the first two failure artifacts were preserved, and the continuation reran only the capacity fixture without replaying prior green authority cases.
