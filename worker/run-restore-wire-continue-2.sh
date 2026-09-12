@@ -77,11 +77,18 @@ timeout --signal=TERM --kill-after=5s 270s \
   env NODE_PATH="$provider_deps" "$provider_deps/.bin/vitest" \
   run --config "$worker_dir/vitest.config.ts" --project do \
   "test/realm/restore-wire.workers.test.ts" \
-  -t '^(imports the full sorted inventory in bounded batches and resumes after a DO restart|uses the platform container identity for the internal outbound seam)$' \
+  -t 'internal restore bundle wire (imports the full sorted inventory in bounded batches and resumes after a DO restart|uses the platform container identity for the internal outbound seam)$' \
   >"$output_dir/stdout.txt" 2>"$output_dir/stderr.txt"
 native_rc=$?
 set -e
 verdict_rc="$native_rc"
+
+if ! grep -Eq 'Tests 2 passed \| 3 skipped \(5\)' "$output_dir/stdout.txt"; then
+  echo "continuation selection/result was not exactly 2 passed and 3 skipped" >>"$output_dir/stderr.txt"
+  if [[ "$verdict_rc" -eq 0 ]]; then
+    verdict_rc=125
+  fi
+fi
 
 sha256sum "${inputs[@]}" >"$output_dir/post.sha256"
 if ! cmp -s "$output_dir/pre.sha256" "$output_dir/post.sha256"; then
