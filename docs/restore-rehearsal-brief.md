@@ -40,3 +40,23 @@ test target, read after a real test-runtime object restart, and extended with
 fresh lease authority. It does not establish a production backup, portable
 archive format, application inventory, deployed Worker behavior, or recovery
 of Directory, Chit, journal, membership, grant, or revocation state.
+
+## Retained validated-import result
+
+The focused importer run was executed once from commit `c4781db` and is
+recorded in `tmp/restore-archive-1/root-tool-completion.json`: session
+`43557`, native exit code `0`, four tests passed, and 3.37 seconds total.
+The pre/post input records are identical:
+
+```text
+9432cd1fbcd9745424ed2e66c1f3b3a28ffd3c08d818554126e51fed9e6926e3  test/realm/restore.archive.rehearsal.workers.test.ts
+c58243da2b1d7e7fe64b079388e3c63bb6d9a30d21a9a2d2c9772df9f98b0947  package-lock.json
+```
+
+The test-only importer validates the actual entry/JCS contract, exports from
+an explicitly supplied log through frontier and writer reads, preflights IDs
+and coordinates, resumes missing rows, and refuses malformed, conflicting,
+or unrelated-writer input before mutation. The shuffled second import is a
+full remaining batch; it is not evidence of a bounded shuffled-prefix
+checkpoint. This remains a local workerd/RealmStore rehearsal with no app
+inventory, HTTP restore API, cloud restore, or whole-application claim.
