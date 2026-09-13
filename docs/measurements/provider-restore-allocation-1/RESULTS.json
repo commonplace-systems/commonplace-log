@@ -1,0 +1,131 @@
+{
+  "artifact": "provider-restore-allocation",
+  "failure_observation": {
+    "cases": [
+      "deployment allocation ingress refuses allocation into a realm created through the legacy create route",
+      "deployment allocation ingress rejects missing, wrong, and realm-secret bearer authorization before allocation"
+    ],
+    "message": "WorkersTestRunner reported an isolated-storage pop failure; retained stderr identifies a .sqlite-shm path where .sqlite was expected. The cause is not attributed beyond that receipt.",
+    "stage": "Vitest isolated-storage cleanup",
+    "unconsumed_cases": 3
+  },
+  "final_receipt": "b527b2",
+  "input_equality": true,
+  "native_rc": 1,
+  "native_receipt": {
+    "assertions_ok": false,
+    "owned": [
+      {
+        "forced_cleanup_hold": false,
+        "group_absent": true,
+        "kill_sent": false,
+        "label": "allocation-fixture",
+        "leader_exit": 1,
+        "pgid": 1977335,
+        "pid": 1977335,
+        "term_sent": false
+      }
+    ],
+    "stderr_diagnostic_count": 0,
+    "timed_out": false
+  },
+  "outer_rc": 125,
+  "process_groups": {
+    "cleanup_finally": true,
+    "groups": [
+      {
+        "forced_cleanup_hold": false,
+        "group_absent": true,
+        "kill_sent": false,
+        "label": "allocation-fixture",
+        "leader_exit": 1,
+        "pgid": 1977335,
+        "pid": 1977335,
+        "term_sent": false
+      }
+    ],
+    "kill_grace_seconds": 2,
+    "term_grace_seconds": 5
+  },
+  "raw_output_manifest": "output-manifest-1.json",
+  "raw_output_manifest_sha256": "4d194bc5095850f28d84f3bba23a7aa09cfe74afa24b039a9ffc9f0175372b83",
+  "raw_receipts": {
+    "command.json": "5e0dfdd8056f1ab5eaf7415ac3b8023fbfe6b8681366ccac07ae7062b5c8fa30",
+    "fixture-result.json": "c782c9ed7d41eeb3f9a1ab100edc5518bbdfa551986b84469064482e9fcd75a3",
+    "fixture-stderr": "36922520b33b1e79c158562935d13939dcb453a94ad7931b9fc99517019a7e0e",
+    "fixture-stdout": "30f8cab55eaba2bff3a45a35748baaa2f4ceb3b4e896922f63da60b1db8de346",
+    "input-equality.json": "80e03e83bc5f9d59a97758aed0a5de6075f7092d3a6887432bd33380ccbc07bd",
+    "input-sha256.json": "68dd438ae7e3c0eb5590cef3044d751fb6bb1888e0bf03db0a11509c00cc15de",
+    "native-exit.json": "32f4658535d565f0f19f0a622fa90013973b9161f15468f51817867585228375",
+    "native.rc": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "post-sha256.json": "68dd438ae7e3c0eb5590cef3044d751fb6bb1888e0bf03db0a11509c00cc15de",
+    "process-groups.json": "eb71c568a5543713a89394b72f2c046aeb6d422cddca0760244b123a3ad36da8",
+    "runtime-membership.json": "3e77b07518fe287a92f122e557942da1ad03ec0d006d9799809f882fc4a0663d",
+    "source-pins.json": "9585610a732f3ab840c8114015864915ec5793c91d2b8ebcbd9ecbfb82e54a2e",
+    "verdict.json": "3e4c270af88b2c866e054439b04349eca37f214a740ba3c78ba79d14cc223ef6",
+    "verdict.rc": "a5e45837a2959db847f7e67a915d0ecaddd47f943af2af5fa6453be497faabca"
+  },
+  "root_session": 56875,
+  "runtime_membership": {
+    "added": [],
+    "hashes_equal": true,
+    "post_count": 3221,
+    "pre_count": 3221,
+    "removed": []
+  },
+  "scope_limits": [
+    "original full-suite attempt only; no rerun in this receipt",
+    "local Vitest Cloudflare worker-pool assertion only",
+    "no cloud, deployment, account activation, credential, or production-route proof",
+    "no source or isolation-strategy change made for this receipt"
+  ],
+  "source": {
+    "allocation_source": "5f9e810665ba3a52085dcde9b02e53ddbc180fa5",
+    "fixture_commit": "cb490e6158e9011ea9d3193c0aa00eead457e5a5",
+    "fixture_sha256": "09830b29a16ecee8a4a80cbeedfbce4c67b7e025af1f9fa136cce5651b535c24",
+    "provider_worktree_head": "c4c7e246b611b8a43c9bce6b4a7aa95eda10e1ea",
+    "source_base": "a15a9f4cdbab111db2a1c7fb979203b23732113b",
+    "test_file": "worker/test/realm/allocate.workers.test.ts"
+  },
+  "stage": "provider-restore-allocation-1",
+  "status": "incomplete_failure",
+  "tests": {
+    "assertions": [
+      {
+        "full_name": "deployment allocation ingress acknowledges the first allocation and returns the exact result on an idempotent retry",
+        "status": "passed"
+      },
+      {
+        "full_name": "deployment allocation ingress refuses a different operation and a conflicting secret without changing the allocation",
+        "status": "passed"
+      },
+      {
+        "full_name": "deployment allocation ingress refuses allocation into a realm created through the legacy create route",
+        "status": "failed"
+      },
+      {
+        "full_name": "deployment allocation ingress rejects missing, wrong, and realm-secret bearer authorization before allocation",
+        "status": "failed"
+      },
+      {
+        "full_name": "deployment allocation ingress refuses an internal allocation path and spoof markers for wrong and realm bearers",
+        "status": "pending"
+      },
+      {
+        "full_name": "deployment allocation ingress authenticates the supplied secret and never persists its plaintext",
+        "status": "pending"
+      },
+      {
+        "full_name": "deployment allocation ingress rejects malformed secret material instead of treating a non-hex value as an allocation credential",
+        "status": "pending"
+      }
+    ],
+    "defined": 7,
+    "failed": 2,
+    "passed": 2,
+    "pending": 3,
+    "skipped": 0,
+    "todo": 0
+  },
+  "verdict_rc": 125
+}
