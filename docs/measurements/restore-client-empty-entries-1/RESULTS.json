@@ -1,0 +1,187 @@
+{
+  "emitted_ebin": {
+    "algorithm": "SHA-256 over emitted BEAM file bytes",
+    "file_count": 8,
+    "files": {
+      "Elixir.Commonplace.Log.Entry.beam": {
+        "bytes": 17472,
+        "sha256": "e13feb817e7a761df5629fcd0470316ca1617cdcccd3e82d956fbf65bf816a2e"
+      },
+      "Elixir.Commonplace.Log.Jcs.beam": {
+        "bytes": 10612,
+        "sha256": "3efa3ba62305520629eb6f3331d55daaf299889f6ac41a1a613e7a6b7511946b"
+      },
+      "Elixir.Commonplace.Log.Persistence.CloudflareSidecar.Httpc.beam": {
+        "bytes": 4116,
+        "sha256": "a4638a0ee6089c767ae80ef2535ed8a29b2d487f6ebb5101a4aafe1842faba85"
+      },
+      "Elixir.Commonplace.Log.Persistence.CloudflareSidecar.Transport.beam": {
+        "bytes": 2180,
+        "sha256": "64ee438c7143eec3552869ce1cf1bb6b1366e535da36ed5338db64b0bc134877"
+      },
+      "Elixir.Commonplace.Log.Persistence.CloudflareSidecar.beam": {
+        "bytes": 64944,
+        "sha256": "754bda978863bf2c214f6b145ff309c2d098eb1fde9b92c012cfe3b9f3d853da"
+      },
+      "Elixir.Commonplace.Log.Persistence.CommitPlan.beam": {
+        "bytes": 4124,
+        "sha256": "8f6679419bcb8b9c12c284b3a7e5f3398ce0cfae38628fa0cf1cd55b26fd1c29"
+      },
+      "Elixir.Commonplace.Log.Persistence.ReadSet.beam": {
+        "bytes": 4204,
+        "sha256": "f1b8779f9f2a09ec2deef88bc05b288592b1e1321e905eb2957d679d980e7e6e"
+      },
+      "Elixir.Commonplace.Log.Persistence.beam": {
+        "bytes": 4436,
+        "sha256": "b5ec4183b737f7590314645da4e32e7380389d348d6bcb932f1e2b23fa581dea"
+      }
+    },
+    "root": "tmp/restore-client-empty-entries-1/isolated-ebin"
+  },
+  "input_inventory": {
+    "manifest_sha256": {
+      "post": "70f55cdbad8e45deb6807d42be3a32d1960ea662dc9b980991b3b7268d053e2d",
+      "pre": "70f55cdbad8e45deb6807d42be3a32d1960ea662dc9b980991b3b7268d053e2d"
+    },
+    "post_cached_beams": 847,
+    "post_manifest": "tmp/restore-client-empty-entries-1/input-sha256-post.json",
+    "post_source_files": 32,
+    "pre_cached_beams": 847,
+    "pre_manifest": "tmp/restore-client-empty-entries-1/input-sha256.json",
+    "pre_post_equal": true,
+    "pre_source_files": 32,
+    "total_inputs": 879
+  },
+  "native": {
+    "app_result_match": true,
+    "cleanup_grace_seconds": 5,
+    "cleanup_hold": null,
+    "count_match": true,
+    "first_signal": null,
+    "forced_kill": false,
+    "input_equal": true,
+    "native_rc": 0,
+    "pgid": 1328694,
+    "pgid_absent": true,
+    "pgid_state": "absent",
+    "pid": 1328694,
+    "pid_absent": true,
+    "pid_state": "absent",
+    "received_signal": null,
+    "received_signal_number": null,
+    "runner_error": null,
+    "timed_out": false,
+    "timeout_seconds": 180
+  },
+  "packet": "docs/measurements/restore-client-empty-entries-1",
+  "raw_artifacts": {
+    "tmp/restore-client-empty-entries-1/app-result.json": {
+      "bytes": 133,
+      "sha256": "6da33b1aad0515aa9308869e0db6872b0e6feeacc8f8bd9379b4390b4f12a318"
+    },
+    "tmp/restore-client-empty-entries-1/app-result.raw.json": {
+      "bytes": 50,
+      "sha256": "c1870216cbd0bf25837d435e7b999657ca03a47745cbafb1d01b7623cb59a121"
+    },
+    "tmp/restore-client-empty-entries-1/command.json": {
+      "bytes": 5391,
+      "sha256": "dd2570ca36fa40b8f502d939bf464c9b80144b227d9ccb84e59aae144b2cb473"
+    },
+    "tmp/restore-client-empty-entries-1/input-equality.json": {
+      "bytes": 68,
+      "sha256": "5ad5d115a1bf388eef0b8ab0d86c895318cb4058cf43faf0d7be985737305452"
+    },
+    "tmp/restore-client-empty-entries-1/input-sha256-post.json": {
+      "bytes": 167657,
+      "sha256": "70f55cdbad8e45deb6807d42be3a32d1960ea662dc9b980991b3b7268d053e2d"
+    },
+    "tmp/restore-client-empty-entries-1/input-sha256.json": {
+      "bytes": 167657,
+      "sha256": "70f55cdbad8e45deb6807d42be3a32d1960ea662dc9b980991b3b7268d053e2d"
+    },
+    "tmp/restore-client-empty-entries-1/native-exit.json": {
+      "bytes": 463,
+      "sha256": "67ffcb0f3b8cc2e7c49df9829b5c393aa478b88b1ad29ac85e965be951423b42"
+    },
+    "tmp/restore-client-empty-entries-1/native.rc": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "tmp/restore-client-empty-entries-1/process-start.json": {
+      "bytes": 50,
+      "sha256": "79f728f1f7e4223a03821d6bf39ecb4e7a2486d0d868a0328a48e6780ed755a1"
+    },
+    "tmp/restore-client-empty-entries-1/root-completion.json": {
+      "bytes": 353,
+      "sha256": "5c93be94d8ba0f647289945758f90afd97e19d8e0f4671571e1d0f8d16d5ceda"
+    },
+    "tmp/restore-client-empty-entries-1/source-pins.json": {
+      "bytes": 1365,
+      "sha256": "9869404a6bab83e4891294c6e8e18bbbd1b815ef598ffd89ba52118b4d0e1a7a"
+    },
+    "tmp/restore-client-empty-entries-1/stderr": {
+      "bytes": 3796,
+      "sha256": "f070fe4235ef24537cffd0e1144cd46282f122c27e2dc8da636c0f943cf44203"
+    },
+    "tmp/restore-client-empty-entries-1/stdout": {
+      "bytes": 204,
+      "sha256": "3e7caa3f5f85c09d74cf813b6148e46215bc377b6ef55d53196ebba408f4b314"
+    },
+    "tmp/restore-client-empty-entries-1/verdict.json": {
+      "bytes": 182,
+      "sha256": "a06d1d183e1a1e1ff657ca163e0e31a881a0470bcaa2e1e649079141e7ff9946"
+    },
+    "tmp/restore-client-empty-entries-1/verdict.rc": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "raw_output": "tmp/restore-client-empty-entries-1",
+  "root_completion": {
+    "excluded": 7,
+    "exec_session_id": 34889,
+    "failures": 0,
+    "group_absent": true,
+    "interpretation": "Two selected empty-archive encoding/nullwriter controls passed; seven existing tests excluded; mockedtransport only, no HTTP/provider request.",
+    "native_rc": 0,
+    "pgid": 1328694,
+    "skipped": 0,
+    "tool_reported_outer_rc": 0,
+    "total": 9
+  },
+  "schema": "restore-client-empty-entries-results-v1",
+  "scope": {
+    "account_auth_or_restore": false,
+    "actual_provider_http": false,
+    "claim": "bounded CloudflareSidecar restore request encoding controls",
+    "defined_tests": 9,
+    "excluded_tests": 7,
+    "failures": 0,
+    "selected_tests": [
+      "encodes a configured empty archive alongside non-empty logs",
+      "refuses a null writer before transport for an otherwise empty archive"
+    ],
+    "skipped": 0,
+    "transport": "injected mock transport"
+  },
+  "source": {
+    "accepted_base_commit": "32c1889023be5130428cfa128556bef39b367dda",
+    "beam_root": "/home/jes/codex-save-state-1/tmp/origin-receipt-1/_build/test/lib",
+    "cached_beam_count": 847,
+    "compile_sources": [
+      "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/lib/commonplace/log/jcs.ex",
+      "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/lib/commonplace/log/entry.ex",
+      "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/lib/commonplace/log/persistence.ex",
+      "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/lib/commonplace/log/persistence/cloudflare_sidecar/transport.ex",
+      "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/lib/commonplace/log/persistence/cloudflare_sidecar/httpc.ex",
+      "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/lib/commonplace/log/persistence/cloudflare_sidecar.ex"
+    ],
+    "elixir": "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir",
+    "erlang_bin": "/home/jes/.asdf/installs/erlang/27.3.4.8/bin",
+    "expected_excluded": 7,
+    "expected_total": 9,
+    "selected_tag": "restore_empty_entries",
+    "source_commit": "17ae2d1b8f0ace103208bea80e0936852626d084",
+    "test_file": "/home/jes/commonplace-log-restore-client-empty-entries/commonplace_log/test/restore_bundle_client_test.exs"
+  }
+}
