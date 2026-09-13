@@ -1,0 +1,7 @@
+{
+  "mode": "dry-run",
+  "containers_rollout": "none",
+  "upload": false,
+  "cloudflare_credentials": false,
+  "docker_build": false
+}
