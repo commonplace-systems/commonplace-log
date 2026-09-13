@@ -28,7 +28,9 @@ python3 docs/measurements/provider-log-inventory-1/run_provider_log_inventory.py
 
 The runner archives the clean current commit into the fresh output, binds the
 pinned cached worker dependencies from `/home/jes/commonplace-log/worker/node_modules`,
-and invokes only `worker/test/realm/log-inventory.workers.test.ts`. It records
+uses the repository root Vitest project with `--project do`, and invokes only
+`worker/test/realm/log-inventory.workers.test.ts`. Its generated Vitest/Vite
+cache is inside the fresh output. It records
 the exact argv, source and dependency SHA-256 maps before and after, including
 post-run dependency membership discovery, stdout, stderr, native/verdict
 status, and owned process-group cleanup. It uses a

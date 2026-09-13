@@ -112,6 +112,7 @@ describe("internal log inventory wire", () => {
       headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
     });
     expect(authenticated.status).toBe(404);
+    expect(await authenticated.json()).toEqual({ ok: false, error: { code: "not_found" } });
 
     expect(await internal(target, "/restore-bundle-batch", restoreBody())).toEqual({
       status: 200,

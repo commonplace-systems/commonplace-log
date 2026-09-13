@@ -83,9 +83,21 @@ with tarfile.open(fileobj=archive.stdout, mode="r|") as stream:
 if archive.wait() != 0:
     raise SystemExit("git archive failed")
 (source / "worker/node_modules").symlink_to(deps)
+cache_dir = output / "vite-cache"
+cache_dir.mkdir(parents=True, exist_ok=True)
+cache_literal = json.dumps(str(cache_dir))
+(source / "worker/vitest.inventory.workers.config.ts").write_text(
+    f'import base from "./vitest.workers.config.ts";\n'
+    f'export default {{ ...base, cacheDir: {cache_literal}, test: {{ ...base.test, cache: {{ dir: {cache_literal} }} }} }};\n'
+)
+(source / "worker/vitest.inventory.config.ts").write_text(
+    f'import base from "./vitest.config.ts";\n'
+    f'const projects = base.test?.projects ?? [];\n'
+    f'export default {{ ...base, cacheDir: {cache_literal}, test: {{ ...base.test, cache: {{ dir: {cache_literal} }}, projects: [projects[0], "./vitest.inventory.workers.config.ts"] }} }};\n'
+)
 command = [
     "/usr/bin/node", str(source / "worker/node_modules/vitest/vitest.mjs"), "run",
-    "--config", str(source / "worker/vitest.workers.config.ts"),
+    "--config", str(source / "worker/vitest.inventory.config.ts"), "--project", "do",
     str(source / "worker/test/realm/log-inventory.workers.test.ts"),
     "--reporter=json", "--outputFile", str(output / "test-result.json"),
 ]
