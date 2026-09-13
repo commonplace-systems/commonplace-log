@@ -6,7 +6,7 @@ These are the two retained native attempts for the internal provider log invento
 
 Run 1 was session `47526`, with native rc `1` and wrapper verdict `125`. Its Vitest JSON reported four defined assertions, zero passed, zero failed, and four pending. The retained stderr reports failure to pop the isolated storage stack after the first mixed inventory case, with an `.sqlite-shm` path, followed by Vitest warning that tests were still running while producing the JSON report. This is preserved as an incomplete failed run.
 
-The runner used the direct `vitest.workers.config.ts` invocation from source commit `75c507b1d93a4a2d9d862ee49e559fa18e45b5bc`. It recorded 25 direct source inputs and 3221 cached runtime files. Runtime membership stayed at 3221 files with no additions or removals, while six shared `.vite/vitest` files changed. The direct PRE/POST equality result is therefore false. Its process group exited with rc 1 and was absent without TERM or KILL.
+The runner used the direct `vitest.workers.config.ts` invocation from authoritative launch source commit `75c507b8f11d3ad04011437018ae60e35560ec1d`, as recorded in the retained `command.json`, `source-pins.json`, and launch checkout. An earlier root completion annotation carried a conflicting full SHA; that annotation is retained in the raw evidence but is not authoritative. The run recorded 25 direct source inputs and 3221 cached runtime files. Runtime membership stayed at 3221 files with no additions or removals, while six shared `.vite/vitest` files changed. The direct PRE/POST equality result is therefore false. Its process group exited with rc 1 and was absent without TERM or KILL.
 
 ## Run 2
 

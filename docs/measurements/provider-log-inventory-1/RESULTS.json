@@ -29,6 +29,7 @@
   },
   "runs": [
     {
+      "authoritative_source_commit": "75c507b8f11d3ad04011437018ae60e35560ec1d",
       "command": {
         "argv": [
           "/usr/bin/node",
@@ -1622,6 +1623,7 @@
         "wait_error": null
       },
       "path": "tmp/provider-log-inventory-1",
+      "provenance_note": "The retained root-completion source_commit differs from the authoritative launch command/source-pins commit; raw root-completion is preserved as an annotation.",
       "root_completion": {
         "completed_utc": "2026-09-12T23:58:30.293523+00:00",
         "inputs_equal": false,
@@ -1630,6 +1632,8 @@
         "source_commit": "75c507b1d93a4a2d9d862ee49e559fa18e45b5bc",
         "tool": "exec_command/write_stdin"
       },
+      "root_completion_source_annotation": "75c507b1d93a4a2d9d862ee49e559fa18e45b5bc",
+      "root_completion_source_annotation_authoritative": false,
       "runner_worktree_head": "75c507b8f11d3ad04011437018ae60e35560ec1d",
       "runtime_hash_count": 3221,
       "runtime_membership": {
@@ -1649,7 +1653,7 @@
         "removed": []
       },
       "session_id": 47526,
-      "source_commit": "75c507b1d93a4a2d9d862ee49e559fa18e45b5bc",
+      "source_commit": "75c507b8f11d3ad04011437018ae60e35560ec1d",
       "symlinks": [
         {
           "path": "source/worker/node_modules",
@@ -1793,6 +1797,7 @@
       }
     },
     {
+      "authoritative_source_commit": "804c4d43d7d56ed16942ea365733bd30e0674eaa",
       "command": {
         "argv": [
           "/usr/bin/node",
@@ -3459,6 +3464,8 @@
         "source_commit": "804c4d4",
         "tool": "exec_command/write_stdin"
       },
+      "root_completion_source_annotation": "804c4d4",
+      "root_completion_source_annotation_authoritative": true,
       "runner_worktree_head": "804c4d43d7d56ed16942ea365733bd30e0674eaa",
       "runtime_hash_count": 3221,
       "runtime_membership": {
@@ -3471,7 +3478,7 @@
         "removed": []
       },
       "session_id": 96700,
-      "source_commit": "804c4d4",
+      "source_commit": "804c4d43d7d56ed16942ea365733bd30e0674eaa",
       "symlinks": [
         {
           "path": "source/worker/node_modules",
