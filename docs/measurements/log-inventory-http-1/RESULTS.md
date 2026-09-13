@@ -1,0 +1,11 @@
+# Real HTTP provider log inventory results
+
+The retained run is accepted: root session `29316` used provider runner commit `2efa6d33537205a288cfb299440d5abca6ce09b4` and accepted client source commit `32c1889023be5130428cfa128556bef39b367dda`. The ExUnit result was one defined, one passing, zero failing, excluded, or skipped test across 15 actual loopback HTTP requests. The raw output directory remains unchanged at `/home/jes/commonplace-log-restore-inventory-http/tmp/log-inventory-http-1`.
+
+The workflow provisioned a fresh local SQLite-backed Durable Object realm, checked malformed inventory input, restored two sorted logs in two batches, observed the pending `obsolete_epoch` fence, verified sorted metadata and writer tips, replayed the completed bundle without changing generation, then created and committed a third ordinary log and read its exact canonical bytes back. This is a fixed-target local wrapper and synthetic fixture. It makes no public authentication, cloud deployment, account activation, or production provider claim.
+
+The native record reports compile rc 0, test rc 0, native rc 0, no timeout, and no forced cleanup hold. Wrangler exited 143 during intentional TERM cleanup. All three known process groups were absent afterward; no KILL was sent. The direct input map contains 4101 inputs: 26 provider source inputs, 7 client compile inputs, 847 cached BEAMs, and 3221 worker runtime files. PRE/POST input equality and runtime membership were independently checked and remained equal with no additions or removals.
+
+The retained `stderr` contains an Elixir warning about latin1 native name encoding because the child environment omitted `LANG`. The test still passed and native rc was zero; this warning is recorded without altering the raw stream or replaying the run.
+
+`RESULTS.json` includes exact retained argv, native/process records, hashes for every top-level raw artifact, and file maps for the copied provider source, emitted client BEAM directory, private state/config/home/tmp directories, and their directory-manifest serialization. It records the accepted client pin separately from the current docs-only client worktree HEAD `a11fdd9aa352d79c8613ab99e1e739d852ee2d57`.
