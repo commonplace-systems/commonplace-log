@@ -70,6 +70,16 @@ export const REALM_META_DDL = `CREATE TABLE realm_meta (
   created_at  TEXT NOT NULL
 ) STRICT;`;
 
+/** Operator-owned idempotent realm allocation identity; no plaintext secret is stored. */
+export const REALM_ALLOCATIONS_DDL = `CREATE TABLE realm_allocations (
+  singleton       INTEGER PRIMARY KEY CHECK (singleton = 1),
+  realm_id        TEXT NOT NULL,
+  operation_id    TEXT NOT NULL,
+  operation_hash  BLOB NOT NULL CHECK (length(operation_hash) = 32),
+  secret_hash     BLOB NOT NULL CHECK (length(secret_hash) = 32),
+  created_at      TEXT NOT NULL
+) STRICT;`;
+
 export const RESTORE_MARKERS_DDL = `CREATE TABLE IF NOT EXISTS restore_markers (
   log_id TEXT PRIMARY KEY,
   archive_id TEXT NOT NULL,
@@ -108,6 +118,7 @@ function hasTable(sql: SqlStorage, name: string): boolean {
 
 export function initRealmMetaSchema(sql: SqlStorage): void {
   if (!hasTable(sql, "realm_meta")) sql.exec(REALM_META_DDL);
+  if (!hasTable(sql, "realm_allocations")) sql.exec(REALM_ALLOCATIONS_DDL);
 }
 
 /** Apply the pinned layout, followed only by additive epoch and trigger DDL. */

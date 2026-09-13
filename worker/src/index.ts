@@ -1,6 +1,10 @@
 import type { RealmContainer } from "./realm/container";
 import type { RealmNode } from "./realm/node";
-import { REALM_CREATE_HEADER, REALM_ID_HEADER } from "./realm/realm_auth";
+import {
+  REALM_ALLOCATE_HEADER,
+  REALM_CREATE_HEADER,
+  REALM_ID_HEADER,
+} from "./realm/realm_auth";
 
 export { CommonplaceLog } from "./commonplace-log-do";
 export { RealmContainer } from "./realm/container";
@@ -111,7 +115,10 @@ class IngressBodyFailure extends Error {
  * request receives the ingress 413/408 result even when its bearer is absent
  * or wrong; this is an explicit bounded-input policy, not an auth guarantee.
  */
-async function readBufferedWireBody(request: Request): Promise<Uint8Array> {
+async function readBufferedWireBody(
+  request: Request,
+  maxBytes = MAX_BUFFERED_BODY_BYTES,
+): Promise<Uint8Array> {
   if (request.body === null) return new Uint8Array();
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -126,7 +133,7 @@ async function readBufferedWireBody(request: Request): Promise<Uint8Array> {
       if (abandoned) throw new IngressBodyFailure("timeout");
       if (next.done) break;
       total += next.value.byteLength;
-      if (total > MAX_BUFFERED_BODY_BYTES) throw new IngressBodyFailure("oversize");
+      if (total > maxBytes) throw new IngressBodyFailure("oversize");
       chunks.push(next.value);
     }
     if (abandoned) throw new IngressBodyFailure("timeout");
@@ -192,6 +199,29 @@ async function createBody(request: Request): Promise<{ locationHint?: LocationHi
   }
 }
 
+async function allocationBody(
+  request: Request,
+): Promise<{ operationId: string; secret: string; locationHint?: LocationHint } | null> {
+  try {
+    const raw = await readBufferedWireBody(request, 4_096);
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (Object.keys(row).some((key) => !["operation_id", "realm_secret", "location_hint"].includes(key))) return null;
+    if (typeof row.operation_id !== "string" || new TextEncoder().encode(row.operation_id).byteLength > 256 || row.operation_id.length === 0) return null;
+    if (typeof row.realm_secret !== "string" || !/^[0-9a-f]{64}$/.test(row.realm_secret)) return null;
+    if (row.location_hint !== undefined &&
+        (typeof row.location_hint !== "string" || !LOCATION_HINTS.has(row.location_hint))) return null;
+    return {
+      operationId: row.operation_id,
+      secret: row.realm_secret,
+      ...(row.location_hint === undefined ? {} : { locationHint: row.location_hint as LocationHint }),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function handleIngress(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
@@ -230,6 +260,30 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
   }
 
+  const isAllocate = request.method === "POST" && route.sidecarPath === "/allocate";
+  if (isAllocate) {
+    const expected = env.GATEWAY_TOKEN;
+    if (typeof expected !== "string" || expected.length === 0) {
+      return fail("gateway_not_configured", 503);
+    }
+    if (presented === null || !tokensEqual(presented, expected)) return fail("unauthorized", 401);
+    const decoded = await allocationBody(request);
+    if (decoded === null) return fail("malformed_request", 400);
+
+    const target = new URL(request.url);
+    target.pathname = "/realm/allocate";
+    const headers = new Headers(request.headers);
+    headers.delete("authorization");
+    headers.set(REALM_ALLOCATE_HEADER, "1");
+    headers.set(REALM_ID_HEADER, route.realmId);
+    const forwarded = new Request(target, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ operation_id: decoded.operationId, realm_secret: decoded.secret }),
+    });
+    return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
+  }
+
   // Realm routes are scoped in the DO. The gateway checks syntax only.
   const needsBufferedWireBody = request.method === "POST" && BUFFERED_WIRE_PATHS.has(route.sidecarPath);
   let bufferedBody: Uint8Array | undefined;
@@ -248,6 +302,7 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
   headers.delete("transfer-encoding");
   headers.delete(REALM_CREATE_HEADER);
   headers.delete(REALM_ID_HEADER);
+  headers.delete(REALM_ALLOCATE_HEADER);
   const forwarded = needsBufferedWireBody
     ? new Request(target, { method: request.method, headers, body: bufferedBody })
     : new Request(target, request);
