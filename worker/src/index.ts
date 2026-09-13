@@ -104,6 +104,9 @@ class IngressBodyFailure extends Error {
 /**
  * Buffer only the bounded provider wire body so the DO receives an independent
  * stream. This is transport admission: it does not parse or validate JSON.
+ * The 32 MiB bound is retained payload, not a total-memory bound: while the
+ * final contiguous copy is built, chunks plus that copy can approach 64 MiB,
+ * in addition to runtime stream overhead.
  * Because buffering precedes realm authorization, an over-limit or timed-out
  * request receives the ingress 413/408 result even when its bearer is absent
  * or wrong; this is an explicit bounded-input policy, not an auth guarantee.
@@ -115,15 +118,18 @@ async function readBufferedWireBody(request: Request): Promise<Uint8Array> {
   let total = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let finished = false;
+  let abandoned = false;
 
   const readAll = async (): Promise<Uint8Array> => {
     while (true) {
       const next = await reader.read();
+      if (abandoned) throw new IngressBodyFailure("timeout");
       if (next.done) break;
       total += next.value.byteLength;
       if (total > MAX_BUFFERED_BODY_BYTES) throw new IngressBodyFailure("oversize");
       chunks.push(next.value);
     }
+    if (abandoned) throw new IngressBodyFailure("timeout");
     const body = new Uint8Array(total);
     let offset = 0;
     for (const chunk of chunks) {
@@ -141,6 +147,7 @@ async function readBufferedWireBody(request: Request): Promise<Uint8Array> {
     finished = true;
     return body;
   } catch (error) {
+    abandoned = true;
     if (error instanceof IngressBodyFailure) throw error;
     throw new IngressBodyFailure("malformed");
   } finally {
