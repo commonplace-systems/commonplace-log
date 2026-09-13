@@ -168,6 +168,15 @@ def manifest(runtime_inputs):
     }
 
 
+original_source_hashes = {
+    str(path.relative_to(ROOT)): sha256(path) for path in source_inputs
+}
+archived_source_hashes = {
+    str(path.relative_to(source_root)): sha256(source_root / path.relative_to(ROOT))
+    for path in source_inputs
+}
+if archived_source_hashes != original_source_hashes:
+    raise SystemExit("archived executed source differs from provider source inputs")
 runtime_pre = discover_runtime()
 pre = manifest(runtime_pre)
 (OUT / "input-sha256.json").write_text(json.dumps(pre, indent=2, sort_keys=True) + "\n")
@@ -356,12 +365,18 @@ def selected_result_ok(summary, expected_titles):
     assertions = summary.get("assertions", [])
     if not assertions:
         return False
-    selected = [item for item in assertions if item["title"] in expected_titles]
-    passed_titles = {item["title"] for item in assertions if item["status"] == "passed"}
+    selected = [item for item in assertions if item["full_name"] in expected_titles]
+    passed_names = {item["full_name"] for item in assertions if item["status"] == "passed"}
+    unexpected_active = [
+        item for item in assertions
+        if item["full_name"] not in expected_titles
+        and item["status"] in {"passed", "failed", "todo", "pending"}
+    ]
     return (
         len(selected) == len(expected_titles)
-        and passed_titles == set(expected_titles)
-        and all(item["status"] == "passed" and item["full_name"].endswith(item["title"])
+        and passed_names == set(expected_titles)
+        and not unexpected_active
+        and all(item["status"] == "passed"
                 for item in selected)
     )
 
