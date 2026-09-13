@@ -160,6 +160,7 @@ describe("internal restore of configured empty owned logs", () => {
       body: JSON.stringify({}),
     });
     expect(authenticated.status).toBe(404);
+    expect(await authenticated.json()).toEqual({ ok: false, error: { code: "not_found" } });
 
     const restore = await internal(target, "/restore-bundle-batch", {
       bundle_id: "empty-owned-bundle",
