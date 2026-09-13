@@ -22,6 +22,8 @@
     "test/do",
     "test/realm/**/*.workers.test.ts",
     "test/realm/helpers.ts",
+    // Byte-pinned 76f9028 Workers code (LOG-LEGACY-REALM-FIX-1); typechecked by tsconfig.workers.json.
+    "test/realm/fixtures",
     "test/backup"
   ]
 }

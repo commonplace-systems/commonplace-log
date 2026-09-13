@@ -1,0 +1,118 @@
+/**
+ * The proposal §7.2 block, verbatim. Additions required by the persistence
+ * contract live in separate constants and init steps below this pinned block.
+ */
+export const SCHEMA_DDL = `CREATE TABLE logs (
+  log_id         TEXT PRIMARY KEY,
+  format_version INTEGER NOT NULL,
+  revision       INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE entries (
+  arrival_seq    INTEGER PRIMARY KEY AUTOINCREMENT,
+  log_id         TEXT NOT NULL,
+  entry_id       TEXT NOT NULL,
+  writer_id      TEXT NOT NULL,
+  writer_seq     INTEGER NOT NULL,
+  prev_entry_id  TEXT,
+  created_at     TEXT NOT NULL,
+  canonical_json BLOB NOT NULL,
+  received_at_ms INTEGER NOT NULL,
+  UNIQUE (log_id, entry_id),
+  UNIQUE (log_id, writer_id, writer_seq)
+) STRICT;
+
+CREATE INDEX entries_by_log_writer
+  ON entries (log_id, writer_id, writer_seq);
+
+CREATE INDEX entries_by_log_arrival
+  ON entries (log_id, arrival_seq);
+
+CREATE TABLE writer_tips (
+  log_id       TEXT NOT NULL,
+  writer_id    TEXT NOT NULL,
+  last_seq     INTEGER NOT NULL,
+  last_entry_id TEXT NOT NULL,
+  PRIMARY KEY (log_id, writer_id)
+) STRICT;
+`;
+
+export const IMMUTABILITY_TRIGGERS = `CREATE TRIGGER IF NOT EXISTS entries_no_update
+  BEFORE UPDATE ON entries
+BEGIN
+  SELECT RAISE(ABORT, 'entries are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS entries_no_delete
+  BEFORE DELETE ON entries
+BEGIN
+  SELECT RAISE(ABORT, 'entries are immutable');
+END;
+`;
+
+export const ENTRY_SIZE_TRIGGER = `CREATE TRIGGER IF NOT EXISTS entries_size_check
+  BEFORE INSERT ON entries
+  WHEN length(NEW.canonical_json) > 1048576
+BEGIN
+  SELECT RAISE(ABORT, 'entry is too large');
+END;
+`;
+
+/** Durable single-lane identity, additive to the pinned proposal layout. */
+export const DOCUMENT_WRITER_ID_COLUMN_DDL =
+  "ALTER TABLE logs ADD COLUMN document_writer_id TEXT";
+
+/** Realm existence and authorization, additive to the pinned proposal layout. */
+export const REALM_META_DDL = `CREATE TABLE realm_meta (
+  singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+  secret_hash BLOB NOT NULL CHECK (length(secret_hash) = 32),
+  created_at  TEXT NOT NULL,
+  read_secret_hash BLOB CHECK (read_secret_hash IS NULL OR length(read_secret_hash) = 32),
+  read_created_at TEXT
+) STRICT;`;
+
+function hasTable(sql: SqlStorage, name: string): boolean {
+  return sql
+    .exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name)
+    .toArray().length > 0;
+}
+
+export function initRealmMetaSchema(sql: SqlStorage): void {
+  if (!hasTable(sql, "realm_meta")) sql.exec(REALM_META_DDL);
+
+  // STORE-3b. The read capability is ADDITIVE and NULLABLE, applied the same way `initSchema`
+  // applies `lease_epoch` below: PRAGMA the columns, ALTER only what is missing.
+  //
+  // ⛔ NULLABLE IS THE WHOLE DESIGN, NOT A CONVENIENCE. `RealmAuth.create` throws `RealmExists`
+  // and there is no second create, so a realm that already exists can NEVER be re-created to
+  // acquire a column added as NOT NULL. A read capability minted only at create time would be
+  // unavailable to every realm that exists today -- including the one BACKUP-1 is a gate for.
+  // ⇒ The column is added to live tables and left NULL, and `/realm/read-capability` fills it
+  // later under the write secret. That is what makes "issuable for a realm that already exists"
+  // a property of the schema rather than a promise in a brief.
+  const columns = sql.exec("PRAGMA table_info(realm_meta)").toArray();
+  if (!columns.some((column) => column.name === "read_secret_hash")) {
+    sql.exec("ALTER TABLE realm_meta ADD COLUMN read_secret_hash BLOB");
+  }
+  if (!columns.some((column) => column.name === "read_created_at")) {
+    sql.exec("ALTER TABLE realm_meta ADD COLUMN read_created_at TEXT");
+  }
+}
+
+/** Apply the pinned layout, followed only by additive epoch and trigger DDL. */
+export function initSchema(sql: SqlStorage): void {
+  if (!hasTable(sql, "logs")) sql.exec(SCHEMA_DDL);
+
+  const logColumns = sql.exec("PRAGMA table_info(logs)").toArray();
+  if (!logColumns.some((column) => column.name === "lease_epoch")) {
+    sql.exec("ALTER TABLE logs ADD COLUMN lease_epoch INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!logColumns.some((column) => column.name === "document_writer_id")) {
+    sql.exec(DOCUMENT_WRITER_ID_COLUMN_DDL);
+  }
+
+  sql.exec(IMMUTABILITY_TRIGGERS);
+  sql.exec(ENTRY_SIZE_TRIGGER);
+  initRealmMetaSchema(sql);
+}

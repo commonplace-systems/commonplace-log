@@ -860,6 +860,9 @@ export class RealmStore {
   }
 
   private requireRestoreComplete(logId: string): void {
+    // A realm whose schema predates restore has no marker table, which means no restore state.
+    // Checked rather than created: this runs on read routes, and a read must not write the schema.
+    if (!hasSqlTable(this.sql, "restore_markers")) return;
     const row = this.sql.exec(`SELECT state FROM restore_markers WHERE log_id = ?`, logId).toArray()[0];
     if (row !== undefined && String(row.state) !== "complete") throw new RealmStoreError("obsolete_epoch");
   }
@@ -1022,6 +1025,7 @@ export class RealmStore {
       throw new RealmStoreError("obsolete_epoch");
     }
     const logIds = inventory.map((row) => String(row.log_id));
+    if (!hasSqlTable(this.sql, "logs") || !hasSqlTable(this.sql, "restore_markers")) throw new RealmStoreError("obsolete_epoch");
     const clauses = logIds.map(() => "?").join(", ");
     const logs = this.sql.exec(`SELECT log_id FROM logs WHERE log_id IN (${clauses})`, ...logIds).toArray();
     const markers = this.sql.exec(
