@@ -10,8 +10,8 @@ The worker source is pinned at or below the accepted buffering commits
 `a15a9f4cdbab111db2a1c7fb979203b23732113b`; the fixture is
 `0c303e24a60a8dfae4368c2e6c9fe436fe984034`, cherry-picked from the reviewed
 fixture commit `fbe5056e2b84f4bda3c10b4e2f03f33aca09a8eb`. The runner archives
-the actual clean HEAD and verifies that only the selected fixture differs from
-the source commits.
+the actual clean HEAD and verifies that the only post-`a15a9f4` changes are this
+fixture and the two packet files.
 
 Run from a fresh output path after the fixture and source are committed:
 
