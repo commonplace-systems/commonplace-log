@@ -39,6 +39,10 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   @restore_max_bytes 16 * 1024 * 1024
   @restore_max_id_bytes 256
   @restore_response_limit 4_096
+  @inventory_max_logs 64
+  @inventory_max_writers 4_096
+  @inventory_response_limit 256 * 1024
+  @inventory_max_safe_integer 9_007_199_254_740_991
 
   @doc """
   Builds a handle.
@@ -200,6 +204,24 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     end
   end
 
+  @doc "Lists bounded metadata for every log in the configured sidecar target."
+  @spec list_log_inventory(t(), pos_integer()) ::
+          {:ok, %{generation: String.t(), logs: [map()]}} | {:error, term()}
+  def list_log_inventory(%__MODULE__{} = store, max_logs \\ @inventory_max_logs)
+
+  def list_log_inventory(%__MODULE__{} = store, max_logs)
+      when is_integer(max_logs) and max_logs in 1..@inventory_max_logs do
+    inventory_post(
+      store,
+      "/list-logs",
+      %{"max_logs" => max_logs},
+      200,
+      &parse_inventory_result(&1, max_logs)
+    )
+  end
+
+  def list_log_inventory(%__MODULE__{}, _max_logs), do: {:error, :invalid_inventory_limit}
+
   defp post(store, path, payload, success_status, parse_success) do
     body = Jason.encode!(payload)
 
@@ -286,6 +308,54 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
       _response ->
         {:error, {:protocol_error, :invalid_response}}
+    end
+  end
+
+  defp inventory_post(store, path, payload, success_status, parse_success) do
+    body = Jason.encode!(payload)
+
+    result =
+      try do
+        store.transport.request(
+          :post,
+          store.base_url <> path,
+          @headers ++ store.headers,
+          body,
+          store.transport_options
+        )
+      rescue
+        _ -> {:error, :transport_failed}
+      catch
+        _kind, _reason -> {:error, :transport_failed}
+      end
+
+    case result do
+      {:error, _reason} ->
+        {:error, {:transport_error, :transport_failed}}
+
+      {:ok, %{status: status, body: response_body}}
+      when is_integer(status) and is_binary(response_body) and
+             byte_size(response_body) <= @inventory_response_limit ->
+        cond do
+          status in [401, 403] ->
+            {:error, {:unauthorized, :provider_rejected}}
+
+          status >= 500 and status != 507 ->
+            {:error, {:transport_error, :provider_failed}}
+
+          true ->
+            case decode_json_object_closed(response_body) do
+              {:ok, value} when status == success_status -> parse_success.(value)
+              {:ok, value} -> parse_inventory_error(status, value)
+              _ -> invalid_inventory_response()
+            end
+        end
+
+      {:ok, %{status: _status, body: _response_body}} ->
+        invalid_inventory_response()
+
+      _response ->
+        invalid_inventory_response()
     end
   end
 
@@ -407,7 +477,112 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     end
   end
 
+  defp parse_inventory_result(value, max_logs) do
+    with :ok <- exact_keys(value, ["ok", "result"]),
+         true <- value["ok"] === true,
+         %{} = result <- value["result"],
+         :ok <- exact_keys(result, ["generation", "logs"]),
+         {:ok, generation} <- lowercase_hex_digest(result["generation"]),
+         {:ok, logs_value} <- bounded_inventory_logs(result["logs"], max_logs),
+         {:ok, total_writers} <- inventory_writer_count(logs_value),
+         {:ok, logs} <- parse_list(logs_value, &parse_inventory_log/1),
+         true <- logs == Enum.sort_by(logs, & &1.log_id),
+         true <- length(logs) == length(Enum.uniq_by(logs, & &1.log_id)),
+         true <- total_writers <= @inventory_max_writers do
+      {:ok, %{generation: generation, logs: logs}}
+    else
+      _ -> invalid_inventory_response()
+    end
+  end
+
+  defp bounded_inventory_logs(logs, max_logs)
+       when is_list(logs) and length(logs) <= max_logs,
+       do: {:ok, logs}
+
+  defp bounded_inventory_logs(_logs, _max_logs), do: invalid_inventory_response()
+
+  defp inventory_writer_count(logs) do
+    Enum.reduce_while(logs, {:ok, 0}, fn row, {:ok, total} ->
+      writers = if is_map(row), do: Map.get(row, "writers"), else: nil
+
+      if is_list(writers) and length(writers) <= @inventory_max_writers do
+        next_total = total + length(writers)
+
+        if next_total <= @inventory_max_writers,
+          do: {:cont, {:ok, next_total}},
+          else: {:halt, invalid_inventory_response()}
+      else
+        {:halt, invalid_inventory_response()}
+      end
+    end)
+  end
+
+  defp parse_inventory_log(row) do
+    with %{} <- row,
+         :ok <-
+           exact_keys(row, [
+             "log_id",
+             "format_version",
+             "revision",
+             "created_at",
+             "document_writer_id",
+             "writers"
+           ]),
+         {:ok, log_id} <- bounded_inventory_string(row["log_id"]),
+         {:ok, format_version} <- inventory_positive_integer(row["format_version"]),
+         {:ok, revision} <- inventory_non_negative_integer(row["revision"]),
+         {:ok, created_at} <- bounded_inventory_string(row["created_at"]),
+         {:ok, document_writer_id} <-
+           nullable_bounded_inventory_string(row["document_writer_id"]),
+         {:ok, writers} <- parse_list(row["writers"], &parse_inventory_writer/1),
+         true <- writers == Enum.sort_by(writers, & &1.writer_id),
+         true <- length(writers) == length(Enum.uniq_by(writers, & &1.writer_id)) do
+      {:ok,
+       %{
+         log_id: log_id,
+         format_version: format_version,
+         revision: revision,
+         created_at: created_at,
+         document_writer_id: document_writer_id,
+         writers: writers
+       }}
+    else
+      _ -> invalid_inventory_response()
+    end
+  end
+
+  defp parse_inventory_writer(row) do
+    with %{} <- row,
+         :ok <- exact_keys(row, ["writer_id", "last_seq", "last_entry_id"]),
+         {:ok, writer_id} <- bounded_inventory_string(row["writer_id"]),
+         {:ok, last_seq} <- inventory_positive_integer(row["last_seq"]),
+         {:ok, last_entry_id} <- bounded_inventory_string(row["last_entry_id"]) do
+      {:ok, %{writer_id: writer_id, last_seq: last_seq, last_entry_id: last_entry_id}}
+    else
+      _ -> invalid_inventory_response()
+    end
+  end
+
+  defp parse_inventory_error(400, %{"ok" => false, "error" => %{"code" => "malformed"}}),
+    do: {:error, {:provider_error, :malformed}}
+
+  defp parse_inventory_error(409, %{"ok" => false, "error" => %{"code" => "constraint"}}),
+    do: {:error, {:provider_error, :constraint}}
+
+  defp parse_inventory_error(409, %{"ok" => false, "error" => %{"code" => "obsolete_epoch"}}),
+    do: {:error, {:provider_error, :obsolete_epoch}}
+
+  defp parse_inventory_error(413, %{"ok" => false, "error" => %{"code" => "oversize"}}),
+    do: {:error, {:provider_error, :oversize}}
+
+  defp parse_inventory_error(507, %{"ok" => false, "error" => %{"code" => "storage_full"}}),
+    do: {:error, {:provider_error, :storage_full}}
+
+  defp parse_inventory_error(_status, _value), do: invalid_inventory_response()
+
   defp invalid_restore_response, do: {:error, {:protocol_error, :invalid_response}}
+
+  defp invalid_inventory_response, do: {:error, {:protocol_error, :invalid_response}}
 
   defp encode_restore_bundle(bundle, max_logs)
        when is_map(bundle) and is_integer(max_logs) and max_logs in 1..@restore_max_logs do
@@ -860,6 +1035,13 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     end
   end
 
+  defp decode_json_object_closed(body) do
+    case Jason.decode(body) do
+      {:ok, %{} = value} -> {:ok, value}
+      _ -> {:error, :invalid_response}
+    end
+  end
+
   defp exact_keys(value, expected) when is_map(value) do
     if Map.keys(value) |> Enum.sort() == Enum.sort(expected) do
       :ok
@@ -892,6 +1074,36 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
 
   defp string(value) when is_binary(value), do: {:ok, value}
   defp string(_value), do: protocol("expected a string")
+
+  defp bounded_inventory_string(value)
+       when is_binary(value) and value != "" and byte_size(value) <= @restore_max_id_bytes do
+    if String.valid?(value), do: {:ok, value}, else: invalid_inventory_response()
+  end
+
+  defp bounded_inventory_string(_value), do: invalid_inventory_response()
+
+  defp nullable_bounded_inventory_string(nil), do: {:ok, nil}
+  defp nullable_bounded_inventory_string(value), do: bounded_inventory_string(value)
+
+  defp lowercase_hex_digest(value) when is_binary(value) and byte_size(value) == 64 do
+    if Regex.match?(~r/\A[0-9a-f]{64}\z/, value),
+      do: {:ok, value},
+      else: invalid_inventory_response()
+  end
+
+  defp lowercase_hex_digest(_value), do: invalid_inventory_response()
+
+  defp inventory_positive_integer(value)
+       when is_integer(value) and value > 0 and value <= @inventory_max_safe_integer,
+       do: {:ok, value}
+
+  defp inventory_positive_integer(_value), do: invalid_inventory_response()
+
+  defp inventory_non_negative_integer(value)
+       when is_integer(value) and value >= 0 and value <= @inventory_max_safe_integer,
+       do: {:ok, value}
+
+  defp inventory_non_negative_integer(_value), do: invalid_inventory_response()
 
   defp lowercase_uuid(value) when is_binary(value) do
     if Regex.match?(~r/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/, value),
