@@ -36,8 +36,12 @@ if not (deps / "vitest/vitest.mjs").is_file():
 actual_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 if subprocess.run(["git", "merge-base", "--is-ancestor", base_commit, actual_head], cwd=root).returncode != 0:
     raise SystemExit(f"HEAD {actual_head} is not based on required provider commit {base_commit}")
-if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
-    raise SystemExit("runner worktree must be clean so the archived source is exact")
+status_lines = subprocess.check_output(
+    ["git", "status", "--porcelain", "--untracked-files=all"], cwd=root, text=True,
+).splitlines()
+unexpected_status = [line for line in status_lines if not line.startswith("?? tmp/")]
+if unexpected_status:
+    raise SystemExit("runner worktree has non-measurement changes: " + " ".join(unexpected_status))
 
 
 def sha256(path):
