@@ -18,7 +18,9 @@ failures, exclusions, or skips.
 The runner requires the accepted client source pin
 `32c1889023be5130428cfa128556bef39b367dda` in
 `LOG_INVENTORY_CLIENT_COMMIT`; it refuses to execute without that pin or when
-the client worktree HEAD differs. It also checks the accepted
+the client worktree is not its descendant. Evidence-only `tmp/` and
+`RESULTS.md`/`RESULTS.json` files are permitted, while every compiled source
+and `mix.lock` byte is compared directly with the accepted commit. It also checks the accepted
 `persistence/cloudflare_sidecar.ex` SHA256
 `7176c8e583d05296c3b831da2132248896934facacfa497a86e207fca78f4f6a`. It archives the current provider worktree,
 verifies its worker product remains based on provider product

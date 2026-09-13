@@ -90,11 +90,19 @@ if subprocess.run(
 ).returncode != 0:
     raise SystemExit("provider worker product differs from accepted 804c4d43 source")
 client_head = git(CLIENT_ROOT, "rev-parse", "HEAD")
-if client_head != CLIENT_COMMIT:
-    raise SystemExit(f"client HEAD {client_head} does not match accepted pin {CLIENT_COMMIT}")
-status_lines = git(CLIENT_ROOT, "status", "--porcelain", "--untracked-files=all")
-if status_lines:
-    raise SystemExit("client source worktree must be clean at the accepted pin")
+if subprocess.run(
+    ["git", "merge-base", "--is-ancestor", CLIENT_COMMIT, client_head], cwd=CLIENT_ROOT
+).returncode != 0:
+    raise SystemExit(f"client HEAD {client_head} is not a descendant of accepted pin {CLIENT_COMMIT}")
+status_lines = git(CLIENT_ROOT, "status", "--porcelain", "--untracked-files=all").splitlines()
+for status_line in status_lines:
+    status_path = status_line[3:] if len(status_line) >= 4 else ""
+    evidence_name = pathlib.Path(status_path).name
+    if status_path == "tmp" or status_path.startswith("tmp/"):
+        continue
+    if status_path.startswith("docs/measurements/") and evidence_name in {"RESULTS.md", "RESULTS.json"}:
+        continue
+    raise SystemExit(f"client worktree has non-evidence change: {status_line}")
 provider_status = git(PROVIDER_ROOT, "status", "--porcelain", "--untracked-files=all").splitlines()
 if [line for line in provider_status if not line.startswith("?? tmp/")]:
     raise SystemExit("provider worktree has non-measurement changes")
@@ -112,6 +120,13 @@ expected_client_sidecar_sha = "7176c8e583d05296c3b831da2132248896934facacfa497a8
 client_sidecar = CLIENT_LIB / "persistence/cloudflare_sidecar.ex"
 if sha256(client_sidecar) != expected_client_sidecar_sha:
     raise SystemExit("client sidecar source does not match accepted file pin")
+for client_input in CLIENT_INPUTS:
+    relative = client_input.relative_to(CLIENT_ROOT).as_posix()
+    accepted_bytes = subprocess.check_output(
+        ["git", "show", f"{CLIENT_COMMIT}:{relative}"], cwd=CLIENT_ROOT
+    )
+    if client_input.read_bytes() != accepted_bytes:
+        raise SystemExit(f"client compile input differs from accepted pin: {relative}")
 
 
 def discover_beams():
@@ -144,7 +159,8 @@ pre = hashes(beams, runtime_files)
 (OUTPUT / "source-pins.json").write_text(json.dumps({
     "provider_product_commit": provider_product,
     "provider_worktree_head": provider_head,
-    "client_source_commit": client_head,
+    "client_source_commit": CLIENT_COMMIT,
+    "client_worktree_head": client_head,
     "client_source_root": str(CLIENT_ROOT),
     "provider_source_root": str(PROVIDER_ROOT),
     "beam_root": str(BEAM_ROOT),
@@ -189,7 +205,8 @@ test_cmd = [ELIXIR, *beam_args, "-pa", str(isolated_ebin), str(SOURCE / "docs/me
     "cwd": str(SOURCE),
     "base_url": f"http://127.0.0.1:{port}",
     "provider_product_commit": provider_product,
-    "client_source_commit": client_head,
+    "client_source_commit": CLIENT_COMMIT,
+    "client_worktree_head": client_head,
     "compile_timeout_seconds": 120,
     "wrangler_start_timeout_seconds": 30,
     "test_timeout_seconds": 180,
