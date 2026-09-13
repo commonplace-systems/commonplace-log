@@ -170,11 +170,29 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarLogInventoryTest do
     assert {:error, {:protocol_error, :invalid_response}} =
              CloudflareSidecar.list_log_inventory(store(transport), 1)
 
-    writers = Enum.map(1..4_097, fn index -> writer("w#{index}") end)
+    writers_4096 =
+      Enum.map(1..4_096, fn index ->
+        writer(String.pad_leading(Integer.to_string(index), 4, "0"))
+      end)
+
+    body_4096 = success([Map.put(log("a"), "writers", writers_4096)])
+    assert byte_size(Jason.encode!(body_4096)) <= 256 * 1024
+
+    {:ok, transport} = InventoryTransport.start_link([response(200, body_4096)])
+
+    assert {:ok, %{logs: [%{writers: parsed_writers}]}} =
+             CloudflareSidecar.list_log_inventory(store(transport))
+
+    assert length(parsed_writers) == 4_096
+
+    writers_4097 =
+      Enum.map(1..4_097, fn index ->
+        writer(String.pad_leading(Integer.to_string(index), 4, "0"))
+      end)
 
     {:ok, transport} =
       InventoryTransport.start_link([
-        response(200, success([Map.put(log("a"), "writers", writers)]))
+        response(200, success([Map.put(log("a"), "writers", writers_4097)]))
       ])
 
     assert {:error, {:protocol_error, :invalid_response}} =
@@ -260,7 +278,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarLogInventoryTest do
       "writers" => []
     }
 
-  defp writer(id), do: %{"writer_id" => id, "last_seq" => 1, "last_entry_id" => "entry-" <> id}
+  defp writer(id), do: %{"writer_id" => id, "last_seq" => 1, "last_entry_id" => id}
 
   defp response(status, body),
     do: {:ok, %{status: status, headers: [], body: Jason.encode!(body)}}

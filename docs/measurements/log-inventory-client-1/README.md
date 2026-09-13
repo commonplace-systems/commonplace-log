@@ -20,7 +20,7 @@ fresh-output runner compiles the selected client source against the pinned 847 c
 records PRE/POST hashes, strips secret-like environment variables, and owns compile/test process
 groups with bounded cleanup.
 
-From `commonplace_log/`, root may run:
+From the repository root, root may run:
 
 ```text
 python3 docs/measurements/log-inventory-client-1/run_log_inventory_client.py <fresh-output-dir>
