@@ -286,6 +286,23 @@ describe("internal restore of configured empty owned logs", () => {
   });
 
   it("fails closed for zero-byte entries and inconsistent restore count metadata", async () => {
+    const nullWriterName = `empty-null-writer-${Date.now()}-${Math.random()}`;
+    const nullWriterTarget = realmStub(nullWriterName);
+    await createRealm(nullWriterTarget);
+    expect(await internal(nullWriterTarget, "/restore-bundle-batch", {
+      bundle_id: "empty-owned-null-writer",
+      max_logs: 1,
+      logs: [{ log_id: EMPTY_LOG, archive_id: "empty-owned-null-writer", writer_id: null, entries: [] }],
+    })).toEqual({ status: 400, json: { ok: false, error: { code: "malformed" } } });
+    const nullWriterState = await withRealm(nullWriterName, (_store, sql) => {
+      initSchema(sql);
+      return {
+        logs: Number(sql.exec("SELECT COUNT(*) AS count FROM logs").one().count),
+        entries: Number(sql.exec("SELECT COUNT(*) AS count FROM entries").one().count),
+      };
+    });
+    expect(nullWriterState).toEqual({ logs: 0, entries: 0 });
+
     const malformedName = `empty-malformed-${Date.now()}-${Math.random()}`;
     const malformed: RestoreArchive = {
       logId: EMPTY_LOG,
