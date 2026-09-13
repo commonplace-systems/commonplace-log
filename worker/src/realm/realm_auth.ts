@@ -156,6 +156,8 @@ export class RealmAuth {
     const operationHash = await sha256(operationId);
     const secretHash = await sha256(secret);
     const capability = await sha256(`commonplace-allocation-read-v1\0${realmId}\0${operationId}\0${secret}`);
+    const capabilityValue = hex(capability);
+    const capabilityHash = await sha256(capabilityValue);
     return this.txn.transactionSync(() => {
       initRealmAllocationSchema(this.sql);
       const allocation = storedAllocation(this.sql);
@@ -171,7 +173,8 @@ export class RealmAuth {
       if (realmHash !== null) throw new RealmAllocationConflict();
       const createdAt = new Date().toISOString();
       this.sql.exec("INSERT INTO realm_meta (singleton, secret_hash, created_at) VALUES (1, ?, ?)", secretHash.buffer.slice(secretHash.byteOffset, secretHash.byteOffset + secretHash.byteLength), createdAt);
-      this.sql.exec("INSERT INTO realm_allocations (singleton, realm_id, operation_id, operation_hash, secret_hash, capability_hash, created_at) VALUES (1, ?, ?, ?, ?, ?, ?)", realmId, operationId, operationHash.buffer.slice(operationHash.byteOffset, operationHash.byteOffset + operationHash.byteLength), secretHash.buffer.slice(secretHash.byteOffset, secretHash.byteOffset + secretHash.byteLength), capability.buffer.slice(capability.byteOffset, capability.byteOffset + capability.byteLength), createdAt);
+      this.sql.exec("INSERT INTO realm_allocations (singleton, realm_id, operation_id, operation_hash, secret_hash, capability_hash, created_at) VALUES (1, ?, ?, ?, ?, ?, ?)", realmId, operationId, operationHash.buffer.slice(operationHash.byteOffset, operationHash.byteOffset + operationHash.byteLength), secretHash.buffer.slice(secretHash.byteOffset, secretHash.byteOffset + secretHash.byteLength), capabilityHash.buffer.slice(capabilityHash.byteOffset, capabilityHash.byteOffset + capabilityHash.byteLength), createdAt);
+      this.sql.exec("UPDATE realm_meta SET read_secret_hash = ?, read_created_at = ? WHERE singleton = 1", capabilityHash.buffer.slice(capabilityHash.byteOffset, capabilityHash.byteOffset + capabilityHash.byteLength), createdAt);
       return "created";
     });
   }
@@ -258,7 +261,7 @@ function fail(code: string, status: number, details?: Record<string, string>): R
  */
 export function isRealmLifecycleRequest(request: Request): boolean {
   const path = new URL(request.url).pathname;
-  return path === "/realm/create" || (request.method === "DELETE" && path === "/");
+  return path === "/realm/create" || (request.method === "POST" && path === "/realm/allocate") || (request.method === "DELETE" && path === "/");
 }
 
 export async function handlePublicRealmRequest(
@@ -280,12 +283,16 @@ export async function handlePublicRealmRequest(
       if (typeof value !== "object" || value === null || Array.isArray(value)) return refused(request, "malformed_request", 400);
       const row = value as Record<string, unknown>;
       if (Object.keys(row).some((key) => key !== "operation_id" && key !== "realm_secret") || typeof row.operation_id !== "string" || typeof row.realm_secret !== "string" || !validOperationId(row.operation_id) || !validSecret(row.realm_secret)) return refused(request, "malformed_request", 400);
-      if (registry === undefined && !allowUnboundRegistry) return fail("registry_not_bound", 503, { binding: "REALM_REGISTRY" });
+      if (registry === undefined || registry.get === undefined) return fail("registry_not_bound", 503, { binding: "REALM_REGISTRY" });
       const state = await auth.allocate(realmId, row.operation_id, row.realm_secret);
       const capability = await auth.allocationReadCapability(realmId, row.operation_id, row.realm_secret);
-      const present = registry?.get === undefined ? null : await registry.get(realmId);
-      if (present === null) {
-        if (registry === undefined) return fail("registry_registration_failed", 503, { outcome: "registry_unverifiable" });
+      const present = await registry.get(realmId);
+      if (present !== null) {
+        let registered: unknown;
+        try { registered = JSON.parse(present); } catch { return fail("registry_registration_failed", 503, { outcome: "registry_malformed" }); }
+        const rowRegistered = registered as Record<string, unknown>;
+        if (rowRegistered.realm_id !== realmId || rowRegistered.read_capability !== capability) return fail("registry_registration_failed", 503, { outcome: "registry_mismatch" });
+      } else {
         try { await registry.put(realmId, capability); } catch { return fail("registry_registration_failed", 503, { outcome: "registry_write_failed" }); }
       }
       return Response.json({ ok: true, realm_id: realmId, operation_id: row.operation_id, state: "allocated" }, { status: state === "created" ? 201 : 200 });

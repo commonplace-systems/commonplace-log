@@ -1,6 +1,10 @@
 import type { RealmContainer } from "./realm/container";
 import type { RealmNode } from "./realm/node";
-import { REALM_CREATE_HEADER, REALM_ID_HEADER } from "./realm/realm_auth";
+import {
+  REALM_ALLOCATE_HEADER,
+  REALM_CREATE_HEADER,
+  REALM_ID_HEADER,
+} from "./realm/realm_auth";
 
 export { CommonplaceLog } from "./commonplace-log-do";
 export { RealmContainer } from "./realm/container";
@@ -40,6 +44,9 @@ export interface Env {
 // docs/proposals/2026-08-25-realm-naming-and-placement.md. Realm ids are opaque.
 const REALM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REALM_PREFIX = "/realms/";
+const BUFFERED_WIRE_PATHS = new Set(["/list-logs", "/restore-bundle-batch"]);
+const MAX_BUFFERED_BODY_BYTES = 32 * 1024 * 1024;
+const BUFFERED_BODY_DEADLINE_MS = 5_000;
 
 function fail(code: string, status: number): Response {
   return Response.json({ ok: false, error: { code } }, { status });
@@ -93,6 +100,92 @@ function createRealmStub(env: Env, realmId: string, locationHint?: LocationHint)
   return namespace.get(id, locationHint === undefined ? undefined : { locationHint });
 }
 
+class IngressBodyFailure extends Error {
+  constructor(readonly code: "oversize" | "timeout" | "malformed") {
+    super(code);
+  }
+}
+
+/**
+ * Buffer only the bounded provider wire body so the DO receives an independent
+ * stream. This is transport admission: it does not parse or validate JSON.
+ * The 32 MiB bound is retained payload, not a total-memory bound: while the
+ * final contiguous copy is built, chunks plus that copy can approach 64 MiB,
+ * in addition to runtime stream overhead.
+ * Because buffering precedes realm authorization, an over-limit or timed-out
+ * request receives the ingress 413/408 result even when its bearer is absent
+ * or wrong; this is an explicit bounded-input policy, not an auth guarantee.
+ */
+async function readBufferedWireBody(
+  request: Request,
+  maxBytes = MAX_BUFFERED_BODY_BYTES,
+): Promise<Uint8Array> {
+  if (request.body === null) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
+  let abandoned = false;
+
+  const readAll = async (): Promise<Uint8Array> => {
+    while (true) {
+      const next = await reader.read();
+      if (abandoned) throw new IngressBodyFailure("timeout");
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > maxBytes) throw new IngressBodyFailure("oversize");
+      chunks.push(next.value);
+    }
+    if (abandoned) throw new IngressBodyFailure("timeout");
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  };
+
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new IngressBodyFailure("timeout")), BUFFERED_BODY_DEADLINE_MS);
+    });
+    const body = await Promise.race([readAll(), timeout]);
+    finished = true;
+    return body;
+  } catch (error) {
+    abandoned = true;
+    if (error instanceof IngressBodyFailure) throw error;
+    throw new IngressBodyFailure("malformed");
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (!finished) void reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A pending read owns the lock; cancellation remains best-effort and
+      // the bounded request result has already been selected.
+    }
+  }
+}
+
+async function bufferWireBodyOrFail(
+  request: Request,
+): Promise<{ ok: true; body: Uint8Array } | { ok: false; response: Response }> {
+  try {
+    return { ok: true, body: await readBufferedWireBody(request) };
+  } catch (error) {
+    if (error instanceof IngressBodyFailure && error.code === "oversize") {
+      return { ok: false, response: fail("oversize", 413) };
+    }
+    if (error instanceof IngressBodyFailure && error.code === "timeout") {
+      return { ok: false, response: fail("request_timeout", 408) };
+    }
+    return { ok: false, response: fail("malformed_request", 400) };
+  }
+}
+
 async function createBody(request: Request): Promise<{ locationHint?: LocationHint } | null> {
   try {
     const value: unknown = await request.json();
@@ -102,6 +195,29 @@ async function createBody(request: Request): Promise<{ locationHint?: LocationHi
     if (row.location_hint === undefined) return {};
     if (typeof row.location_hint !== "string" || !LOCATION_HINTS.has(row.location_hint)) return null;
     return { locationHint: row.location_hint as LocationHint };
+  } catch {
+    return null;
+  }
+}
+
+async function allocationBody(
+  request: Request,
+): Promise<{ operationId: string; secret: string; locationHint?: LocationHint } | null> {
+  try {
+    const raw = await readBufferedWireBody(request, 4_096);
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    if (Object.keys(row).some((key) => !["operation_id", "realm_secret", "location_hint"].includes(key))) return null;
+    if (typeof row.operation_id !== "string" || new TextEncoder().encode(row.operation_id).byteLength > 256 || row.operation_id.length === 0) return null;
+    if (typeof row.realm_secret !== "string" || !/^[0-9a-f]{64}$/.test(row.realm_secret)) return null;
+    if (row.location_hint !== undefined &&
+        (typeof row.location_hint !== "string" || !LOCATION_HINTS.has(row.location_hint))) return null;
+    return {
+      operationId: row.operation_id,
+      secret: row.realm_secret,
+      ...(row.location_hint === undefined ? {} : { locationHint: row.location_hint as LocationHint }),
+    };
   } catch {
     return null;
   }
@@ -145,14 +261,63 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
   }
 
+  const isAllocate = request.method === "POST" && route.sidecarPath === "/allocate";
+  if (isAllocate) {
+    const expected = env.GATEWAY_TOKEN;
+    if (typeof expected !== "string" || expected.length === 0) {
+      return fail("gateway_not_configured", 503);
+    }
+    if (presented === null || !tokensEqual(presented, expected)) return fail("unauthorized", 401);
+    const decoded = await allocationBody(request);
+    if (decoded === null) return fail("malformed_request", 400);
+
+    const target = new URL(request.url);
+    target.pathname = "/realm/allocate";
+    const headers = new Headers(request.headers);
+    headers.delete("authorization");
+    headers.delete("content-length");
+    headers.delete("transfer-encoding");
+    headers.set(REALM_ALLOCATE_HEADER, "1");
+    headers.set(REALM_ID_HEADER, route.realmId);
+    const forwarded = new Request(target, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ operation_id: decoded.operationId, realm_secret: decoded.secret }),
+    });
+    return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
+  }
+
+  // The DO-only allocation path must never be reachable through a realm route.
+  if (route.sidecarPath === "/realm/allocate") return fail("not_found", 404);
+
   // Realm routes are scoped in the DO. The gateway checks syntax only.
+  const needsBufferedWireBody = request.method === "POST" && BUFFERED_WIRE_PATHS.has(route.sidecarPath);
+  let bufferedBody: Uint8Array | undefined;
+  if (needsBufferedWireBody) {
+    const buffered = await bufferWireBodyOrFail(request);
+    if (!buffered.ok) return buffered.response;
+    bufferedBody = buffered.body;
+  }
+
   if (presented === null) return fail("unauthorized", 401);
 
   const target = new URL(request.url);
   target.pathname = route.sidecarPath;
-  const forwarded = new Request(target, request);
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  headers.delete(REALM_CREATE_HEADER);
+  headers.delete(REALM_ID_HEADER);
+  headers.delete(REALM_ALLOCATE_HEADER);
+  const forwarded = needsBufferedWireBody
+    ? new Request(target, { method: request.method, headers, body: bufferedBody })
+    : new Request(target, request);
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
+  forwarded.headers.delete(REALM_ALLOCATE_HEADER);
+  if (request.method === "DELETE" && url.pathname === `${REALM_PREFIX}${route.realmId}`) {
+    forwarded.headers.set(REALM_ID_HEADER, route.realmId);
+  }
   return await realmStub(env, route.realmId).fetch(forwarded);
 }
 
