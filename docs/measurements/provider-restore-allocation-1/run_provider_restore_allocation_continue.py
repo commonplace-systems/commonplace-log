@@ -34,6 +34,11 @@ FIXTURE_FULL_NAMES = (
     "deployment allocation ingress rejects malformed secret material instead of treating a non-hex value as an allocation credential",
 )
 FIXTURE_TOTAL = len(FIXTURE_FULL_NAMES)
+PRIOR_GREEN_FULL_NAMES = (
+    "deployment allocation ingress acknowledges the first allocation and returns the exact result on an idempotent retry",
+    "deployment allocation ingress refuses a different operation and a conflicting secret without changing the allocation",
+)
+DEFINED_TOTAL = len(FIXTURE_FULL_NAMES) + len(PRIOR_GREEN_FULL_NAMES)
 TEST_NAME_PATTERN = "^(?:" + "|".join(re.escape(name) for name in FIXTURE_FULL_NAMES) + ")$"
 ORIGINAL_PACKET_FILES = {
     "docs/measurements/provider-restore-allocation-1/README.md",
@@ -197,8 +202,10 @@ pre = manifest(runtime_pre)
     "fixture_source_commit": FIXTURE_SOURCE_COMMIT,
     "fixture_sha256": fixture_hash,
     "test_file": TEST_FILE,
-    "expected_full_names": list(FIXTURE_FULL_NAMES),
-    "expected_total": FIXTURE_TOTAL,
+    "expected_full_names": list(FIXTURE_FULL_NAMES) + list(PRIOR_GREEN_FULL_NAMES),
+    "expected_total": DEFINED_TOTAL,
+    "selected_total": FIXTURE_TOTAL,
+    "excluded_prior_green_names": list(PRIOR_GREEN_FULL_NAMES),
     "test_name_pattern": TEST_NAME_PATTERN,
     "forbidden_stderr": FORBIDDEN_STDERR,
     "runtime_root": str(PROVIDER_DEPS),
@@ -399,13 +406,14 @@ finally:
     summary = summarize(test_result)
     stderr = (OUT / "fixture-stderr").read_text(errors="replace")
     diagnostic_count = stderr.count(FORBIDDEN_STDERR)
+    assertion_map = {item["full_name"]: item["status"] for item in summary["assertions"]}
+    expected_names = set(FIXTURE_FULL_NAMES) | set(PRIOR_GREEN_FULL_NAMES)
     assertions_ok = (
-        summary["total"] == FIXTURE_TOTAL and summary["passed"] == FIXTURE_TOTAL and
-        summary["failed"] == 0 and summary["pending"] == 0 and
-        summary["assertions"] == [
-            {"full_name": full_name, "status": "passed"}
-            for full_name in FIXTURE_FULL_NAMES
-        ]
+        summary["total"] == DEFINED_TOTAL and summary["passed"] == FIXTURE_TOTAL and
+        summary["failed"] == 0 and len(summary["assertions"]) == DEFINED_TOTAL and
+        len(assertion_map) == DEFINED_TOTAL and set(assertion_map) == expected_names and
+        all(assertion_map[name] == "passed" for name in FIXTURE_FULL_NAMES) and
+        all(assertion_map[name] in {"pending", "skipped"} for name in PRIOR_GREEN_FULL_NAMES)
     )
     clean_records = [{key: value for key, value in item.items() if key != "process"} for item in owned]
     reasons = []
@@ -444,7 +452,9 @@ finally:
     }, indent=2, sort_keys=True) + "\n")
     (OUT / "verdict.json").write_text(json.dumps({
         "native_rc": native_rc, "verdict_rc": verdict, "reasons": reasons,
-        "expected_total": FIXTURE_TOTAL, "expected_full_names": list(FIXTURE_FULL_NAMES),
+        "expected_total": DEFINED_TOTAL, "selected_total": FIXTURE_TOTAL,
+        "expected_full_names": list(FIXTURE_FULL_NAMES) + list(PRIOR_GREEN_FULL_NAMES),
+        "excluded_prior_green_names": list(PRIOR_GREEN_FULL_NAMES),
     }, indent=2, sort_keys=True) + "\n")
     (OUT / "native.rc").write_text("absent\n" if native_rc is None else f"{native_rc}\n")
     (OUT / "verdict.rc").write_text(f"{verdict}\n")

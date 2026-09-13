@@ -195,7 +195,7 @@ pre = manifest(runtime_pre)
     "runtime_root": str(PROVIDER_DEPS),
     "runtime_file_count": len(runtime_pre),
     "cache_dirs": {"root": str(vite_root_cache), "worker": str(vite_worker_cache)},
-    "scope": "seven public SELF deployment allocation cases; no storageFetch bypass and no baseline replay",
+    "scope": "six public SELF deployment allocation cases; no storageFetch bypass and no baseline replay",
 }, indent=2, sort_keys=True) + "\n")
 
 node = "/usr/bin/node"
