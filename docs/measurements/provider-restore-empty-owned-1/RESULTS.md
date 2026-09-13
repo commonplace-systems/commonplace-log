@@ -1,0 +1,9 @@
+# Empty owned restore results
+
+The bounded local native packet covers the six focused empty-owned restore cases through five retained runs. Runs 1–3 used the stock isolated-storage configuration and each stopped during SQLite storage teardown after the first case; their structured results report no accepted case. Those raw failures remain unchanged. Run 4 used a generated test configuration changing only `poolOptions.workers.isolatedStorage=false`: five cases passed and the first case failed because the pre-correction fixture expected `401` while the direct Durable Object call returned `404`. Run 5 selected only that corrected first case and passed it; the other five cases were pending/skipped.
+
+Run 5 therefore records six defined, one passed, five pending/skipped, zero failed, native rc `0`, with the owned process group absent and no TERM/KILL, timeout, or signal. The combined accepted coverage is six cases: five from run 4 and the corrected first case from run 5. The run-five fixture correction provisions the realm before the authentication checks, matching the observed metadata-first `404` and absent-token `401` ordering.
+
+Each output directory is bound in [RESULTS.json](RESULTS.json) by a recursive file manifest, raw file byte count and SHA-256, command/source pins, test result, native result, root completion receipt, input equality, and runtime PRE/POST membership. Manifest serialization is compact UTF-8 JSON with sorted keys, `ensure_ascii=false`, and separators `(',', ':')`. The generated non-isolated config is recorded in each command; no stock isolated-storage claim is inferred from the accepted run.
+
+This is local synthetic Durable Object/SQLite fixture evidence for the internal storageFetch path. It does not claim hosted behavior, public ingress authentication, cloud deployment, account activation, provider provisioning, or a proven cause for the earlier isolated-storage teardown failures.
