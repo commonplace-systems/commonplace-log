@@ -629,7 +629,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
            {:ok, _writer_id} <- bounded_restore_id(Map.get(log, :writer_id)),
            true <- previous_id === nil or previous_id < log_id,
            entries
-           when is_list(entries) and entries != [] and length(entries) <= @restore_max_entries <-
+           when is_list(entries) and length(entries) <= @restore_max_entries <-
              Map.get(log, :entries),
            {:ok, total} <- preflight_restore_entries(entries, total) do
         {:cont, {:ok, log_id, total}}
@@ -679,7 +679,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   defp encode_restore_log(_log), do: {:error, :invalid_log}
 
   defp encode_restore_entries(entries, log_id, writer_id)
-       when is_list(entries) and entries != [] and length(entries) <= @restore_max_entries do
+       when is_list(entries) and length(entries) <= @restore_max_entries do
     entries
     |> Enum.with_index(1)
     |> Enum.reduce_while({:ok, [], 0, nil}, fn {raw, expected_seq},

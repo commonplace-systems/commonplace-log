@@ -22,6 +22,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
 
   @log_a "018f5e2a-8b3c-7d4e-9f10-123456789aaa"
   @log_b "018f5e2a-8b3c-7d4e-9f10-123456789aab"
+  @empty_log "018f5e2a-8b3c-7d4e-9f10-123456789aa0"
   @writer "018f5e2a-8b3c-7d4e-9f10-123456789abd"
 
   test "encodes canonical entries, sends the complete sorted inventory, and parses result" do
@@ -37,6 +38,37 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
     assert Enum.all?(body["logs"], &is_binary(hd(&1["entries"])))
     refute Map.has_key?(body, "realm_id")
     refute Map.has_key?(body, "target")
+  end
+
+  test "encodes a configured empty archive alongside non-empty logs" do
+    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(2, 0, true)}))
+    empty = %{log_id: @empty_log, archive_id: "archive-empty", writer_id: @writer, entries: []}
+
+    assert {:ok, %{imported_logs: 2, skipped_logs: 0, complete: true}} =
+             CloudflareSidecar.restore_bundle_batch(
+               store,
+               %{bundle_id: "bundle-empty", logs: [empty, log(@log_a, "archive-a")]},
+               2
+             )
+
+    assert_receive {:restore_request, "https://sidecar.example/restore-bundle-batch", body}
+    assert Enum.map(body["logs"], & &1["log_id"]) == [@empty_log, @log_a]
+    assert Enum.at(body["logs"], 0)["entries"] == []
+    assert Enum.at(body["logs"], 1)["entries"] |> Enum.all?(&is_binary/1)
+  end
+
+  test "refuses a null writer before transport for an otherwise empty archive" do
+    store = sidecar(self(), response(200, %{"ok" => true, "result" => result(1, 0, true)}))
+
+    malformed = %{
+      bundle_id: "bundle-null-writer",
+      logs: [%{log_id: @empty_log, archive_id: "archive-empty", writer_id: nil, entries: []}]
+    }
+
+    assert {:error, {:invalid_restore_bundle, :invalid_shape}} =
+             CloudflareSidecar.restore_bundle_batch(store, malformed)
+
+    refute_received {:restore_request, _, _}
   end
 
   test "rejects invalid inventory before transport" do
