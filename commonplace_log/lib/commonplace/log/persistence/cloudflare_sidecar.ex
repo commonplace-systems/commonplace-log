@@ -563,22 +563,24 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
     end
   end
 
-  defp parse_inventory_error(400, %{"ok" => false, "error" => %{"code" => "malformed"}}),
-    do: {:error, {:provider_error, :malformed}}
-
-  defp parse_inventory_error(409, %{"ok" => false, "error" => %{"code" => "constraint"}}),
-    do: {:error, {:provider_error, :constraint}}
-
-  defp parse_inventory_error(409, %{"ok" => false, "error" => %{"code" => "obsolete_epoch"}}),
-    do: {:error, {:provider_error, :obsolete_epoch}}
-
-  defp parse_inventory_error(413, %{"ok" => false, "error" => %{"code" => "oversize"}}),
-    do: {:error, {:provider_error, :oversize}}
-
-  defp parse_inventory_error(507, %{"ok" => false, "error" => %{"code" => "storage_full"}}),
-    do: {:error, {:provider_error, :storage_full}}
-
-  defp parse_inventory_error(_status, _value), do: invalid_inventory_response()
+  defp parse_inventory_error(status, value) do
+    with :ok <- exact_keys(value, ["ok", "error"]),
+         true <- value["ok"] === false,
+         %{} = error <- value["error"],
+         :ok <- exact_keys(error, ["code"]),
+         {:ok, code} <- string(error["code"]) do
+      case {status, code} do
+        {400, "malformed"} -> {:error, {:provider_error, :malformed}}
+        {409, "constraint"} -> {:error, {:provider_error, :constraint}}
+        {409, "obsolete_epoch"} -> {:error, {:provider_error, :obsolete_epoch}}
+        {413, "oversize"} -> {:error, {:provider_error, :oversize}}
+        {507, "storage_full"} -> {:error, {:provider_error, :storage_full}}
+        _ -> invalid_inventory_response()
+      end
+    else
+      _ -> invalid_inventory_response()
+    end
+  end
 
   defp invalid_restore_response, do: {:error, {:protocol_error, :invalid_response}}
 

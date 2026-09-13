@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fresh-output compiler/native runner for the bounded log-inventory client seam."""
+"""Single-owned-child compiler and native runner for the bounded log inventory client."""
 import hashlib
 import json
 import os
@@ -13,7 +13,7 @@ import time
 REPO = pathlib.Path(__file__).resolve().parents[3]
 OUT = pathlib.Path(sys.argv[1]).resolve()
 BEAM_ROOT = pathlib.Path(os.environ.get("LOG_INVENTORY_CLIENT_BEAM_ROOT", "/home/jes/codex-save-state-1/tmp/origin-receipt-1/_build/test/lib"))
-ELIXIR = os.environ.get("LOG_INVENTORY_CLIENT_ELIXIR", "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir")
+ELIXIR = pathlib.Path(os.environ.get("LOG_INVENTORY_CLIENT_ELIXIR", "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir"))
 BASE_COMMIT = "4fa621db5d257260118fbf649049402ff09b5ef6"
 TEST_FILE = REPO / "commonplace_log/test/cloudflare_sidecar_log_inventory_test.exs"
 SCRIPT_FILE = pathlib.Path(__file__).resolve().with_name("log_inventory_client.exs")
@@ -28,7 +28,6 @@ COMPILE_SOURCES = [
     SOURCE_FILE,
 ]
 CHILD_TIMEOUT = 180
-COMPILE_TIMEOUT = 120
 CLEANUP_GRACE = 5
 EXPECTED_TOTAL = 8
 
@@ -49,15 +48,18 @@ def git(*args):
     return subprocess.check_output(["git", *args], cwd=REPO, text=True).strip()
 
 
-def source_files():
-    files = sorted((REPO / "commonplace_log/lib").rglob("*.ex"))
-    files += [TEST_FILE, SCRIPT_FILE, RUNNER_FILE, REPO / "commonplace_log/mix.lock"]
-    return files
+def all_inputs():
+    return sorted((REPO / "commonplace_log/lib").rglob("*.ex")) + [
+        TEST_FILE,
+        SCRIPT_FILE,
+        RUNNER_FILE,
+        REPO / "commonplace_log/mix.lock",
+    ]
 
 
-def hashes():
+def input_manifest():
     return {
-        "source": {str(path.relative_to(REPO)): sha256(path) for path in source_files()},
+        "source": {str(path.relative_to(REPO)): sha256(path) for path in all_inputs()},
         "cached_beams": {str(path): sha256(path) for path in sorted(BEAM_ROOT.rglob("*.beam"))},
     }
 
@@ -71,9 +73,38 @@ def clean_env():
     env.update({
         "MIX_ENV": "test",
         "LOG_INVENTORY_CLIENT_TEST_FILE": str(TEST_FILE),
-        "LOG_INVENTORY_CLIENT_OUTPUT": str(OUT),
+        "LOG_INVENTORY_CLIENT_COMPILE_SOURCES": json.dumps([str(path) for path in COMPILE_SOURCES]),
     })
     return env
+
+
+def group_state(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return "present"
+    except ProcessLookupError:
+        return "absent"
+    except PermissionError:
+        return "unknown"
+
+
+def process_state(pid):
+    try:
+        os.kill(pid, 0)
+        return "present"
+    except ProcessLookupError:
+        return "absent"
+    except PermissionError:
+        return "unknown"
+
+
+def wait_group_absent(pgid, timeout):
+    deadline = time.monotonic() + timeout
+    state = group_state(pgid)
+    while state == "present" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        state = group_state(pgid)
+    return state
 
 
 class RunnerSignal(Exception):
@@ -82,7 +113,6 @@ class RunnerSignal(Exception):
 
 received_signal = None
 received_signal_number = None
-active_records = []
 
 
 def receive_signal(signum, _frame):
@@ -93,109 +123,45 @@ def receive_signal(signum, _frame):
     raise RunnerSignal(received_signal)
 
 
-def process_state(value, group=False):
-    try:
-        (os.killpg if group else os.kill)(value, 0)
-        return "present"
-    except ProcessLookupError:
-        return "absent"
-    except PermissionError:
-        return "unknown"
-
-
-def wait_group_state(pgid, timeout):
-    deadline = time.monotonic() + timeout
-    state = process_state(pgid, group=True)
-    while state == "present" and time.monotonic() < deadline:
-        time.sleep(0.05)
-        state = process_state(pgid, group=True)
-    return state
-
-
-def terminate_group(record):
-    process = record["process"]
-    pgid = record["pgid"]
-    if record["first_signal"] is None:
-        record["first_signal"] = "SIGTERM"
+def stop_owned_child(proc, pgid, forced_kill=False):
+    first_signal = "SIGTERM"
     try:
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         pass
     try:
-        process.wait(timeout=CLEANUP_GRACE)
+        proc.wait(timeout=CLEANUP_GRACE)
     except subprocess.TimeoutExpired:
         pass
-    group_state = wait_group_state(pgid, CLEANUP_GRACE)
-    if group_state == "present":
-        record["forced_kill"] = True
+    state = wait_group_absent(pgid, CLEANUP_GRACE)
+    if state == "present":
+        forced_kill = True
         try:
             os.killpg(pgid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
         try:
-            process.wait(timeout=CLEANUP_GRACE)
+            proc.wait(timeout=CLEANUP_GRACE)
         except subprocess.TimeoutExpired:
             pass
-        wait_group_state(pgid, CLEANUP_GRACE)
-
-
-def run_group(argv, name, timeout):
-    stdout_path = OUT / f"{name}-stdout"
-    stderr_path = OUT / f"{name}-stderr"
-    stdout_file = stdout_path.open("wb")
-    stderr_file = stderr_path.open("wb")
-    process = subprocess.Popen(
-        argv,
-        cwd=REPO,
-        env=clean_env(),
-        stdout=stdout_file,
-        stderr=stderr_file,
-        start_new_session=True,
-    )
-    record = {
-        "name": name,
-        "pid": process.pid,
-        "pgid": os.getpgid(process.pid),
-        "process": process,
-        "timed_out": False,
-        "forced_kill": False,
-        "first_signal": None,
-    }
-    active_records.append(record)
-    try:
-        try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            record["timed_out"] = True
-            terminate_group(record)
-    finally:
-        terminate_group(record)
-        stdout_file.close()
-        stderr_file.close()
-        active_records.remove(record)
-        record["rc"] = process.returncode
-        record["pid_state"] = process_state(record["pid"])
-        record["pgid_state"] = process_state(record["pgid"], group=True)
-        record["pid_absent"] = record["pid_state"] == "absent"
-        record["pgid_absent"] = record["pgid_state"] == "absent"
-        record.pop("process")
-    return record, stdout_path.read_text(errors="replace"), stderr_path.read_text(errors="replace")
+        wait_group_absent(pgid, CLEANUP_GRACE)
+    return first_signal, forced_kill
 
 
 app_commit = git("rev-parse", "HEAD")
-base = git("rev-parse", f"{BASE_COMMIT}^{{commit}}")
-if subprocess.run(["git", "merge-base", "--is-ancestor", base, app_commit], cwd=REPO).returncode:
+base_commit = git("rev-parse", f"{BASE_COMMIT}^{{commit}}")
+if subprocess.run(["git", "merge-base", "--is-ancestor", base_commit, app_commit], cwd=REPO).returncode:
     raise SystemExit("source is not based on the accepted client commit")
-if not all(path.is_file() for path in source_files() + COMPILE_SOURCES):
+if not all(path.is_file() for path in all_inputs() + COMPILE_SOURCES):
     raise SystemExit("missing runner input")
 beams = sorted(BEAM_ROOT.rglob("*.beam"))
 if len(beams) != 847:
     raise SystemExit(f"cached BEAM input count mismatch: {len(beams)} != 847")
-pre = hashes()
+pre = input_manifest()
 (OUT / "input-sha256.json").write_text(json.dumps(pre, indent=2, sort_keys=True) + "\n")
 (OUT / "source-pins.json").write_text(json.dumps({
     "source_commit": app_commit,
-    "accepted_base_commit": base,
+    "accepted_base_commit": base_commit,
     "test_file": str(TEST_FILE),
     "compile_sources": [str(path) for path in COMPILE_SOURCES],
     "beam_root": str(BEAM_ROOT),
@@ -204,97 +170,157 @@ pre = hashes()
 }, indent=2, sort_keys=True) + "\n")
 
 beam_args = [part for ebin in sorted(BEAM_ROOT.glob("*/ebin")) for part in ("-pa", str(ebin))]
-isolated = OUT / "isolated-ebin"
-isolated.mkdir()
-elixirc = str(pathlib.Path(ELIXIR).with_name("elixirc"))
-compile_cmd = [elixirc, *beam_args, "-o", str(isolated), *[str(path) for path in COMPILE_SOURCES]]
-test_cmd = [ELIXIR, *beam_args, "-pa", str(isolated), str(SCRIPT_FILE)]
+cmd = [str(ELIXIR), *beam_args, str(SCRIPT_FILE), str(OUT)]
 (OUT / "command.json").write_text(json.dumps({
-    "compile_argv": compile_cmd,
-    "test_argv": test_cmd,
+    "argv": cmd,
     "cwd": str(REPO),
     "source_commit": app_commit,
-    "accepted_base_commit": base,
+    "accepted_base_commit": base_commit,
+    "compile_sources": [str(path) for path in COMPILE_SOURCES],
     "expected_total": EXPECTED_TOTAL,
-    "compile_timeout_seconds": COMPILE_TIMEOUT,
-    "test_timeout_seconds": CHILD_TIMEOUT,
+    "timeout_seconds": CHILD_TIMEOUT,
     "cleanup_grace_seconds": CLEANUP_GRACE,
+    "compile_and_tests_in_one_owned_child": True,
 }, indent=2) + "\n")
 
-compile_record = None
-test_record = None
-compile_stdout = ""
-compile_stderr = ""
-test_stdout = ""
-test_stderr = ""
+env = clean_env()
+proc = None
+pid = None
+pgid = None
+first_signal = None
+forced_kill = False
+timed_out = False
+cleanup_hold = None
 runner_error = None
-previous_handlers = {
-    signum: signal.signal(signum, receive_signal)
-    for signum in (signal.SIGTERM, signal.SIGINT)
-}
+native_rc = None
+verdict_rc = 125
+previous_handlers = {}
+stdout_path = OUT / "stdout"
+stderr_path = OUT / "stderr"
+
 try:
-    compile_record, compile_stdout, compile_stderr = run_group(compile_cmd, "compile", COMPILE_TIMEOUT)
-    if compile_record["rc"] == 0:
-        test_record, test_stdout, test_stderr = run_group(test_cmd, "test", CHILD_TIMEOUT)
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        previous_handlers[signum] = signal.signal(signum, receive_signal)
+
+    launch_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    stdout_file = stdout_path.open("wb")
+    stderr_file = stderr_path.open("wb")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=REPO,
+            env=env,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            start_new_session=True,
+            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, launch_mask),
+        )
+        pid = proc.pid
+        pgid = os.getpgid(pid)
+        (OUT / "process-start.json").write_text(
+            json.dumps({"pid": pid, "pgid": pgid, "sid": os.getsid(pid)}) + "\n"
+        )
+    finally:
+        stdout_file.close()
+        stderr_file.close()
+        signal.pthread_sigmask(signal.SIG_SETMASK, launch_mask)
+
+    try:
+        proc.wait(timeout=CHILD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        first_signal, forced_kill = stop_owned_child(proc, pgid, forced_kill)
 except RunnerSignal:
     runner_error = "runner_signal"
 except BaseException as error:
     runner_error = f"{type(error).__name__}: {error}"
 finally:
-    for record in list(active_records):
-        terminate_group(record)
-    (OUT / "compile-stdout").write_text(compile_stdout)
-    (OUT / "compile-stderr").write_text(compile_stderr)
-    (OUT / "stdout").write_text(test_stdout)
-    (OUT / "stderr").write_text(test_stderr)
+    cleanup_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
     try:
-        post = hashes()
-        manifest_error = None
-    except BaseException as error:
-        post = {"manifest_error": f"{type(error).__name__}: {error}"}
-        manifest_error = post["manifest_error"]
-    (OUT / "input-sha256-post.json").write_text(json.dumps(post, indent=2, sort_keys=True) + "\n")
-    equal = manifest_error is None and post == pre
-    (OUT / "input-equality.json").write_text(json.dumps({
-        "equal": equal,
-        "input_count": len(pre["source"]) + len(pre["cached_beams"]),
-        "manifest_error": manifest_error,
-    }, indent=2) + "\n")
+        if proc is not None and pgid is not None:
+            if group_state(pgid) == "present":
+                signal_name, forced_kill = stop_owned_child(proc, pgid, forced_kill)
+                first_signal = first_signal or signal_name
+            try:
+                proc.wait(timeout=CLEANUP_GRACE)
+            except subprocess.TimeoutExpired:
+                forced_kill = True
+            native_rc = proc.returncode
+            final_group_state = wait_group_absent(pgid, CLEANUP_GRACE)
+            if final_group_state != "absent":
+                cleanup_hold = f"owned process group {final_group_state}"
+        try:
+            post = input_manifest()
+            manifest_error = None
+        except BaseException as error:
+            post = {"manifest_error": f"{type(error).__name__}: {error}"}
+            manifest_error = post["manifest_error"]
+        (OUT / "input-sha256-post.json").write_text(json.dumps(post, indent=2, sort_keys=True) + "\n")
+        equal = manifest_error is None and post == pre
+        (OUT / "input-equality.json").write_text(json.dumps({
+            "equal": equal,
+            "input_count": len(pre["source"]) + len(pre["cached_beams"]),
+            "manifest_error": manifest_error,
+        }, indent=2) + "\n")
+        pid_state = process_state(pid) if pid is not None else "absent"
+        pgid_state = group_state(pgid) if pgid is not None else "absent"
+        cleanup_ok = pid_state == "absent" and pgid_state == "absent" and cleanup_hold is None and not forced_kill
+        stdout = stdout_path.read_text(errors="replace") if stdout_path.exists() else ""
+        match = re.search(r"(?m)^\s*(\d+) tests?, (\d+) failures?", stdout)
+        count_match = match is not None and int(match.group(1)) == EXPECTED_TOTAL and int(match.group(2)) == 0
+        expected_app_result = {
+            "total": EXPECTED_TOTAL,
+            "failures": 0,
+            "excluded": 0,
+            "skipped": 0,
+            "expected_total": EXPECTED_TOTAL,
+            "expected_failures": 0,
+            "status": "expected",
+        }
+        try:
+            app_result_match = json.loads((OUT / "app-result.json").read_text()) == expected_app_result
+        except (OSError, ValueError):
+            app_result_match = False
+        verdict_rc = 0 if native_rc == 0 and equal and count_match and app_result_match and cleanup_ok and runner_error is None else 125
+        if received_signal_number is not None:
+            verdict_rc = 128 + received_signal_number
+        process_record = {
+            "pid": pid,
+            "pgid": pgid,
+            "native_rc": native_rc,
+            "timed_out": timed_out,
+            "received_signal": received_signal,
+            "received_signal_number": received_signal_number,
+            "first_signal": first_signal,
+            "forced_kill": forced_kill,
+            "cleanup_hold": cleanup_hold,
+            "pid_state": pid_state,
+            "pgid_state": pgid_state,
+            "pid_absent": pid_state == "absent",
+            "pgid_absent": pgid_state == "absent",
+            "timeout_seconds": CHILD_TIMEOUT,
+            "cleanup_grace_seconds": CLEANUP_GRACE,
+            "count_match": count_match,
+            "app_result_match": app_result_match,
+            "input_equal": equal,
+            "runner_error": runner_error,
+        }
+        (OUT / "native.rc").write_text("absent\n" if proc is None else f"{native_rc}\n")
+        (OUT / "native-exit.json").write_text(json.dumps(process_record, indent=2, sort_keys=True) + "\n")
+        (OUT / "verdict.json").write_text(json.dumps({
+            "native_rc": native_rc,
+            "verdict_rc": verdict_rc,
+            "input_equal": equal,
+            "count_match": count_match,
+            "app_result_match": app_result_match,
+            "cleanup_ok": cleanup_ok,
+            "runner_error": runner_error,
+        }, indent=2, sort_keys=True) + "\n")
+        (OUT / "verdict.rc").write_text(f"{verdict_rc}\n")
+    finally:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, signal.SIG_IGN)
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
-    records = [record for record in (compile_record, test_record) if record is not None]
-    native_rc = None if compile_record is None else compile_record["rc"]
-    if compile_record is not None and compile_record["rc"] == 0 and test_record is not None:
-        native_rc = test_record["rc"]
-    match = re.search(r"(?m)^\s*(\d+) tests?, (\d+) failures?", test_stdout)
-    count_match = match is not None and int(match.group(1)) == EXPECTED_TOTAL and int(match.group(2)) == 0
-    cleanup_ok = bool(records) and all(
-        record["pid_absent"] and record["pgid_absent"] and not record["forced_kill"]
-        for record in records
-    )
-    verdict_rc = 0 if native_rc == 0 and equal and count_match and cleanup_ok and runner_error is None else 125
-    if received_signal_number is not None:
-        verdict_rc = 128 + received_signal_number
-    (OUT / "native-exit.json").write_text(json.dumps({
-        "native_rc": native_rc,
-        "compile": compile_record,
-        "test": test_record,
-        "received_signal": received_signal,
-        "received_signal_number": received_signal_number,
-        "runner_error": runner_error,
-        "input_equal": equal,
-        "count_match": count_match,
-        "cleanup_ok": cleanup_ok,
-        "timeout_seconds": CHILD_TIMEOUT,
-        "cleanup_grace_seconds": CLEANUP_GRACE,
-    }, indent=2, sort_keys=True) + "\n")
-    (OUT / "verdict.json").write_text(json.dumps({
-        "native_rc": native_rc,
-        "verdict_rc": verdict_rc,
-        "input_equal": equal,
-        "count_match": count_match,
-        "cleanup_ok": cleanup_ok,
-        "runner_error": runner_error,
-    }, indent=2, sort_keys=True) + "\n")
-    for signum, handler in previous_handlers.items():
-        signal.signal(signum, handler)
 raise SystemExit(verdict_rc)
