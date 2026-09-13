@@ -139,6 +139,7 @@ describe("deployment allocation ingress", () => {
       body: "{}",
     });
     expect(created.status).toBe(201);
+    await created.arrayBuffer();
     const before = await snapshot(realm);
 
     const response = await allocate(realm, { operation_id: operationId(), realm_secret: realmSecret() });
