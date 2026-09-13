@@ -72,32 +72,63 @@ export const REALM_META_DDL = `CREATE TABLE realm_meta (
   read_created_at TEXT
 ) STRICT;`;
 
+/** Operator-owned idempotent realm allocation identity; no plaintext secret is stored. */
+export const REALM_ALLOCATIONS_DDL = `CREATE TABLE realm_allocations (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  realm_id TEXT NOT NULL, operation_id TEXT NOT NULL,
+  operation_hash BLOB NOT NULL CHECK (length(operation_hash) = 32),
+  secret_hash BLOB NOT NULL CHECK (length(secret_hash) = 32),
+  capability_hash BLOB NOT NULL CHECK (length(capability_hash) = 32), created_at TEXT NOT NULL
+) STRICT;`;
+
+export const RESTORE_MARKERS_DDL = `CREATE TABLE IF NOT EXISTS restore_markers (
+  log_id TEXT PRIMARY KEY,
+  archive_id TEXT NOT NULL,
+  writer_id TEXT NOT NULL,
+  entry_count INTEGER NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  manifest_json BLOB NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
+) STRICT;`;
+
+/** Internal provider-local bundle inventory. The digest is compact; entries remain in entries. */
+export const RESTORE_BUNDLES_DDL = `CREATE TABLE IF NOT EXISTS restore_bundles (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  bundle_id TEXT NOT NULL,
+  log_count INTEGER NOT NULL,
+  digest BLOB NOT NULL CHECK (length(digest) = 32),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS restore_bundle_logs (
+  bundle_id TEXT NOT NULL,
+  log_id TEXT PRIMARY KEY,
+  archive_id TEXT NOT NULL,
+  writer_id TEXT NOT NULL,
+  entry_count INTEGER NOT NULL,
+  total_bytes INTEGER NOT NULL,
+  digest BLOB NOT NULL CHECK (length(digest) = 32),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'complete'))
+) STRICT;`;
+
 function hasTable(sql: SqlStorage, name: string): boolean {
   return sql
     .exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name)
     .toArray().length > 0;
 }
 
+export function initRealmAllocationSchema(sql: SqlStorage): void {
+  initRealmMetaSchema(sql);
+  if (!hasTable(sql, "realm_allocations")) sql.exec(REALM_ALLOCATIONS_DDL);
+  const columns = sql.exec("PRAGMA table_info(realm_allocations)").toArray();
+  if (!columns.some((column) => column.name === "capability_hash")) sql.exec("ALTER TABLE realm_allocations ADD COLUMN capability_hash BLOB");
+}
+
 export function initRealmMetaSchema(sql: SqlStorage): void {
   if (!hasTable(sql, "realm_meta")) sql.exec(REALM_META_DDL);
-
-  // STORE-3b. The read capability is ADDITIVE and NULLABLE, applied the same way `initSchema`
-  // applies `lease_epoch` below: PRAGMA the columns, ALTER only what is missing.
-  //
-  // ⛔ NULLABLE IS THE WHOLE DESIGN, NOT A CONVENIENCE. `RealmAuth.create` throws `RealmExists`
-  // and there is no second create, so a realm that already exists can NEVER be re-created to
-  // acquire a column added as NOT NULL. A read capability minted only at create time would be
-  // unavailable to every realm that exists today -- including the one BACKUP-1 is a gate for.
-  // ⇒ The column is added to live tables and left NULL, and `/realm/read-capability` fills it
-  // later under the write secret. That is what makes "issuable for a realm that already exists"
-  // a property of the schema rather than a promise in a brief.
   const columns = sql.exec("PRAGMA table_info(realm_meta)").toArray();
-  if (!columns.some((column) => column.name === "read_secret_hash")) {
-    sql.exec("ALTER TABLE realm_meta ADD COLUMN read_secret_hash BLOB");
-  }
-  if (!columns.some((column) => column.name === "read_created_at")) {
-    sql.exec("ALTER TABLE realm_meta ADD COLUMN read_created_at TEXT");
-  }
+  if (!columns.some((column) => column.name === "read_secret_hash")) sql.exec("ALTER TABLE realm_meta ADD COLUMN read_secret_hash BLOB");
+  if (!columns.some((column) => column.name === "read_created_at")) sql.exec("ALTER TABLE realm_meta ADD COLUMN read_created_at TEXT");
 }
 
 /** Apply the pinned layout, followed only by additive epoch and trigger DDL. */
@@ -115,4 +146,6 @@ export function initSchema(sql: SqlStorage): void {
   sql.exec(IMMUTABILITY_TRIGGERS);
   sql.exec(ENTRY_SIZE_TRIGGER);
   initRealmMetaSchema(sql);
+  sql.exec(RESTORE_MARKERS_DDL);
+  sql.exec(RESTORE_BUNDLES_DDL);
 }

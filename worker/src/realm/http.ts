@@ -175,6 +175,8 @@ function storageError(error: RealmStoreError): Response {
     case "constraint": return fail("constraint_violation", 409);
     case "storage_full": return fail("storage_full", 507);
     case "stale_epoch": return fail("obsolete_epoch", 409);
+    case "inventory_oversize": return fail("oversize", 413);
+    case "inventory_invalid": return fail("constraint_violation", 409);
   }
 }
 

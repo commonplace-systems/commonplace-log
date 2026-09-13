@@ -1,17 +1,14 @@
 import { Container } from "@cloudflare/containers";
 import { containerFetchWithCapacityMapping } from "./capacity";
-import { handleRealmRequest } from "./http";
 import { storageInternal } from "./outbound";
 import { handlePublicRealmRequest, isRealmLifecycleRequest, RealmAuth } from "./realm_auth";
 import { kvRegistry } from "./registry";
 import { RealmStore } from "./store";
+import { handleAuthenticatedRequest, handleStorageRequest } from "./wire";
 
 interface Env {
   REALM_NODE: DurableObjectNamespace<RealmNode>;
   REALM_TEST_LEVERS?: string;
-  // ⛔ OPTIONAL IN THE TYPE, NEVER OPTIONAL IN PRODUCTION. When it is absent the create response
-  // says `registry: "no_registry_bound"` rather than succeeding quietly -- an unbound registry is
-  // a realm the backup will never see, and it must be visible at the moment it happens.
   REALM_REGISTRY?: KVNamespace;
 }
 
@@ -30,9 +27,8 @@ export class RealmNode extends Container<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const dispatch = () => handlePublicRealmRequest(request, this.auth, async (authorized) =>
-      await this.fetchAuthorized(authorized),
-      kvRegistry(this.env.REALM_REGISTRY), this.env.REALM_TEST_LEVERS === "1",
-      () => this.ctx.storage.deleteAll());
+      await this.fetchAuthorized(authorized), kvRegistry(this.env.REALM_REGISTRY),
+      this.env.REALM_TEST_LEVERS === "1", () => this.ctx.storage.deleteAll());
     if (isRealmLifecycleRequest(request)) return await this.ctx.blockConcurrencyWhile(dispatch);
     return await dispatch();
   }
@@ -41,7 +37,7 @@ export class RealmNode extends Container<Env> {
   async storageFetch(request: Request): Promise<Response> {
     const forwarded = new Request(request);
     forwarded.headers.delete("authorization");
-    return await handleRealmRequest(forwarded, this.store);
+    return await handleStorageRequest(forwarded, this.store);
   }
 
   private async fetchAuthorized(request: Request): Promise<Response> {
@@ -58,7 +54,7 @@ export class RealmNode extends Container<Env> {
         await this.containerFetch(new Request(url, request)));
     }
 
-    return await handleRealmRequest(request, this.store);
+    return await handleAuthenticatedRequest(request, this.store);
   }
 }
 
