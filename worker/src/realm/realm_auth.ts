@@ -1,4 +1,4 @@
-import { initRealmMetaSchema } from "./schema";
+import { initRealmAllocationSchema, initRealmMetaSchema } from "./schema";
 
 export const REALM_CREATE_HEADER = "x-commonplace-realm-create";
 export const REALM_ID_HEADER = "x-commonplace-realm-id";
@@ -107,7 +107,7 @@ export class RealmAuth {
     if (!validOperationId(operationId) || !validSecret(secret)) throw new RealmAllocationConflict();
     const operationHash = await sha256(operationId);
     const secretHash = await sha256(secret);
-    initRealmMetaSchema(this.sql);
+    initRealmAllocationSchema(this.sql);
 
     return this.txn.transactionSync(() => {
       const allocation = storedAllocation(this.sql);
@@ -115,11 +115,11 @@ export class RealmAuth {
 
       if (allocation !== null) {
         const sameRealm = allocation.realm_id === realmId;
-        const sameOperation = equalBytes(
+        const sameOperation = allocation.operation_id === operationId && equalBytes(
           new Uint8Array(allocation.operation_hash as ArrayBuffer),
           operationHash,
         );
-        const sameSecret = equalBytes(
+        const sameSecret = realmHash !== null && equalBytes(realmHash, secretHash) && equalBytes(
           new Uint8Array(allocation.secret_hash as ArrayBuffer),
           secretHash,
         );
@@ -218,6 +218,7 @@ export async function handlePublicRealmRequest(
   }
 
   // The create endpoint is gateway-internal and never opens with a realm secret.
+  if (path === "/realm/allocate") return fail("not_found", 404);
   if (path === "/realm/create") return fail("not_found", 404);
 
   const result = await auth.authorize(request);

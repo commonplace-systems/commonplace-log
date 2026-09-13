@@ -274,6 +274,8 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     target.pathname = "/realm/allocate";
     const headers = new Headers(request.headers);
     headers.delete("authorization");
+    headers.delete("content-length");
+    headers.delete("transfer-encoding");
     headers.set(REALM_ALLOCATE_HEADER, "1");
     headers.set(REALM_ID_HEADER, route.realmId);
     const forwarded = new Request(target, {
@@ -308,6 +310,7 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     : new Request(target, request);
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
+  forwarded.headers.delete(REALM_ALLOCATE_HEADER);
   return await realmStub(env, route.realmId).fetch(forwarded);
 }
 

@@ -118,6 +118,10 @@ function hasTable(sql: SqlStorage, name: string): boolean {
 
 export function initRealmMetaSchema(sql: SqlStorage): void {
   if (!hasTable(sql, "realm_meta")) sql.exec(REALM_META_DDL);
+}
+
+export function initRealmAllocationSchema(sql: SqlStorage): void {
+  initRealmMetaSchema(sql);
   if (!hasTable(sql, "realm_allocations")) sql.exec(REALM_ALLOCATIONS_DDL);
 }
 
