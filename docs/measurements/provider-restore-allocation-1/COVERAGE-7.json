@@ -1,0 +1,66 @@
+{
+  "artifact": "provider-restore-allocation",
+  "assertions": [
+    {
+      "authoritative_stage": "provider-restore-allocation-1",
+      "evidence": "initial run passed before later suite cleanup failure",
+      "full_name": "deployment allocation ingress acknowledges the first allocation and returns the exact result on an idempotent retry",
+      "replayed": false,
+      "status": "passed"
+    },
+    {
+      "authoritative_stage": "provider-restore-allocation-1",
+      "evidence": "initial run passed before later suite cleanup failure",
+      "full_name": "deployment allocation ingress refuses a different operation and a conflicting secret without changing the allocation",
+      "replayed": false,
+      "status": "passed"
+    },
+    {
+      "authoritative_stage": "provider-restore-allocation-2",
+      "evidence": "five-case continuation passed",
+      "full_name": "deployment allocation ingress refuses allocation into a realm created through the legacy create route",
+      "replayed": true,
+      "status": "passed"
+    },
+    {
+      "authoritative_stage": "provider-restore-allocation-2",
+      "evidence": "five-case continuation passed",
+      "full_name": "deployment allocation ingress rejects missing, wrong, and realm-secret bearer authorization before allocation",
+      "replayed": true,
+      "status": "passed"
+    },
+    {
+      "authoritative_stage": "provider-restore-allocation-3",
+      "evidence": "spoof-only continuation passed with zero diagnostics",
+      "full_name": "deployment allocation ingress refuses an internal allocation path and spoof markers for wrong and realm bearers",
+      "replayed": true,
+      "status": "passed"
+    },
+    {
+      "authoritative_stage": "provider-restore-allocation-2",
+      "evidence": "five-case continuation passed",
+      "full_name": "deployment allocation ingress authenticates the supplied secret and never persists its plaintext",
+      "replayed": true,
+      "status": "passed"
+    },
+    {
+      "authoritative_stage": "provider-restore-allocation-2",
+      "evidence": "five-case continuation passed",
+      "full_name": "deployment allocation ingress rejects malformed secret material instead of treating a non-hex value as an allocation credential",
+      "replayed": true,
+      "status": "passed"
+    }
+  ],
+  "coverage": "seven-assertion-consolidated",
+  "limits": [
+    "Original initial failures remain recorded; no cause is assigned.",
+    "Continuation wrapper diagnostics remain recorded; no request association is inferred.",
+    "Provider source cf990581cd352995a6cc0d6d35d3eeaef742cb75 was not deployed or hosted-tested."
+  ],
+  "receipts": {
+    "continuation": "RESULTS-2.json",
+    "initial": "RESULTS.json",
+    "spoof": "RESULTS-3.json"
+  },
+  "status": "all_seven_covered"
+}

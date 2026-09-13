@@ -1,0 +1,130 @@
+{
+  "artifact": "provider-restore-allocation",
+  "final_receipt": "19cbb6",
+  "input_equality": true,
+  "native_rc": 0,
+  "native_receipt": {
+    "assertions_ok": true,
+    "native_rc": 0,
+    "owned": [
+      {
+        "forced_cleanup_hold": false,
+        "group_absent": true,
+        "kill_sent": false,
+        "label": "allocation-spoof-fixture",
+        "leader_exit": 0,
+        "pgid": 1985642,
+        "pid": 1985642,
+        "term_sent": false
+      }
+    ],
+    "stderr_diagnostic_count": 0,
+    "timed_out": false
+  },
+  "outer_rc": 0,
+  "process_groups": {
+    "cleanup_finally": true,
+    "groups": [
+      {
+        "forced_cleanup_hold": false,
+        "group_absent": true,
+        "kill_sent": false,
+        "label": "allocation-spoof-fixture",
+        "leader_exit": 0,
+        "pgid": 1985642,
+        "pid": 1985642,
+        "term_sent": false
+      }
+    ],
+    "kill_grace_seconds": 2,
+    "term_grace_seconds": 5
+  },
+  "raw_output_manifest": "output-manifest-3.json",
+  "raw_output_manifest_sha256": "8f0a5933dace2708ff661b0d8eaa4f29d4db4078778a64ca80567175ddf0c200",
+  "raw_receipts": {
+    "command.json": "7892d0d83b8c333917986013792cf3914f074f8d167aa0816697d2f542d9cf69",
+    "fixture-result.json": "e51ccab26e0eff8012b04ea9463cf33f3758afde8e12865b50409418ad641440",
+    "fixture-stderr": "331ee3ab15d47720e10e1e053dfe91c95426f872142a4ae83151b21e9388ba5b",
+    "fixture-stdout": "af687cea21d3cbb791c0d9869366d5479799d384a1762ef72cb491c59b8ad382",
+    "input-equality.json": "80e03e83bc5f9d59a97758aed0a5de6075f7092d3a6887432bd33380ccbc07bd",
+    "input-sha256.json": "94f12114c0a85a59aafa3c303a4c9aaab83517e893c34e34f11e717bcfefe1cd",
+    "native-exit.json": "5be33dab6f08b95571dbfe51803c958a7a4831dd3a9d5cd39eb7e1917edc6b98",
+    "native.rc": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "post-sha256.json": "94f12114c0a85a59aafa3c303a4c9aaab83517e893c34e34f11e717bcfefe1cd",
+    "process-groups.json": "e2facf8e7175012026ec91ab5c21901545ebb3df4ed591d2e997eae46a699f6d",
+    "runtime-membership.json": "3e77b07518fe287a92f122e557942da1ad03ec0d006d9799809f882fc4a0663d",
+    "source-pins.json": "7c04528ece4e9b8423381a75cf945e3749fe90cb62f90c98dbdbc4d024075d91",
+    "verdict.json": "6dfd669784ec71b9935a4ddb4230ac679edc6f523a5a22e979ef94e749d6b853",
+    "verdict.rc": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "root_session": 98162,
+  "runtime_membership": {
+    "added": [],
+    "hashes_equal": true,
+    "post_count": 3221,
+    "pre_count": 3221,
+    "removed": []
+  },
+  "scope_limits": [
+    "one reserved-path spoof-marker case only; six assertions excluded",
+    "local Vitest Cloudflare worker-pool assertion only",
+    "no cloud, deployment, account activation, credential, or production-route proof",
+    "provider source was not deployed or hosted-tested",
+    "prior run failures and continuation wrapper diagnostics retain their original status"
+  ],
+  "source": {
+    "allocation_source": "cf990581cd352995a6cc0d6d35d3eeaef742cb75",
+    "fixture_commit": "505821c74e3a7696a3ef4706bd73135a3982f93c",
+    "fixture_sha256": "7f56a42e86394bb704e36c634ace00a02c631662fb6b212fea4adf3f82277bd1",
+    "provider_worktree_head": "1d0ce895ea741f07d4ac44c668c46dbe4849dd69",
+    "test_file": "worker/test/realm/allocate.workers.test.ts"
+  },
+  "stage": "provider-restore-allocation-3",
+  "status": "pass",
+  "tests": {
+    "assertions": [
+      {
+        "full_name": "deployment allocation ingress acknowledges the first allocation and returns the exact result on an idempotent retry",
+        "status": "skipped"
+      },
+      {
+        "full_name": "deployment allocation ingress refuses a different operation and a conflicting secret without changing the allocation",
+        "status": "skipped"
+      },
+      {
+        "full_name": "deployment allocation ingress refuses allocation into a realm created through the legacy create route",
+        "status": "skipped"
+      },
+      {
+        "full_name": "deployment allocation ingress rejects missing, wrong, and realm-secret bearer authorization before allocation",
+        "status": "skipped"
+      },
+      {
+        "full_name": "deployment allocation ingress refuses an internal allocation path and spoof markers for wrong and realm bearers",
+        "status": "passed"
+      },
+      {
+        "full_name": "deployment allocation ingress authenticates the supplied secret and never persists its plaintext",
+        "status": "skipped"
+      },
+      {
+        "full_name": "deployment allocation ingress rejects malformed secret material instead of treating a non-hex value as an allocation credential",
+        "status": "skipped"
+      }
+    ],
+    "defined": 7,
+    "excluded_prior_names": [
+      "deployment allocation ingress acknowledges the first allocation and returns the exact result on an idempotent retry",
+      "deployment allocation ingress refuses a different operation and a conflicting secret without changing the allocation",
+      "deployment allocation ingress refuses allocation into a realm created through the legacy create route",
+      "deployment allocation ingress rejects missing, wrong, and realm-secret bearer authorization before allocation",
+      "deployment allocation ingress authenticates the supplied secret and never persists its plaintext",
+      "deployment allocation ingress rejects malformed secret material instead of treating a non-hex value as an allocation credential"
+    ],
+    "failed": 0,
+    "passed": 1,
+    "pending_or_skipped": 6,
+    "selected": 1
+  },
+  "verdict_rc": 0
+}
