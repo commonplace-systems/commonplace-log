@@ -21,7 +21,7 @@ is retained as an observation and does not become an automatic variant or a
 claim that the full ten-line historical set has been localized. Existing
 deployed-base diagnostic logs remain separate evidence.
 
-The child budget is 150 seconds per arm with TERM after 5 seconds and KILL
+The child budget is 60 seconds per arm with TERM after 5 seconds and KILL
 after a further 2 seconds. The intended external envelope is 210 seconds plus
 30 seconds cleanup. Root owns native execution; this commit performs no run.
 

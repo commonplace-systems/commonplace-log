@@ -29,6 +29,7 @@ ARMS = (
         "test_file": "worker/test/realm/ingress.workers.test.ts",
         "test_name": "realm ingress requires the deployment token for create",
         "full_name": "realm ingress requires the deployment token for create",
+        "excluded_count": 10,
     },
     {
         "name": "candidate-allocation",
@@ -36,9 +37,10 @@ ARMS = (
         "test_file": FIXTURE_REL,
         "test_name": "deployed-base allocation and registry requires the deployment bearer and never treats a read capability as allocation authority",
         "full_name": "deployed-base allocation and registry requires the deployment bearer and never treats a read capability as allocation authority",
+        "excluded_count": 5,
     },
 )
-CHILD_TIMEOUT = 150
+CHILD_TIMEOUT = 60
 TERM_GRACE = 5
 KILL_GRACE = 2
 EXTERNAL_OUTER = 210
@@ -286,7 +288,15 @@ def run_arm(arm):
         (arm_out / "input-equality.json").write_text(json.dumps({"equal": equal, "input_count": len(pre)}) + "\n")
         (arm_out / "runtime-inventory.json").write_text(json.dumps({"pre_count": len(pre_runtime_names), "post_count": len(post_runtime_names), "added": additions, "removed": removals}, indent=2, sort_keys=True) + "\n")
         assertions = collect_assertions(arm_out / "vitest-results.json")
-        result_ok = len(assertions) == 1 and assertions[0] == {"fullName": arm["full_name"], "status": "passed"}
+        selected_results = [item for item in assertions if item["fullName"] == arm["full_name"]]
+        excluded_results = [item for item in assertions if item["fullName"] != arm["full_name"]]
+        result_ok = (
+            len(selected_results) == 1
+            and selected_results[0]["status"] == "passed"
+            and len(excluded_results) == arm["excluded_count"]
+            and all(item["status"] in {"pending", "skipped"} for item in excluded_results)
+            and len(assertions) == 1 + arm["excluded_count"]
+        )
         diagnostics = [
             line
             for path in (stdout_path, stderr_path)
@@ -332,7 +342,10 @@ for signum in (signal.SIGTERM, signal.SIGINT):
 arm_results = []
 try:
     for arm in ARMS:
-        arm_results.append(run_arm(arm))
+        arm_result = run_arm(arm)
+        arm_results.append(arm_result)
+        if arm_result["reasons"] or signal_received:
+            break
 finally:
     finalizing = True
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
@@ -343,10 +356,11 @@ finally:
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
+all_arms_observed = len(arm_results) == len(ARMS) and all(item["observation_rc"] == 0 for item in arm_results)
 (OUT / "summary.json").write_text(json.dumps({
     "purpose": "two exact request-stream observation probes; no broad-suite localization claim",
     "arms": arm_results,
-    "all_arms_observed": len(arm_results) == len(ARMS),
+    "all_arms_observed": all_arms_observed,
     "first_signal_received": signal_received,
 }, indent=2, sort_keys=True) + "\n")
-raise SystemExit(0 if len(arm_results) == len(ARMS) and not signal_received else 125)
+raise SystemExit(0 if all_arms_observed and not signal_received else 125)
