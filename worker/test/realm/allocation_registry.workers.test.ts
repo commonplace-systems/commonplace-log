@@ -241,6 +241,50 @@ describe("deployed-base allocation and registry", () => {
     });
   });
 
+  it("uses the real gateway and KV registry: 201 then 200, frontier 200, restore 403", async () => {
+    const realm = realmId();
+    const operation = operationId();
+    const secret = realmSecret();
+    const first = await gatewayAllocation(realm, operation, secret);
+    expect(first.status).toBe(201);
+    const retry = await gatewayAllocation(realm, operation, secret);
+    expect(retry.status).toBe(200);
+    expect(retry.json).toEqual(first.json);
+
+    const registered = await env.REALM_REGISTRY.get<{ realm_id: string; read_capability: string }>(realm, "json");
+    expect(registered?.realm_id).toBe(realm);
+    expect(registered?.read_capability).toMatch(/^[0-9a-f]{64}$/);
+
+    const log = crypto.randomUUID();
+    const created = await SELF.fetch(`https://gateway.invalid/realms/${realm}/create-log`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({ log_id: log }),
+    });
+    expect(created.status).toBe(201);
+    await created.arrayBuffer();
+
+    const frontier = await SELF.fetch(`https://gateway.invalid/realms/${realm}/frontier`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${registered!.read_capability}`, "content-type": "application/json" },
+      body: JSON.stringify({ log_id: log }),
+    });
+    expect(frontier.status).toBe(200);
+    await frontier.arrayBuffer();
+
+    const beforeRestore = await realmSnapshot(realm);
+    const registryBefore = await env.REALM_REGISTRY.get(realm);
+    const deniedRestore = await SELF.fetch(`https://gateway.invalid/realms/${realm}/restore-bundle-batch`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${registered!.read_capability}`, "content-type": "application/json" },
+      body: JSON.stringify({ bundle_id: "read-capability-control" }),
+    });
+    expect(deniedRestore.status).toBe(403);
+    await deniedRestore.arrayBuffer();
+    expect(await realmSnapshot(realm)).toEqual(beforeRestore);
+    expect(await env.REALM_REGISTRY.get(realm)).toBe(registryBefore);
+  });
+
   it("requires the deployment bearer and never treats a read capability as allocation authority", async () => {
     const realm = realmId();
     const operation = operationId();
