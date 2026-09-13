@@ -36,8 +36,12 @@ if not (deps / "vitest/vitest.mjs").is_file():
 actual_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 if subprocess.run(["git", "merge-base", "--is-ancestor", base_commit, actual_head], cwd=root).returncode != 0:
     raise SystemExit(f"HEAD {actual_head} is not based on required provider commit {base_commit}")
-if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True):
-    raise SystemExit("runner worktree must be clean so the archived source is exact")
+status_lines = subprocess.check_output(
+    ["git", "status", "--porcelain", "--untracked-files=all"], cwd=root, text=True,
+).splitlines()
+unexpected_status = [line for line in status_lines if not line.startswith("?? tmp/")]
+if unexpected_status:
+    raise SystemExit("runner worktree has non-measurement changes: " + " ".join(unexpected_status))
 
 
 def sha256(path):
@@ -48,19 +52,23 @@ def sha256(path):
     return digest.hexdigest()
 
 
-runtime_files = sorted(path for path in deps.rglob("*") if path.is_file())
-if not runtime_files:
+def discover_runtime_files():
+    return sorted(path for path in deps.rglob("*") if path.is_file())
+
+
+pre_runtime_files = discover_runtime_files()
+if not pre_runtime_files:
     raise SystemExit("empty worker dependency tree")
 
 
-def hashes():
+def hashes(runtime_files):
     return {
         "worker_source": {str(path.relative_to(root)): sha256(path) for path in worker_inputs},
         "worker_runtime": {str(path): sha256(path) for path in runtime_files},
     }
 
 
-pre = hashes()
+pre = hashes(pre_runtime_files)
 (output / "input-sha256.json").write_text(json.dumps(pre, indent=2, sort_keys=True) + "\n")
 (output / "source-pins.json").write_text(json.dumps({
     "runner_worktree_head": actual_head,
@@ -68,7 +76,7 @@ pre = hashes()
     "worker_worktree": str(root),
     "test_file": str(test_file),
     "worker_runtime_root": str(deps),
-    "worker_runtime_file_count": len(runtime_files),
+    "worker_runtime_file_count": len(pre_runtime_files),
     "test_selection": ["worker/test/realm/restore-empty-owned.workers.test.ts"],
     "limits": {"test_timeout_seconds": 120, "term_grace_seconds": 5, "kill_grace_seconds": 2},
 }, indent=2, sort_keys=True) + "\n")
@@ -79,9 +87,21 @@ with tarfile.open(fileobj=archive.stdout, mode="r|") as stream:
 if archive.wait() != 0:
     raise SystemExit("git archive failed")
 (source / "worker/node_modules").symlink_to(deps)
+cache_dir = output / "vite-cache"
+cache_dir.mkdir(parents=True, exist_ok=True)
+cache_literal = json.dumps(str(cache_dir))
+(source / "worker/vitest.inventory.workers.config.ts").write_text(
+    f'import base from "./vitest.workers.config.ts";\n'
+    f'export default {{ ...base, cacheDir: {cache_literal}, test: {{ ...base.test, cache: {{ dir: {cache_literal} }} }} }};\n'
+)
+(source / "worker/vitest.inventory.config.ts").write_text(
+    f'import base from "./vitest.config.ts";\n'
+    f'const projects = base.test?.projects ?? [];\n'
+    f'export default {{ ...base, cacheDir: {cache_literal}, test: {{ ...base.test, cache: {{ dir: {cache_literal} }}, projects: [projects[0], "./vitest.inventory.workers.config.ts"] }} }};\n'
+)
 command = [
-    "/usr/bin/node", str(source / "worker/node_modules/vitest/vitest.mjs"), "run", "--project", "do",
-    "--config", str(source / "worker/vitest.workers.config.ts"),
+    "/usr/bin/node", str(source / "worker/node_modules/vitest/vitest.mjs"), "run",
+    "--config", str(source / "worker/vitest.inventory.config.ts"), "--project", "do",
     str(source / "worker/test/realm/restore-empty-owned.workers.test.ts"),
     "--reporter=json", "--outputFile", str(output / "test-result.json"),
 ]
@@ -109,6 +129,8 @@ env = {
 records = []
 cleanup_in_progress = False
 first_signal_received = False
+retention_active = False
+signal_exit_code = None
 blocked_signals = {signal.SIGTERM, signal.SIGINT}
 
 
@@ -168,54 +190,80 @@ def cleanup_all():
 
 
 def on_signal(signum, _frame):
-    global first_signal_received
+    global first_signal_received, signal_exit_code
     first_signal_received = True
+    signal_exit_code = 128 + signum
     cleanup_all()
-    raise SystemExit(128 + signum)
+    if not retention_active:
+        raise SystemExit(signal_exit_code)
 
 
 signal.signal(signal.SIGTERM, on_signal)
 signal.signal(signal.SIGINT, on_signal)
 
-previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
+retention_active = True
 stdout_handle = (output / "stdout").open("wb")
 stderr_handle = (output / "stderr").open("wb")
+process = None
+record = None
+spawn_error = None
+wait_error = None
+timed_out = False
+previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
 try:
-    process = subprocess.Popen(
-        command, cwd=source / "worker", env=env,
-        stdout=stdout_handle, stderr=stderr_handle,
-        start_new_session=True,
-        preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask),
-    )
-    record = {
-        "label": "vitest-workers",
-        "pid": process.pid,
-        "pgid": process.pid,
-        "term_sent": False,
-        "kill_sent": False,
-        "process": process,
-    }
-    records.append(record)
+    try:
+        process = subprocess.Popen(
+            command, cwd=source / "worker", env=env,
+            stdout=stdout_handle, stderr=stderr_handle,
+            start_new_session=True,
+            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask),
+        )
+        record = {
+            "label": "vitest-workers",
+            "pid": process.pid,
+            "pgid": process.pid,
+            "term_sent": False,
+            "kill_sent": False,
+            "process": process,
+        }
+        records.append(record)
+        (output / "process-start.json").write_text(json.dumps({
+            "label": "vitest-workers",
+            "pid": process.pid,
+            "pgid": process.pid,
+            "argv": command,
+        }, indent=2) + "\n")
+    except BaseException as error:
+        spawn_error = repr(error)
 finally:
     signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
-timed_out = False
 try:
-    try:
-        process.wait(timeout=120)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        stop_record(record)
+    if process is not None and spawn_error is None:
+        try:
+            process.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            stop_record(record)
+        except BaseException as error:
+            wait_error = repr(error)
 finally:
     cleanup_all()
     stdout_handle.close()
     stderr_handle.close()
     for stream in (output / "stdout", output / "stderr"):
         stream.touch(exist_ok=True)
-    post = hashes()
+    post_runtime_files = discover_runtime_files()
+    post = hashes(post_runtime_files)
     (output / "post-sha256.json").write_text(json.dumps(post, indent=2, sort_keys=True) + "\n")
     equal = pre == post
     (output / "input-equality.json").write_text(json.dumps({"equal": equal}) + "\n")
+    (output / "runtime-membership.json").write_text(json.dumps({
+        "pre": [str(path) for path in pre_runtime_files],
+        "post": [str(path) for path in post_runtime_files],
+        "added": [str(path) for path in sorted(set(post_runtime_files) - set(pre_runtime_files))],
+        "removed": [str(path) for path in sorted(set(pre_runtime_files) - set(post_runtime_files))],
+    }, indent=2) + "\n")
     result = None
     result_path = output / "test-result.json"
     if result_path.is_file():
@@ -227,15 +275,19 @@ finally:
         result.get("numPassedTests") == 6 and result.get("numFailedTests") == 0 and \
         result.get("numPendingTests") == 0
     cleanup_hold = any(record.get("forced_cleanup_hold") for record in records)
-    test_rc = process.poll()
+    test_rc = process.poll() if process is not None else None
     native_rc = test_rc if test_rc is not None else 125
-    verdict = native_rc if equal and not timed_out and not cleanup_hold and native_rc == 0 and test_ok else 125
+    verdict = native_rc if signal_exit_code is None and spawn_error is None and wait_error is None and \
+        equal and not timed_out and not cleanup_hold and native_rc == 0 and test_ok else 125
     (output / "native.rc").write_text(json.dumps({
         "test_rc": test_rc,
         "native_rc": native_rc,
         "timed_out": timed_out,
         "test_result_ok": test_ok,
         "forced_cleanup_hold": cleanup_hold,
+        "spawn_error": spawn_error,
+        "wait_error": wait_error,
+        "signal_exit_code": signal_exit_code,
     }, indent=2) + "\n")
     (output / "verdict.rc").write_text(str(verdict) + "\n")
     for record in records:
@@ -247,4 +299,5 @@ finally:
         "kill_grace_seconds": 2,
         "cleanup_in_finally": True,
     }, indent=2, sort_keys=True) + "\n")
+    retention_active = False
 raise SystemExit(verdict)

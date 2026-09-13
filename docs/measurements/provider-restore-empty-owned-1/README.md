@@ -3,9 +3,10 @@
 This packet archives the clean current worker source and runs six focused
 Vitest Durable Object cases from
 `worker/test/realm/restore-empty-owned.workers.test.ts`. It uses the pinned
-`/home/jes/commonplace-log/worker/node_modules` tree, fresh private HOME,
-XDG, and TMP roots, local SQLite-backed Durable Objects, and the Vitest
-`do` project. No install, cloud, deployment, or hosted provider is involved.
+`/home/jes/commonplace-log/worker/node_modules` tree, a fresh archived source,
+private HOME/XDG/TMP roots, local SQLite-backed Durable Objects, and Vitest
+project `do`. The runner gives Vitest a private cache directory and does not
+install dependencies or contact a hosted provider.
 
 The frozen cases are:
 
@@ -19,9 +20,10 @@ The frozen cases are:
 The runner requires ancestry from provider commit
 `5c7e3fe3ff5a33ce9fd0b4f4d1aa5e28216bcb4c`, archives the exact clean HEAD,
 binds worker source/config/package/fixture files and the complete pinned
-runtime tree before and after execution, and retains stdout, stderr, test
-JSON, native rc, process-group records, and verdict. The worker child is
-bounded at 120 seconds with TERM five-second grace and KILL two-second grace.
+runtime tree before and after execution, and retains runtime membership
+additions/removals. The worker child is bounded at 120 seconds with TERM
+five-second grace and KILL two-second grace. Native and cleanup records are
+retained even when a signal interrupts the run.
 
 Run with a fresh output directory:
 
