@@ -64,13 +64,15 @@ def verify_source():
     for commit, label in ((SOURCE_BASE, "source base"), (BUFFER_SOURCE, "buffer source"), (FIXTURE_COMMIT, "fixture")):
         if subprocess.run(["git", "merge-base", "--is-ancestor", commit, actual_head], cwd=ROOT).returncode != 0:
             raise SystemExit(f"provider source is not based on the accepted {label} commit")
-    changed = git("diff", "--name-only", SOURCE_BASE, actual_head, "--", "worker/src", "worker/package.json", "worker/package-lock.json").splitlines()
-    expected_product = {"worker/src/index.ts"}
-    if set(changed) != expected_product:
-        raise SystemExit(f"unexpected worker product changes: {changed}")
-    fixture_changed = git("diff", "--name-only", BUFFER_SOURCE, actual_head, "--").splitlines()
-    if fixture_changed != [TEST_FILE]:
-        raise SystemExit(f"unexpected post-buffer source changes: {fixture_changed}")
+    product_changed = git(
+        "diff", "--name-only", SOURCE_BASE, actual_head, "--",
+        "worker/src", "worker/package.json", "worker/package-lock.json",
+    ).splitlines()
+    if product_changed:
+        raise SystemExit(f"unexpected product changes after accepted a15: {product_changed}")
+    post_source_changed = git("diff", "--name-only", SOURCE_BASE, actual_head, "--").splitlines()
+    if post_source_changed != [TEST_FILE]:
+        raise SystemExit(f"unexpected changes after accepted a15: {post_source_changed}")
     status = git("status", "--porcelain", "--untracked-files=all").splitlines()
     disallowed = [line for line in status if not line.startswith("?? tmp/")]
     if disallowed:
