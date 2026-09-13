@@ -29,7 +29,7 @@ COMPILE_SOURCES = [
 ]
 CHILD_TIMEOUT = 180
 CLEANUP_GRACE = 5
-EXPECTED_TOTAL = 2
+EXPECTED_TOTAL = 9
 EXPECTED_EXCLUDED = 7
 
 if OUT.exists():
@@ -116,11 +116,15 @@ received_signal = None
 received_signal_number = None
 
 
-def receive_signal(signum, _frame):
+def latch_signal(signum):
     global received_signal, received_signal_number
     if received_signal is None:
         received_signal = signal.Signals(signum).name
         received_signal_number = signum
+
+
+def receive_signal(signum, _frame):
+    latch_signal(signum)
     raise RunnerSignal(received_signal)
 
 
@@ -221,9 +225,19 @@ try:
             preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, launch_mask),
         )
         pid = proc.pid
-        pgid = os.getpgid(pid)
+        pgid = pid
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            # start_new_session makes the child leader its own process group;
+            # retain that leader identity if it exits before registration.
+            pgid = pid
+        try:
+            sid = os.getsid(pid)
+        except ProcessLookupError:
+            sid = None
         (OUT / "process-start.json").write_text(
-            json.dumps({"pid": pid, "pgid": pgid, "sid": os.getsid(pid)}) + "\n"
+            json.dumps({"pid": pid, "pgid": pgid, "sid": sid}) + "\n"
         )
     finally:
         stdout_file.close()
@@ -254,6 +268,10 @@ finally:
             final_group_state = wait_group_absent(pgid, CLEANUP_GRACE)
             if final_group_state != "absent":
                 cleanup_hold = f"owned process group {final_group_state}"
+        pending = signal.sigpending()
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            if signum in pending or signal.Signals(signum) in pending:
+                latch_signal(signum)
         try:
             post = input_manifest()
             manifest_error = None
@@ -287,7 +305,7 @@ finally:
             app_result_match = json.loads((OUT / "app-result.json").read_text()) == expected_app_result
         except (OSError, ValueError):
             app_result_match = False
-        verdict_rc = 0 if native_rc == 0 and equal and count_match and app_result_match and cleanup_ok and runner_error is None else 125
+        verdict_rc = 0 if native_rc == 0 and not timed_out and equal and count_match and app_result_match and cleanup_ok and runner_error is None else 125
         if received_signal_number is not None:
             verdict_rc = 128 + received_signal_number
         process_record = {
@@ -316,6 +334,7 @@ finally:
         (OUT / "verdict.json").write_text(json.dumps({
             "native_rc": native_rc,
             "verdict_rc": verdict_rc,
+            "timed_out": timed_out,
             "input_equal": equal,
             "count_match": count_match,
             "app_result_match": app_result_match,
@@ -326,6 +345,7 @@ finally:
     finally:
         for signum in (signal.SIGTERM, signal.SIGINT):
             signal.signal(signum, signal.SIG_IGN)
+        signal.pthread_sigmask(signal.SIG_SETMASK, cleanup_mask)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 

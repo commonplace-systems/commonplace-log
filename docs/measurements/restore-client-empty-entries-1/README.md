@@ -6,7 +6,7 @@ The client preserves the existing bounded log, writer, archive, entry, and
 aggregate byte checks, emits an empty JSON `entries` array, and rejects a null
 writer before transport. The two new tests are tagged
 `restore_empty_entries`; the runner loads the complete nine-test source file,
-then requires exactly two tests, seven excluded tests, and zero skipped tests.
+then requires nine defined tests, exactly two executed and seven excluded, and zero skipped tests.
 
 The native runner is based on accepted client commit `32c1889`, compiles the
 six client source files against the pinned 847 cached BEAM files, and runs

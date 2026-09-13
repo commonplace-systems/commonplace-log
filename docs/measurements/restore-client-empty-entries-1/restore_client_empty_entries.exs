@@ -31,16 +31,16 @@ summary = %{
   "failures" => result.failures,
   "excluded" => result.excluded,
   "skipped" => result.skipped,
-  "expected_total" => 2,
+  "expected_total" => 9,
   "expected_excluded" => 7,
   "expected_failures" => 0,
-  "status" => if(result.total == 2 and result.failures == 0 and result.excluded == 7 and result.skipped == 0, do: "expected", else: "mismatch")
+  "status" => if(result.total == 9 and result.failures == 0 and result.excluded == 7 and result.skipped == 0, do: "expected", else: "mismatch")
 }
 
 File.write!(Path.join(out, "app-result.json"), Jason.encode!(summary) <> "\n")
 
 System.halt(
-  if result.total == 2 and result.failures == 0 and result.excluded == 7 and result.skipped == 0,
+  if result.total == 9 and result.failures == 0 and result.excluded == 7 and result.skipped == 0,
     do: 0,
     else: 2
 )
