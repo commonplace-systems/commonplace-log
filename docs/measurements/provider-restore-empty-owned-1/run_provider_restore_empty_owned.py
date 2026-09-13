@@ -191,8 +191,9 @@ def cleanup_all():
 
 def on_signal(signum, _frame):
     global first_signal_received, signal_exit_code
-    first_signal_received = True
-    signal_exit_code = 128 + signum
+    if not first_signal_received:
+        first_signal_received = True
+        signal_exit_code = 128 + signum
     cleanup_all()
     if not retention_active:
         raise SystemExit(signal_exit_code)
@@ -202,8 +203,8 @@ signal.signal(signal.SIGTERM, on_signal)
 signal.signal(signal.SIGINT, on_signal)
 
 retention_active = True
-stdout_handle = (output / "stdout").open("wb")
-stderr_handle = (output / "stderr").open("wb")
+stdout_handle = None
+stderr_handle = None
 process = None
 record = None
 spawn_error = None
@@ -212,27 +213,32 @@ timed_out = False
 previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
 try:
     try:
-        process = subprocess.Popen(
-            command, cwd=source / "worker", env=env,
-            stdout=stdout_handle, stderr=stderr_handle,
-            start_new_session=True,
-            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask),
-        )
-        record = {
-            "label": "vitest-workers",
-            "pid": process.pid,
-            "pgid": process.pid,
-            "term_sent": False,
-            "kill_sent": False,
-            "process": process,
-        }
-        records.append(record)
-        (output / "process-start.json").write_text(json.dumps({
-            "label": "vitest-workers",
-            "pid": process.pid,
-            "pgid": process.pid,
-            "argv": command,
-        }, indent=2) + "\n")
+        stdout_handle = (output / "stdout").open("wb")
+        stderr_handle = (output / "stderr").open("wb")
+        if first_signal_received:
+            spawn_error = "signal latched before native spawn"
+        else:
+            process = subprocess.Popen(
+                command, cwd=source / "worker", env=env,
+                stdout=stdout_handle, stderr=stderr_handle,
+                start_new_session=True,
+                preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask),
+            )
+            record = {
+                "label": "vitest-workers",
+                "pid": process.pid,
+                "pgid": process.pid,
+                "term_sent": False,
+                "kill_sent": False,
+                "process": process,
+            }
+            records.append(record)
+            (output / "process-start.json").write_text(json.dumps({
+                "label": "vitest-workers",
+                "pid": process.pid,
+                "pgid": process.pid,
+                "argv": command,
+            }, indent=2) + "\n")
     except BaseException as error:
         spawn_error = repr(error)
 finally:
@@ -249,8 +255,10 @@ try:
             wait_error = repr(error)
 finally:
     cleanup_all()
-    stdout_handle.close()
-    stderr_handle.close()
+    if stdout_handle is not None:
+        stdout_handle.close()
+    if stderr_handle is not None:
+        stderr_handle.close()
     for stream in (output / "stdout", output / "stderr"):
         stream.touch(exist_ok=True)
     post_runtime_files = discover_runtime_files()
@@ -274,7 +282,12 @@ finally:
     test_ok = isinstance(result, dict) and result.get("numTotalTests") == 6 and \
         result.get("numPassedTests") == 6 and result.get("numFailedTests") == 0 and \
         result.get("numPendingTests") == 0
-    cleanup_hold = any(record.get("forced_cleanup_hold") for record in records)
+    cleanup_hold = any(
+        record.get("forced_cleanup_hold") is not False
+        or record.get("group_absent") is not True
+        or not isinstance(record.get("leader_exit"), int)
+        for record in records
+    )
     test_rc = process.poll() if process is not None else None
     native_rc = test_rc if test_rc is not None else 125
     verdict = native_rc if signal_exit_code is None and spawn_error is None and wait_error is None and \
