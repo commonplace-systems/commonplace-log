@@ -23,6 +23,8 @@ BUFFER_SOURCE = "f5f860c8ae2b47da39fb08018d29834ba70500b4"
 FIXTURE_COMMIT = "0c303e24a60a8dfae4368c2e6c9fe436fe984034"
 FIXTURE_SOURCE_COMMIT = "fbe5056e2b84f4bda3c10b4e2f03f33aca09a8eb"
 TEST_FILE = "worker/test/realm/restore-public-buffering.workers.test.ts"
+PACKET_README = "docs/measurements/provider-restore-http-buffer-1/README.md"
+PACKET_RUNNER = "docs/measurements/provider-restore-http-buffer-1/run_provider_restore_http_buffer.py"
 FIXTURE_FULL_NAME = (
     "public ingress body buffering rejects wrong-secret bodies, then serves "
     "inventory and restore, while bounding overflow before auth"
@@ -71,7 +73,7 @@ def verify_source():
     if product_changed:
         raise SystemExit(f"unexpected product changes after accepted a15: {product_changed}")
     post_source_changed = git("diff", "--name-only", SOURCE_BASE, actual_head, "--").splitlines()
-    if post_source_changed != [TEST_FILE]:
+    if set(post_source_changed) != {TEST_FILE, PACKET_README, PACKET_RUNNER}:
         raise SystemExit(f"unexpected changes after accepted a15: {post_source_changed}")
     status = git("status", "--porcelain", "--untracked-files=all").splitlines()
     disallowed = [line for line in status if not line.startswith("?? tmp/")]
