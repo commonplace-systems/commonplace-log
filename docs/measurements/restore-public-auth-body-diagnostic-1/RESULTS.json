@@ -1,0 +1,63 @@
+{
+  "stage": "restore-public-auth-body-diagnostic-1",
+  "status": "observed_incomplete",
+  "native_rc": 125,
+  "output": "/home/jes/commonplace-log-restore-http-body-diagnostic/tmp/restore-public-auth-body-diagnostic-1",
+  "raw_output_manifest": "output-manifest-1.json",
+  "raw_output_manifest_sha256": "2bb29b06a74c8c716f2dce817c6cac01cb4af6eae83d241ff9a052b972a41bdd",
+  "raw_files": 61,
+  "raw_bytes": 2120210,
+  "raw_files_digest_sha256": "063fb3b04bcccc0347fa857b156c591c35714fae65de889c3b4e717f2d1ebc6c",
+  "provider_commit": "6213d4498354861c6e3a5ff8a047b93ce380304e",
+  "fixture": {
+    "commit": "c9011535742daea9ecb216185e54ed41a3d470af",
+    "sha256": "74ec70076df0a9e9058034234fd6951a110ddf65632b1d416c7fdd672327126f",
+    "case": "test rejects a body-bearing wrong secret before returning the unchanged empty inventory"
+  },
+  "test_result": {
+    "total": 1,
+    "failures": 1,
+    "excluded": 0,
+    "skipped": 0,
+    "failure": "final authenticated inventory returned {:error, {:transport_error, :provider_failed}} after the wrong-secret request",
+    "status": "mismatch"
+  },
+  "safe_phase_trace": {
+    "pairs_observed": 3,
+    "expected_pairs": 4,
+    "sequence": [
+      {"category": "create", "status": 201, "cancel": "not_attempted"},
+      {"category": "realm", "status": 200, "cancel": "not_attempted"},
+      {"category": "realm", "status": 401, "cancel": "error"}
+    ],
+    "fourth_valid_inventory_pair": "not observed because the fixture failed after the 401 response"
+  },
+  "request_stream_diagnostic_count": 1,
+  "process_groups": {
+    "groups": 2,
+    "all_absent": true,
+    "leader_exit_codes": [1, 2],
+    "kill_sent": false,
+    "timeout": false,
+    "signal": false
+  },
+  "input_equality": true,
+  "input_count": 4355,
+  "worker_runtime": {"pre_count": 3221, "post_count": 3221, "added": [], "removed": []},
+  "bounds": {
+    "runner_recorded_outer_seconds": 180,
+    "runner_enforced_outer_timeout": false,
+    "external_native_run_seconds": 210,
+    "external_cleanup_seconds": 30,
+    "readiness_seconds": 30,
+    "fixture_seconds": 30,
+    "term_seconds": 5,
+    "kill_seconds": 2
+  },
+  "scope_limits": [
+    "local diagnostic provider ingress with safe body-state metadata only",
+    "the fixture did not complete its unchanged-inventory assertion",
+    "the request-stream error count is recorded without a cause claim",
+    "no transport fix, cloud, deployment, hosted authentication, account activation, or public-service claim"
+  ]
+}
