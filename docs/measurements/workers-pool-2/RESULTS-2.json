@@ -58,6 +58,7 @@
     "wrapper_acceptance": false,
     "note": "The two retained runs together pass all 43 assertion names, but neither wrapper accepted because run 1 failed before completion and run 2 retained 10 stream diagnostics."
   },
-  "raw_output_manifest": "tmp/workers-pool-2/original-output-sha256.json",
-  "raw_output": "tmp/workers-pool-2"
+  "raw_output_manifest": "OUTPUT-MANIFEST-2.json",
+  "raw_output": "tmp/workers-pool-2",
+  "preexisting_raw_manifest_note": "tmp/workers-pool-2/original-output-sha256.json is preserved unchanged but does not match the current retained result/control bytes; it is not used as the current-output hash authority."
 }
