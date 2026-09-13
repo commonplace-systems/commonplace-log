@@ -145,6 +145,7 @@ describe("internal restore of configured empty owned logs", () => {
   it("creates a complete catalog marker for a configured non-null writer with no entries", async () => {
     const name = `empty-catalog-${Date.now()}-${Math.random()}`;
     const target = realmStub(name);
+    const secret = await createRealm(target);
     const unauthenticated = await target.fetch("https://realm.invalid/restore-bundle-batch", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -153,7 +154,6 @@ describe("internal restore of configured empty owned logs", () => {
     expect(unauthenticated.status).toBe(401);
     expect(await unauthenticated.json()).toEqual({ ok: false, error: { code: "unauthorized" } });
 
-    const secret = await createRealm(target);
     const authenticated = await target.fetch("https://realm.invalid/restore-bundle-batch", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
