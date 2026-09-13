@@ -92,6 +92,52 @@ function createRealmStub(env: Env, realmId: string, locationHint?: LocationHint)
   return namespace.get(id, locationHint === undefined ? undefined : { locationHint });
 }
 
+type BodyState = { used: boolean; locked: boolean };
+
+function bodyState(request: Request): BodyState {
+  return { used: request.bodyUsed, locked: request.body?.locked ?? false };
+}
+
+async function cancelIngressBody(request: Request): Promise<"cancelled" | "no_body" | "error"> {
+  if (request.body === null) return "no_body";
+  try {
+    await request.body.cancel();
+    return "cancelled";
+  } catch {
+    return "error";
+  }
+}
+
+/** Diagnostic-only stream ownership trace; it records no request data or credentials. */
+async function forwardWithBodyDiagnostic(
+  stub: DurableObjectStub,
+  request: Request,
+  forwarded: Request,
+  category: "create" | "realm",
+  originalBefore: BodyState,
+): Promise<Response> {
+  const forwardedBefore = bodyState(forwarded);
+  console.log(
+    `[restore-http-body-diagnostic] beforeforward category=${category} ` +
+      `original_used=${originalBefore.used} original_locked=${originalBefore.locked} ` +
+      `forwarded_used=${forwardedBefore.used} forwarded_locked=${forwardedBefore.locked}`,
+  );
+  const response = await stub.fetch(forwarded);
+  const cancelOutcome =
+    response.status === 401 || response.status === 404
+      ? await cancelIngressBody(request)
+      : "not_attempted";
+  const originalAfter = bodyState(request);
+  const forwardedAfter = bodyState(forwarded);
+  console.log(
+    `[restore-http-body-diagnostic] afterstubresponse category=${category} status=${response.status} ` +
+      `original_used=${originalAfter.used} original_locked=${originalAfter.locked} ` +
+      `forwarded_used=${forwardedAfter.used} forwarded_locked=${forwardedAfter.locked} ` +
+      `cancel=${cancelOutcome}`,
+  );
+  return response;
+}
+
 async function createBody(request: Request): Promise<{ locationHint?: LocationHint } | null> {
   try {
     const value: unknown = await request.json();
@@ -136,12 +182,19 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     headers.delete("authorization");
     headers.set(REALM_CREATE_HEADER, "1");
     headers.set(REALM_ID_HEADER, route.realmId);
+    const originalBefore = bodyState(request);
     const forwarded = new Request(target, {
       method: "POST",
       headers,
       body: "{}",
     });
-    return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
+    return await forwardWithBodyDiagnostic(
+      createRealmStub(env, route.realmId, decoded.locationHint),
+      request,
+      forwarded,
+      "create",
+      originalBefore,
+    );
   }
 
   // Realm routes are scoped in the DO. The gateway checks syntax only.
@@ -149,10 +202,17 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
 
   const target = new URL(request.url);
   target.pathname = route.sidecarPath;
+  const originalBefore = bodyState(request);
   const forwarded = new Request(target, request);
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
-  return await realmStub(env, route.realmId).fetch(forwarded);
+  return await forwardWithBodyDiagnostic(
+    realmStub(env, route.realmId),
+    request,
+    forwarded,
+    "realm",
+    originalBefore,
+  );
 }
 
 export default {
