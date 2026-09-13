@@ -39,6 +39,9 @@ export interface Env {
 // docs/proposals/2026-08-25-realm-naming-and-placement.md. Realm ids are opaque.
 const REALM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REALM_PREFIX = "/realms/";
+const BUFFERED_WIRE_PATHS = new Set(["/list-logs", "/restore-bundle-batch"]);
+const MAX_BUFFERED_BODY_BYTES = 32 * 1024 * 1024;
+const BUFFERED_BODY_DEADLINE_MS = 5_000;
 
 function fail(code: string, status: number): Response {
   return Response.json({ ok: false, error: { code } }, { status });
@@ -90,6 +93,82 @@ function createRealmStub(env: Env, realmId: string, locationHint?: LocationHint)
   const namespace = env.REALM_NODE ?? env.REALM_CONTAINER;
   const id = namespace.idFromName(realmId);
   return namespace.get(id, locationHint === undefined ? undefined : { locationHint });
+}
+
+class IngressBodyFailure extends Error {
+  constructor(readonly code: "oversize" | "timeout" | "malformed") {
+    super(code);
+  }
+}
+
+/**
+ * Buffer only the bounded provider wire body so the DO receives an independent
+ * stream. This is transport admission: it does not parse or validate JSON.
+ * Because buffering precedes realm authorization, an over-limit or timed-out
+ * request receives the ingress 413/408 result even when its bearer is absent
+ * or wrong; this is an explicit bounded-input policy, not an auth guarantee.
+ */
+async function readBufferedWireBody(request: Request): Promise<Uint8Array> {
+  if (request.body === null) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
+
+  const readAll = async (): Promise<Uint8Array> => {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > MAX_BUFFERED_BODY_BYTES) throw new IngressBodyFailure("oversize");
+      chunks.push(next.value);
+    }
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  };
+
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new IngressBodyFailure("timeout")), BUFFERED_BODY_DEADLINE_MS);
+    });
+    const body = await Promise.race([readAll(), timeout]);
+    finished = true;
+    return body;
+  } catch (error) {
+    if (error instanceof IngressBodyFailure) throw error;
+    throw new IngressBodyFailure("malformed");
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (!finished) void reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // A pending read owns the lock; cancellation remains best-effort and
+      // the bounded request result has already been selected.
+    }
+  }
+}
+
+async function bufferWireBodyOrFail(
+  request: Request,
+): Promise<{ ok: true; body: Uint8Array } | { ok: false; response: Response }> {
+  try {
+    return { ok: true, body: await readBufferedWireBody(request) };
+  } catch (error) {
+    if (error instanceof IngressBodyFailure && error.code === "oversize") {
+      return { ok: false, response: fail("oversize", 413) };
+    }
+    if (error instanceof IngressBodyFailure && error.code === "timeout") {
+      return { ok: false, response: fail("request_timeout", 408) };
+    }
+    return { ok: false, response: fail("malformed_request", 400) };
+  }
 }
 
 async function createBody(request: Request): Promise<{ locationHint?: LocationHint } | null> {
@@ -145,11 +224,26 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
   }
 
   // Realm routes are scoped in the DO. The gateway checks syntax only.
+  const needsBufferedWireBody = request.method === "POST" && BUFFERED_WIRE_PATHS.has(route.sidecarPath);
+  let bufferedBody: Uint8Array | undefined;
+  if (needsBufferedWireBody) {
+    const buffered = await bufferWireBodyOrFail(request);
+    if (!buffered.ok) return buffered.response;
+    bufferedBody = buffered.body;
+  }
+
   if (presented === null) return fail("unauthorized", 401);
 
   const target = new URL(request.url);
   target.pathname = route.sidecarPath;
-  const forwarded = new Request(target, request);
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  headers.delete(REALM_CREATE_HEADER);
+  headers.delete(REALM_ID_HEADER);
+  const forwarded = needsBufferedWireBody
+    ? new Request(target, { method: request.method, headers, body: bufferedBody })
+    : new Request(target, request);
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
   return await realmStub(env, route.realmId).fetch(forwarded);
