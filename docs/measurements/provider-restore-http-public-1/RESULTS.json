@@ -1,0 +1,51 @@
+{
+  "changed_runtime_file_count": 2,
+  "changed_runtime_files": [
+    {
+      "path": "/home/jes/commonplace-log/worker/node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json",
+      "post_sha256": "b8672602807cc41d711b27b2f96be5a68bb6f337e28570aa2b5661a88ceaaed6",
+      "pre_sha256": "1ae4df881dd0580106dedcc66db3cd0b57c1260f613a96061b63059eb77d90f7",
+      "section": "worker_runtime"
+    },
+    {
+      "path": "/home/jes/commonplace-log/worker/node_modules/.vite/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/_metadata.json",
+      "post_sha256": "8c662afd513a54b503e4b34946a53dcd28bd0c03ac535c73b0e70564c8f0d311",
+      "pre_sha256": "7664eb487c37415a5e409b99908e446c9457b30d5229b79fcf9de58c8773131b",
+      "section": "worker_runtime"
+    }
+  ],
+  "execution_audit": "incomplete: native assertions passed, but the pinned shared runtime changed during execution",
+  "fixture_commit": "e760fb1b18f91fccbdfdd16156cd08636f5715ff",
+  "input_equality": false,
+  "native_rc": 0,
+  "output": "/home/jes/commonplace-log-restore-http-public/tmp/provider-restore-http-public-1",
+  "process_groups": {
+    "all_absent": true,
+    "groups": 2,
+    "kill_sent": false,
+    "signal": false,
+    "term_sent": false,
+    "timeout": false
+  },
+  "raw_output_manifest": "output-manifest-1.json",
+  "raw_output_manifest_sha256": "1b09fd36e40aee2967f0e802cd99fa49ffc996d3467531f5d7a22666dd4ade24",
+  "runtime_membership_equal": true,
+  "scope_limits": [
+    "local Vitest worker-pool assertion evidence only",
+    "four request-stream diagnostics retained without causal attribution",
+    "no full transport-clean execution claim",
+    "no cloud, deployment, account activation, credentials, or public production proof"
+  ],
+  "selected_tests": {
+    "details": "three SELF public ingress cases plus one direct authenticated DurableObjectStub authorization case; four other restore-wire cases were filtered and skipped",
+    "excluded": 4,
+    "failed": 0,
+    "passed": 4,
+    "pending": 4,
+    "total": 4
+  },
+  "source_archive_head": "eec98842411018a3346c52010e0aaabd08609e78",
+  "stage": "provider-restore-http-public-1",
+  "status": "incomplete",
+  "verdict_rc": 125
+}
