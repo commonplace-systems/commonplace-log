@@ -85,6 +85,25 @@ function fail(code: string, status: number): Response {
   return Response.json({ ok: false, error: { code } }, { status });
 }
 
+/**
+ * Refused requests must release an unread inbound stream before their response
+ * is returned. Cancellation is bounded and does not inspect or drain caller
+ * bytes; successful requests retain the existing body ownership.
+ */
+async function cancelUnreadBody(request: Request): Promise<void> {
+  try {
+    await request.body?.cancel();
+  } catch {
+    // The response remains the closed auth result even when the runtime has
+    // already closed the request stream.
+  }
+}
+
+async function refused(request: Request, code: string, status: number): Promise<Response> {
+  await cancelUnreadBody(request);
+  return fail(code, status);
+}
+
 export async function handlePublicRealmRequest(
   request: Request,
   auth: RealmAuth,
@@ -93,22 +112,23 @@ export async function handlePublicRealmRequest(
   const path = new URL(request.url).pathname;
   if (path === "/realm/create" && request.headers.get(REALM_CREATE_HEADER) === "1") {
     const realmId = request.headers.get(REALM_ID_HEADER);
-    if (realmId === null) return fail("malformed_request", 400);
+    if (realmId === null) return refused(request, "malformed_request", 400);
     try {
       const secret = await auth.create(realmId);
+      await cancelUnreadBody(request);
       return Response.json({ ok: true, realm_id: realmId, realm_secret: secret }, { status: 201 });
     } catch (error) {
-      if (error instanceof RealmExists) return fail("realm_exists", 409);
+      if (error instanceof RealmExists) return refused(request, "realm_exists", 409);
       throw error;
     }
   }
 
   // The create endpoint is gateway-internal and never opens with a realm secret.
-  if (path === "/realm/create") return fail("not_found", 404);
+  if (path === "/realm/create") return refused(request, "not_found", 404);
 
   const result = await auth.authorize(request);
-  if (result === "not_found") return fail("not_found", 404);
-  if (result === "unauthorized") return fail("unauthorized", 401);
+  if (result === "not_found") return refused(request, "not_found", 404);
+  if (result === "unauthorized") return refused(request, "unauthorized", 401);
 
   const forwarded = new Request(request);
   forwarded.headers.delete("authorization");
