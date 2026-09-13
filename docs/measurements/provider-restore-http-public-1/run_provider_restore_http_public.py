@@ -31,6 +31,12 @@ AUTH_FILE = "worker/test/realm/restore-wire.workers.test.ts"
 FIXTURE_SHA256 = "851d8782c153d5cf40f4c78ce4462ce0e7d99d7d3f76cff24f64d96b7720142d"
 AUTH_SHA256 = "fbc586699f246567450dad0f369317978ceb10449177ef6d5b2a6cf60d79fa5d"
 AUTH_TITLE = "restore bundle wire requires realm authorization before accepting the bounded public restore route"
+AUTH_EXCLUDED_TITLES = [
+    "restore bundle wire imports the full sorted inventory in bounded batches and resumes after a DO restart",
+    "restore bundle wire refuses unprovisioned, nonempty, and target-confused requests without mutation",
+    "restore bundle wire uses the platform container identity for the internal outbound seam",
+    "restore bundle wire returns closed malformed, raw-body, and decoded-size errors",
+]
 EXPECTED_CASES = [
     "authenticated public restore wire rejects missing, wrong, cross-realm, and deployment tokens before mutation",
     "authenticated public restore wire restores through public auth with exact bytes and idempotent replay",
@@ -172,7 +178,7 @@ original_source_hashes = {
     str(path.relative_to(ROOT)): sha256(path) for path in source_inputs
 }
 archived_source_hashes = {
-    str(path.relative_to(source_root)): sha256(source_root / path.relative_to(ROOT))
+    str(path.relative_to(ROOT)): sha256(source_root / path.relative_to(ROOT))
     for path in source_inputs
 }
 if archived_source_hashes != original_source_hashes:
@@ -361,23 +367,24 @@ def summarize(result_path):
     return {"total": 0, "passed": 0, "failed": 1, "pending": 0, "assertions": assertions, "raw": result}
 
 
-def selected_result_ok(summary, expected_titles):
+def selected_result_ok(summary, expected_titles, excluded_titles=()):
     assertions = summary.get("assertions", [])
     if not assertions:
         return False
-    selected = [item for item in assertions if item["full_name"] in expected_titles]
+    expected_names = set(expected_titles)
+    excluded_names = set(excluded_titles)
+    allowed_names = expected_names | excluded_names
+    if {item["full_name"] for item in assertions} != allowed_names:
+        return False
+    selected = [item for item in assertions if item["full_name"] in expected_names]
+    excluded = [item for item in assertions if item["full_name"] in excluded_names]
     passed_names = {item["full_name"] for item in assertions if item["status"] == "passed"}
-    unexpected_active = [
-        item for item in assertions
-        if item["full_name"] not in expected_titles
-        and item["status"] in {"passed", "failed", "todo", "pending"}
-    ]
     return (
         len(selected) == len(expected_titles)
         and passed_names == set(expected_titles)
-        and not unexpected_active
         and all(item["status"] == "passed"
                 for item in selected)
+        and all(item["status"] in {"pending", "skipped"} for item in excluded)
     )
 
 
@@ -403,7 +410,8 @@ try:
             result_rc = record["process"].poll()
             summary = summarize(OUT / result_name)
             expected_titles = FIXTURE_TITLES if label == "public-fixture" else [AUTH_TITLE]
-            summary["selected_ok"] = selected_result_ok(summary, expected_titles)
+            excluded_titles = () if label == "public-fixture" else AUTH_EXCLUDED_TITLES
+            summary["selected_ok"] = selected_result_ok(summary, expected_titles, excluded_titles)
             results.append({"label": label, "rc": result_rc, **summary})
             if result_rc not in (0, None) or not summary["selected_ok"]:
                 # Do not launch a second suite after the public fixture has
