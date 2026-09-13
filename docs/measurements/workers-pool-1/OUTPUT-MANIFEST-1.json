@@ -1,0 +1,261 @@
+{
+  "artifact": "workers-pool-1",
+  "stage": "run-1",
+  "source_output": "tmp/workers-pool-1",
+  "hash_algorithm": "sha256",
+  "follow_symlinks": false,
+  "regular_file_count": 61,
+  "files": {
+    "command.json": {
+      "sha256": "f1ee5909c6c1a8f875e712e6a6dc3b18c64245f6665778cd71abd468257efc5f",
+      "bytes": 1453
+    },
+    "context/worker/package-lock.json": {
+      "sha256": "c58243da2b1d7e7fe64b079388e3c63bb6d9a30d21a9a2d2c9772df9f98b0947",
+      "bytes": 144407
+    },
+    "context/worker/package.json": {
+      "sha256": "7c705e87776764fb41562ff16062818f3567ad633b100a5a41bf0980deb41263",
+      "bytes": 521
+    },
+    "context/worker/src/commonplace-log-do.ts": {
+      "sha256": "0ee3c560ceffe1c9bcce8d34b118b296540a1c9c8114b008032a591249ad18bd",
+      "bytes": 1128
+    },
+    "context/worker/src/do/errors.ts": {
+      "sha256": "2412e880d7c42e5ce24bdaa83d369b3631b3f9767015d59c3b001b850221ad8c",
+      "bytes": 2391
+    },
+    "context/worker/src/do/http.ts": {
+      "sha256": "cf76d8213c9f8b717a289ccaded286cbdf8885240185b4de6a6843d0cdc833d6",
+      "bytes": 14012
+    },
+    "context/worker/src/do/merge-plan.ts": {
+      "sha256": "dbc7c7a8db46a7a59c917b1bea508cbca7cb27767b682dd1910d52916a8eeda8",
+      "bytes": 8942
+    },
+    "context/worker/src/do/schema.ts": {
+      "sha256": "979715e364120f33c71411196d30208d28b209955f9bd2f6791583a3945f1989",
+      "bytes": 2100
+    },
+    "context/worker/src/do/store.ts": {
+      "sha256": "61c5d1aa1eeec4a70b9671312567a48fd0d9ec20dbcdf13e4c677d806c6f4881",
+      "bytes": 20371
+    },
+    "context/worker/src/do/uuid.ts": {
+      "sha256": "866e32462b5a5b0dd6f5514950de13af8ae38016464f61d549a00c1b26ae5113",
+      "bytes": 1645
+    },
+    "context/worker/src/entry.ts": {
+      "sha256": "47ed8e38ebc125d062dbe3398c0d7cccf14f0f374cca4747787df45d14cbba4f",
+      "bytes": 13211
+    },
+    "context/worker/src/index.ts": {
+      "sha256": "def96ee702038eb5215d5b257d9a3e6df8d8ef24a1c19368bbe61522182159d2",
+      "bytes": 13126
+    },
+    "context/worker/src/jcs.ts": {
+      "sha256": "6fc11102bfa7d3d4d0b6c6600b22e80e299e502b1b4a8763391b5178a443fc7b",
+      "bytes": 1938
+    },
+    "context/worker/src/realm/capacity.ts": {
+      "sha256": "5591375738583884a223fefad9a8591dc7751d1ac3632e6527c3a8cf5c8bf720",
+      "bytes": 1240
+    },
+    "context/worker/src/realm/container.ts": {
+      "sha256": "0bd3545c1a4761fa5408778d4615fa8d6c220d39cc4d79fce07e631129325a85",
+      "bytes": 1278
+    },
+    "context/worker/src/realm/http.ts": {
+      "sha256": "d1f6a0ebbef904cd03507d536ac4b1a9ede3fb447156c04997c00858d53d73e3",
+      "bytes": 8986
+    },
+    "context/worker/src/realm/node.ts": {
+      "sha256": "3d89756f7b10dbc20d474ede829fb65921881d6b7e88be0a0673edef3be1da7b",
+      "bytes": 2566
+    },
+    "context/worker/src/realm/outbound.ts": {
+      "sha256": "14ee597b1e687a4d4826638c18a744bb3bb2cc4d2a2a8c4650549d364fcbd943",
+      "bytes": 1677
+    },
+    "context/worker/src/realm/realm_auth.ts": {
+      "sha256": "c561a6464f6c8f7ca983389e4ad48c56419fbfff85ca2550e25dae8e4c8a0c01",
+      "bytes": 23083
+    },
+    "context/worker/src/realm/registry.ts": {
+      "sha256": "546261bed8d160a17c62866f11f418730d199136a8e9c809f1bf45fa82fb8a68",
+      "bytes": 2789
+    },
+    "context/worker/src/realm/schema.ts": {
+      "sha256": "5eb4f9b76c848b5015ebf5119aab604737a03755361c969bd27358b84f2ecac8",
+      "bytes": 5609
+    },
+    "context/worker/src/realm/store.ts": {
+      "sha256": "dcf49e2b8dbec8e6a68b5a5b2006818f318c807ed46ea6f733756c1f426490de",
+      "bytes": 54378
+    },
+    "context/worker/src/realm/wire.ts": {
+      "sha256": "6cfb0f63e0e5a0d149120d8e4ba038a14c90e280592bdae0eb738d08a55aa8ba",
+      "bytes": 9396
+    },
+    "context/worker/test/realm/allocation_registry.workers.test.ts": {
+      "sha256": "d0a499d49e78f109f4e5af224537405d86a4f23aec081e5a204f92cd5f9a1bc0",
+      "bytes": 12111
+    },
+    "context/worker/test/realm/boundary.test.ts": {
+      "sha256": "7a35cc39acec3a63fef3e3408a5224bae52b61dc246f62916da86626e1f64363",
+      "bytes": 3162
+    },
+    "context/worker/test/realm/capacity.test.ts": {
+      "sha256": "560fe90b8ef6465b7f0e503bc5a9fa731a8e88d496a48a4b1320d47f7e55c970",
+      "bytes": 1746
+    },
+    "context/worker/test/realm/delete_all.workers.test.ts": {
+      "sha256": "118ec16f8c9f1dae25e161838eee18735843f3e6fa65772394bc52fe60084785",
+      "bytes": 5866
+    },
+    "context/worker/test/realm/helpers.ts": {
+      "sha256": "be4ab4058607f0ea3e6697bf72b0a33efe366a3be9ea3265ec313024eec42e90",
+      "bytes": 838
+    },
+    "context/worker/test/realm/http.workers.test.ts": {
+      "sha256": "3008c88c9ecbca165f8b137e160421d7e5aaf73996ee794d7c951fb28f6c9aa9",
+      "bytes": 23544
+    },
+    "context/worker/test/realm/ingress.workers.test.ts": {
+      "sha256": "753895ebab406301d162dbebab5eebdd519dacef5dd98812c37ebd0b0e088040",
+      "bytes": 9141
+    },
+    "context/worker/test/realm/outbound.test.ts": {
+      "sha256": "cbe477be919c1e9754e2a709072a1a952ba608e2c32499f8f7a30b3ae9f28cc7",
+      "bytes": 3243
+    },
+    "context/worker/test/realm/proposal-raw.d.ts": {
+      "sha256": "958220a0dc9aa21526f3f28081af11767fc7b8f79afb74a4008a3b69243574c7",
+      "bytes": 94
+    },
+    "context/worker/test/realm/read_capability.workers.test.ts": {
+      "sha256": "23a1f19d79abbb74da50a5f1bf23a678cf83a97f864c0f950ff81f6626736630",
+      "bytes": 8603
+    },
+    "context/worker/test/realm/realm_remove.workers.test.ts": {
+      "sha256": "995275b4e988a1b4784d3f5cf37fed963fefd3dbfd64c42168206c8617ee1def",
+      "bytes": 20717
+    },
+    "context/worker/test/realm/registry.workers.test.ts": {
+      "sha256": "37b35ccbaa8ac38699b0db08f5c62ce38a00433dcb1739fd5f3b9031688fc778",
+      "bytes": 7125
+    },
+    "context/worker/test/realm/schema.workers.test.ts": {
+      "sha256": "194dcf3ca86006c78e19d90dd7d2cbeae712ac3caac4c0df61e01295324e9f6a",
+      "bytes": 4801
+    },
+    "context/worker/test/realm/store.workers.test.ts": {
+      "sha256": "997030ded30ec59c02d07731353e16093610c2ac80232c29663beb2a9ed894e9",
+      "bytes": 10076
+    },
+    "context/worker/tsconfig.workers.json": {
+      "sha256": "ac69bfb7ab2b8583fe4dce078dc19c5990476df3c9b89eb6254cb0abb8d70651",
+      "bytes": 302
+    },
+    "context/worker/vitest.workers.config.ts": {
+      "sha256": "38e73afd6bc1dce4dc326d1379a4c64eb076011513b04b4238be026c8352d50b",
+      "bytes": 1415
+    },
+    "context/worker/vitest.workers.runner.config.ts": {
+      "sha256": "db3e17d11fe029c0629f6e64b98a6a7b5e19e13e46bc950daf931d129d27c6f5",
+      "bytes": 330
+    },
+    "context/worker/wrangler.test.jsonc": {
+      "sha256": "89959e5be80927469562357335882fec911b975369c03068e7bddefd736cf947",
+      "bytes": 1108
+    },
+    "home/.config/.wrangler/logs/wrangler-2026-09-13_14-56-11_173.log": {
+      "sha256": "8ff7ab56b4ba584923c6481150d022d4cc3a9b46c1ea8e8028ab18af586b29b5",
+      "bytes": 409
+    },
+    "input-equality.json": {
+      "sha256": "c0b7b014d95865482627552b1a838fb9b802dd821d54d79466281b269e9ca7dd",
+      "bytes": 37
+    },
+    "input-sha256-post.json": {
+      "sha256": "c54f251c2a863137482d37efad31e7c105d341d0a9c9725075debf183e904f4e",
+      "bytes": 422916
+    },
+    "input-sha256.json": {
+      "sha256": "c54f251c2a863137482d37efad31e7c105d341d0a9c9725075debf183e904f4e",
+      "bytes": 422916
+    },
+    "native.rc": {
+      "sha256": "99efd7d122e2ced2b37bb9a473db8f65b2fa94ab084477997f3d4208b0d6d505",
+      "bytes": 87
+    },
+    "process-groups.json": {
+      "sha256": "9b3d064c419210f15a54642c2581ce1a60d9545cc5bfd968b44f0a24eeaf2656",
+      "bytes": 360
+    },
+    "runtime-inventory.json": {
+      "sha256": "7b7e77ac039734a08a3fa8319a802a08fccbeaab1f0c5bc4d4da63d02e1f5611",
+      "bytes": 78
+    },
+    "source-pins.json": {
+      "sha256": "335139d4139794da5b0a00ce1af4800757893552f5878e03fce80e3c879b4528",
+      "bytes": 916
+    },
+    "stderr": {
+      "sha256": "caa9b4e76701ba53b21db78c24fd611000322ba5b225f509a68f88dcbe82c38b",
+      "bytes": 1377
+    },
+    "stdout": {
+      "sha256": "3a803d00db4b0df1c11970c7cfa460fb2e41a5198d3181125967bd7810224cc0",
+      "bytes": 816
+    },
+    "verdict.json": {
+      "sha256": "4bcf844102cf31cc8713db569fd26088db23ed735021430f04732d4f9467c6c6",
+      "bytes": 7072
+    },
+    "verdict.rc": {
+      "sha256": "a5e45837a2959db847f7e67a915d0ecaddd47f943af2af5fa6453be497faabca",
+      "bytes": 4
+    },
+    "vitest-results.json": {
+      "sha256": "8ca766367687a920b4c9daea6431d5e818f796ad0f92e5a88bf12bb83a3d1197",
+      "bytes": 15805
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/_metadata.json": {
+      "sha256": "bf1920d089f0da2428a7cd8dfa66a41db6ad26617ded519f227cd1fb206d86d3",
+      "bytes": 678
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/package.json": {
+      "sha256": "3ca9d4afd21425087cf31893b8f9f63c81b0b8408db5e343ca76e5f8aa26ab9a",
+      "bytes": 23
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/vitest___@vitest_expect___chai.js": {
+      "sha256": "4672dd80f375faecbec7ff1b0884215df9bace3de392ae6ca6d3c9e4d4a1616b",
+      "bytes": 133258
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/vitest___@vitest_expect___chai.js.map": {
+      "sha256": "41edb290035360e944d99dcb8edbd61dd4be9a3ee69041ea88d6c26630f34839",
+      "bytes": 239836
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/vitest___@vitest_snapshot___magic-string.js": {
+      "sha256": "906bb7deb18b2a974cc0347b4833d7961d3e32f29b564815206b02d4d222b88b",
+      "bytes": 42198
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/deps_ssr/vitest___@vitest_snapshot___magic-string.js.map": {
+      "sha256": "f5b5dcc4c8a6f83dfb695cf6b45ebf911f6024af078b5c6087d8a47c07a0060e",
+      "bytes": 91274
+    },
+    "worker-cache/vitest/eadcd9bd2a09c75aef04954e6799e50278ee124a/results.json": {
+      "sha256": "15a2ed08d35fb7f6e8dc1cd6ad5087cfb6f8e724ab86a3afce41b2b34743ee77",
+      "bytes": 503
+    }
+  },
+  "excluded_symlinks": [
+    {
+      "path": "context/worker/node_modules",
+      "target": "/home/jes/commonplace-log/worker/node_modules"
+    }
+  ],
+  "exclusion_note": "Symlinks are recorded but not followed; the retained runtime node_modules link is not hashed as output content."
+}

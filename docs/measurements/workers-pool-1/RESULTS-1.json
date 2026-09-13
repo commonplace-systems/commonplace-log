@@ -1,0 +1,63 @@
+{
+  "artifact": "workers-pool-1",
+  "stage": "run-1",
+  "outcome": "failed",
+  "source_commit": "474cf369c175dc7f9685cbb22f901d25278879ce",
+  "fixture_commit": "cc8afaac0f84fde21a621e37300cf0cb755d47ca",
+  "selected_case_count": 43,
+  "assertion_records": {
+    "total": 43,
+    "passed": 20,
+    "failed": 1,
+    "pending": 22,
+    "todo": 0
+  },
+  "vitest_aggregate": {
+    "numTotalTests": 43,
+    "numPassedTests": 20,
+    "numFailedTests": 1,
+    "numPendingTests": 0,
+    "numTodoTests": 0,
+    "numTotalTestSuites": 13,
+    "numPassedTestSuites": 11,
+    "numFailedTestSuites": 2,
+    "numPendingTestSuites": 0
+  },
+  "aggregate_pending_discrepancy": "The assertion records contain 22 pending entries while Vitest reports numPendingTests=0; the retained assertion manifest and runner verdict are authoritative for selected-case status.",
+  "native_rc": 1,
+  "verdict_rc": 125,
+  "failure": {
+    "full_name": "deployed-base allocation and registry does not restore a revoked read hash on an allocation retry",
+    "error": "ReferenceError: refused is not defined",
+    "materialized_source": "tmp/workers-pool-1/context/worker/src/realm/realm_auth.ts",
+    "line": 298,
+    "fixture_source": "tmp/workers-pool-1/context/worker/test/realm/allocation_registry.workers.test.ts",
+    "fixture_line": 236,
+    "note": "The refused helper was added later in source commit 4a22c1d; this run does not test that fix."
+  },
+  "stream_diagnostics": {
+    "count": 1,
+    "attributed": false,
+    "source": "tmp/workers-pool-1/stderr",
+    "note": "One workerd request-stream diagnostic was retained without a URL, test name, or stack association to a selected assertion; its product-versus-fixture origin is undetermined."
+  },
+  "integrity": {
+    "input_count": 3265,
+    "pre_post_equal": true,
+    "runtime_pre_count": 3221,
+    "runtime_post_count": 3221,
+    "runtime_added": [],
+    "runtime_removed": []
+  },
+  "cleanup": {
+    "pid": 2071378,
+    "pgid": 2071378,
+    "group_absent": true,
+    "term_sent": false,
+    "kill_sent": false,
+    "timed_out": false,
+    "first_signal_received": null
+  },
+  "raw_output_manifest": "OUTPUT-MANIFEST-1.json",
+  "raw_output": "tmp/workers-pool-1"
+}
