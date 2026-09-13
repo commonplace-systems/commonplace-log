@@ -1,0 +1,62 @@
+{
+  "artifact": "provider-worker-dry-run-1",
+  "stage": "worker-deploy-dry-run",
+  "outcome": "passed_local_dry_run",
+  "verdict_rc": 0,
+  "native": {
+    "child_rc": 0,
+    "native_timeout": false,
+    "signal_received": null
+  },
+  "bundle": {
+    "file_count": 3,
+    "files": {
+      "README.md": "fb23cb7bdd25031013680375d2a113a729dbe508e3526c72f33d1322a98f773a",
+      "index.js": "ed08567f2d4e8f522058cffbd4594d42406de68aa7c9247aa25898cb562f220e",
+      "index.js.map": "a7fa5b39eb1d105961ede6cd5455f60d61f178e0ccf2a9e1bb02cdeff884c91b"
+    },
+    "metafile_sha256": "7aba08c1b25ade779b7fbdb8a32dc4bc69f418a03be58d512a9afd50e4da21e6"
+  },
+  "bindings_observed": [
+    "COMMONPLACE_LOG Durable Object",
+    "REALM_CONTAINER Durable Object",
+    "REALM_NODE Durable Object",
+    "REALM_REGISTRY KV 98aa81a3f3e644d6a6893eeefdd779d5",
+    "REALM_TEST_LEVERS environment value 1"
+  ],
+  "input_integrity": {
+    "pre_post_equal": true,
+    "input_sha256_file_count": 3361
+  },
+  "runtime": {
+    "added": [],
+    "post_count": 3221,
+    "pre_count": 3221,
+    "removed": []
+  },
+  "cleanup": {
+    "cleanup_in_finally": true,
+    "groups": [
+      {
+        "group_absent": true,
+        "kill_sent": false,
+        "label": "wrangler-dry-run",
+        "leader_exit": 0,
+        "pgid": 2101114,
+        "pid": 2101114,
+        "term_sent": false
+      }
+    ],
+    "kill_grace_seconds": 2,
+    "term_grace_seconds": 5
+  },
+  "stdout_observation": "Wrangler reported dry-run and exited; command path used wrangler deploy --dry-run with upload false and no Docker invocation.",
+  "warnings": "Only the Node punycode deprecation warning was retained on stderr.",
+  "limits": [
+    "No network monitoring was performed.",
+    "No live deployment or preservation readback was performed.",
+    "No upload was performed by this dry run."
+  ],
+  "raw_output": "tmp/provider-worker-dry-run-1",
+  "raw_output_manifest": "OUTPUT-MANIFEST-1.json"
+}
