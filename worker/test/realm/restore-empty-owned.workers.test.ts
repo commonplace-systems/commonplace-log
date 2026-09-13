@@ -171,21 +171,33 @@ describe("internal restore of configured empty owned logs", () => {
       status: 200,
       json: { ok: true, result: { imported_logs: 1, skipped_logs: 0, complete: true } },
     });
-    const result = await withRealm(name, (_store, sql) => ({
-      log: sql.exec("SELECT revision, lease_epoch, document_writer_id FROM logs WHERE log_id = ?", EMPTY_LOG).one(),
-      entries: Number(sql.exec("SELECT COUNT(*) AS count FROM entries WHERE log_id = ?", EMPTY_LOG).one().count),
-      tips: Number(sql.exec("SELECT COUNT(*) AS count FROM writer_tips WHERE log_id = ?", EMPTY_LOG).one().count),
-      marker: sql.exec("SELECT entry_count, total_bytes, state FROM restore_markers WHERE log_id = ?", EMPTY_LOG).one(),
-    }));
+    const result = await withRealm(name, (_store, sql) => {
+      const log = sql.exec("SELECT revision, lease_epoch, document_writer_id FROM logs WHERE log_id = ?", EMPTY_LOG).one();
+      const marker = sql.exec("SELECT entry_count, total_bytes, state FROM restore_markers WHERE log_id = ?", EMPTY_LOG).one();
+      return {
+        log: {
+          revision: Number(log.revision),
+          leaseEpoch: Number(log.lease_epoch),
+          documentWriterId: String(log.document_writer_id),
+        },
+        entries: Number(sql.exec("SELECT COUNT(*) AS count FROM entries WHERE log_id = ?", EMPTY_LOG).one().count),
+        tips: Number(sql.exec("SELECT COUNT(*) AS count FROM writer_tips WHERE log_id = ?", EMPTY_LOG).one().count),
+        marker: {
+          entryCount: Number(marker.entry_count),
+          totalBytes: Number(marker.total_bytes),
+          state: String(marker.state),
+        },
+      };
+    });
 
-    expect(Number(result.log.revision)).toBe(0);
-    expect(Number(result.log.lease_epoch)).toBe(0);
-    expect(String(result.log.document_writer_id)).toBe(EMPTY_WRITER);
+    expect(result.log.revision).toBe(0);
+    expect(result.log.leaseEpoch).toBe(0);
+    expect(result.log.documentWriterId).toBe(EMPTY_WRITER);
     expect(result.entries).toBe(0);
     expect(result.tips).toBe(0);
-    expect(Number(result.marker.entry_count)).toBe(0);
-    expect(Number(result.marker.total_bytes)).toBe(0);
-    expect(String(result.marker.state)).toBe("complete");
+    expect(result.marker.entryCount).toBe(0);
+    expect(result.marker.totalBytes).toBe(0);
+    expect(result.marker.state).toBe("complete");
   });
 
   it("fences normal APIs during a mixed empty and non-empty pending bundle, then completes", async () => {
