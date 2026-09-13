@@ -40,6 +40,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
     refute Map.has_key?(body, "target")
   end
 
+  @tag restore_empty_entries: true
   test "encodes a configured empty archive alongside non-empty logs" do
     store = sidecar(self(), response(200, %{"ok" => true, "result" => result(2, 0, true)}))
     empty = %{log_id: @empty_log, archive_id: "archive-empty", writer_id: @writer, entries: []}
@@ -57,6 +58,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarRestoreBundleTest do
     assert Enum.at(body["logs"], 1)["entries"] |> Enum.all?(&is_binary/1)
   end
 
+  @tag restore_empty_entries: true
   test "refuses a null writer before transport for an otherwise empty archive" do
     store = sidecar(self(), response(200, %{"ok" => true, "result" => result(1, 0, true)}))
 
