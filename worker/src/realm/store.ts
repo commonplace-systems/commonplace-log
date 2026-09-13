@@ -414,12 +414,13 @@ export class RealmStore {
         const byCoordinate = new Map(rows.map((row) => [`${String(row.writer_id)}:${Number(row.writer_seq)}`, bytes(row.canonical_json)]));
         const archiveIds = new Set(archive.entries.map((entry) => entry.entryId));
         const archiveCoordinates = new Set(archive.entries.map((entry) => `${entry.writerId}:${entry.writerSeq}`));
+        const archiveLastSeq = archive.entries.at(-1)?.writerSeq ?? 0;
         for (const row of rows) {
           const id = String(row.entry_id);
           const coordinate = `${String(row.writer_id)}:${Number(row.writer_seq)}`;
           if (!archiveIds.has(id) && !archiveCoordinates.has(coordinate)) {
             if (markerState !== "complete" || String(row.writer_id) !== archive.writerId ||
-                Number(row.writer_seq) <= archive.entries.at(-1)!.writerSeq) {
+                Number(row.writer_seq) <= archiveLastSeq) {
               throw new RealmStoreError("constraint");
             }
           }
@@ -935,8 +936,9 @@ export class RealmStore {
       !boundedRestoreId(row.log_id) || !boundedRestoreId(row.archive_id) || !boundedRestoreId(row.writer_id) ||
       Number(row.log_id_bytes) > MAX_RESTORE_ID_BYTES || Number(row.archive_id_bytes) > MAX_RESTORE_ID_BYTES ||
       Number(row.writer_id_bytes) > MAX_RESTORE_ID_BYTES || Number(row.digest_bytes) !== 32 ||
-      !Number.isSafeInteger(Number(row.entry_count)) || Number(row.entry_count) < 1 ||
-      !Number.isSafeInteger(Number(row.total_bytes)) || Number(row.total_bytes) < 0)) {
+      !Number.isSafeInteger(Number(row.entry_count)) || Number(row.entry_count) < 0 ||
+      !Number.isSafeInteger(Number(row.total_bytes)) || Number(row.total_bytes) < 0 ||
+      (Number(row.entry_count) === 0 && Number(row.total_bytes) !== 0))) {
       throw new RealmStoreError("obsolete_epoch");
     }
 
@@ -1085,7 +1087,7 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): void {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096 ||
-      archive.entries.length === 0 || archive.entries.length > 4096 ||
+      archive.entries.length > 4096 ||
       !boundedRestoreId(archive.logId) || !boundedRestoreId(archive.archiveId) ||
       !boundedRestoreId(archive.writerId)) {
     throw new RealmStoreError("constraint");

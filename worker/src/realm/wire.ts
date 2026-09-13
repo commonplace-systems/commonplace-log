@@ -116,7 +116,7 @@ function parseBundle(value: unknown): ParsedBundle {
     const archiveId = boundedString(row.archive_id);
     const writerId = boundedString(row.writer_id);
     if (!Array.isArray(row.entries)) throw new WireMalformed();
-    if (row.entries.length === 0 || row.entries.length > MAX_ENTRIES_PER_LOG) throw new WireOversize();
+    if (row.entries.length > MAX_ENTRIES_PER_LOG) throw new WireOversize();
     const entries = row.entries.map((encoded) => {
       const canonicalBytes = decodeCanonical(encoded);
       totalBytes += canonicalBytes.byteLength;
