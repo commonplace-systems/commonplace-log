@@ -1,9 +1,10 @@
-import { initRealmMetaSchema } from "./schema";
+import { initRealmAllocationSchema, initRealmMetaSchema } from "./schema";
 
 import { RealmRegistry, RegistryOutcome } from "./registry";
 
 export const REALM_CREATE_HEADER = "x-commonplace-realm-create";
 export const REALM_ID_HEADER = "x-commonplace-realm-id";
+export const REALM_ALLOCATE_HEADER = "x-commonplace-realm-allocate";
 
 /**
  * STORE-3b. Minting and revoking the read capability.
@@ -28,6 +29,10 @@ export class RealmMissing extends Error {
     super("not_found");
     this.name = "RealmMissing";
   }
+}
+
+export class RealmAllocationConflict extends Error {
+  constructor() { super("realm_allocation_conflict"); this.name = "RealmAllocationConflict"; }
 }
 
 export class RealmExists extends Error {
@@ -68,6 +73,21 @@ function storedHash(sql: SqlStorage): Uint8Array | null {
   const row = sql.exec("SELECT secret_hash FROM realm_meta WHERE singleton = 1").toArray()[0];
   return row === undefined ? null : new Uint8Array(row.secret_hash as ArrayBuffer);
 }
+
+function storedAllocation(sql: SqlStorage): Record<string, unknown> | null {
+  if (!hasRealmMetaTable(sql)) return null;
+  const row = sql.exec("SELECT realm_id, operation_id, operation_hash, secret_hash, capability_hash FROM realm_allocations WHERE singleton = 1").toArray()[0];
+  return row === undefined ? null : row as Record<string, unknown>;
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+function validOperationId(value: string): boolean {
+  const bytes = new TextEncoder().encode(value);
+  return bytes.byteLength >= 1 && bytes.byteLength <= 256;
+}
+function validSecret(value: string): boolean { return /^[0-9a-f]{64}$/.test(value); }
 
 function storedReadHash(sql: SqlStorage): Uint8Array | null {
   if (!hasRealmMetaTable(sql)) return null;
@@ -131,6 +151,53 @@ export class RealmAuth {
    * ⚠️ BOTH hashes are compared with `timingSafeEqual` and NEITHER comparison short-circuits on a
    * length test that leaks which secret was presented.
    */
+  async allocate(realmId: string, operationId: string, secret: string): Promise<"created" | "existing"> {
+    if (!validOperationId(operationId) || !validSecret(secret)) throw new RealmAllocationConflict();
+    const operationHash = await sha256(operationId);
+    const secretHash = await sha256(secret);
+    const capability = await sha256(`commonplace-allocation-read-v1\0${realmId}\0${operationId}\0${secret}`);
+    return this.txn.transactionSync(() => {
+      initRealmAllocationSchema(this.sql);
+      const allocation = storedAllocation(this.sql);
+      const realmHash = storedHash(this.sql);
+      if (allocation !== null) {
+        const same = allocation.realm_id === realmId && allocation.operation_id === operationId &&
+          equalBytes(new Uint8Array(allocation.operation_hash as ArrayBuffer), operationHash) &&
+          realmHash !== null && equalBytes(realmHash, secretHash) &&
+          equalBytes(new Uint8Array(allocation.secret_hash as ArrayBuffer), secretHash);
+        if (same) return "existing";
+        throw new RealmAllocationConflict();
+      }
+      if (realmHash !== null) throw new RealmAllocationConflict();
+      const createdAt = new Date().toISOString();
+      this.sql.exec("INSERT INTO realm_meta (singleton, secret_hash, created_at) VALUES (1, ?, ?)", secretHash.buffer.slice(secretHash.byteOffset, secretHash.byteOffset + secretHash.byteLength), createdAt);
+      this.sql.exec("INSERT INTO realm_allocations (singleton, realm_id, operation_id, operation_hash, secret_hash, capability_hash, created_at) VALUES (1, ?, ?, ?, ?, ?, ?)", realmId, operationId, operationHash.buffer.slice(operationHash.byteOffset, operationHash.byteOffset + operationHash.byteLength), secretHash.buffer.slice(secretHash.byteOffset, secretHash.byteOffset + secretHash.byteLength), capability.buffer.slice(capability.byteOffset, capability.byteOffset + capability.byteLength), createdAt);
+      return "created";
+    });
+  }
+
+  async allocationReadCapability(realmId: string, operationId: string, secret: string): Promise<string> {
+    const material = `commonplace-allocation-read-v1\0${realmId}\0${operationId}\0${secret}`;
+    const capabilityBytes = await sha256(material);
+    const capability = hex(capabilityBytes);
+    const capabilityHash = await sha256(capability);
+    return this.txn.transactionSync(() => {
+      const allocation = storedAllocation(this.sql);
+      if (allocation === null || allocation.realm_id !== realmId || allocation.operation_id !== operationId) throw new RealmAllocationConflict();
+      const storedCapabilityHash = allocation.capability_hash;
+      if (storedCapabilityHash !== null && storedCapabilityHash !== undefined &&
+          !equalBytes(new Uint8Array(storedCapabilityHash as ArrayBuffer), capabilityHash)) throw new RealmAllocationConflict();
+      const current = storedReadHash(this.sql);
+      if (current !== null && !equalBytes(current, capabilityHash)) throw new RealmAllocationConflict();
+      if (current === null) {
+        if (storedCapabilityHash !== null && storedCapabilityHash !== undefined) throw new RealmAllocationConflict();
+        this.sql.exec("UPDATE realm_meta SET read_secret_hash = ?, read_created_at = ? WHERE singleton = 1",
+          capabilityHash.buffer.slice(capabilityHash.byteOffset, capabilityHash.byteOffset + capabilityHash.byteLength), new Date().toISOString());
+      }
+      return capability;
+    });
+  }
+
   async authorize(request: Request): Promise<"not_found" | "unauthorized" | Scope> {
     const expected = storedHash(this.sql);
     if (expected === null) return "not_found";
@@ -205,6 +272,29 @@ export async function handlePublicRealmRequest(
   wipeStorage?: () => Promise<void>,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
+  if (path === "/realm/allocate" && request.headers.get(REALM_ALLOCATE_HEADER) === "1") {
+    const realmId = request.headers.get(REALM_ID_HEADER);
+    if (realmId === null || request.method !== "POST") return refused(request, "malformed_request", 400);
+    try {
+      const value = await request.json() as unknown;
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return refused(request, "malformed_request", 400);
+      const row = value as Record<string, unknown>;
+      if (Object.keys(row).some((key) => key !== "operation_id" && key !== "realm_secret") || typeof row.operation_id !== "string" || typeof row.realm_secret !== "string" || !validOperationId(row.operation_id) || !validSecret(row.realm_secret)) return refused(request, "malformed_request", 400);
+      if (registry === undefined && !allowUnboundRegistry) return fail("registry_not_bound", 503, { binding: "REALM_REGISTRY" });
+      const state = await auth.allocate(realmId, row.operation_id, row.realm_secret);
+      const capability = await auth.allocationReadCapability(realmId, row.operation_id, row.realm_secret);
+      const present = registry?.get === undefined ? null : await registry.get(realmId);
+      if (present === null) {
+        if (registry === undefined) return fail("registry_registration_failed", 503, { outcome: "registry_unverifiable" });
+        try { await registry.put(realmId, capability); } catch { return fail("registry_registration_failed", 503, { outcome: "registry_write_failed" }); }
+      }
+      return Response.json({ ok: true, realm_id: realmId, operation_id: row.operation_id, state: "allocated" }, { status: state === "created" ? 201 : 200 });
+    } catch (error) {
+      if (error instanceof RealmAllocationConflict) return refused(request, "allocation_conflict", 409);
+      throw error;
+    }
+  }
+  if (path === "/realm/allocate") return refused(request, "not_found", 404);
   if (path === "/realm/create" && request.headers.get(REALM_CREATE_HEADER) === "1") {
     const realmId = request.headers.get(REALM_ID_HEADER);
     if (realmId === null) return fail("malformed_request", 400);

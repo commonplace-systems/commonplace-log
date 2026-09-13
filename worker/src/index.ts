@@ -17,6 +17,7 @@ export interface Env {
   REALM_NODE?: DurableObjectNamespace<RealmNode>;
   GATEWAY_TOKEN?: string;
   REALM_TEST_LEVERS?: string;
+  REALM_REGISTRY?: KVNamespace;
 }
 
 /**
@@ -152,10 +153,6 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
   const forwarded = new Request(target, request);
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
-  if (request.method === "DELETE" && url.pathname === `${REALM_PREFIX}${route.realmId}`) {
-    // Trusted identity for removal/retry even after the DO's SQL auth metadata is gone.
-    forwarded.headers.set(REALM_ID_HEADER, route.realmId);
-  }
   return await realmStub(env, route.realmId).fetch(forwarded);
 }
 

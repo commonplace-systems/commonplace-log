@@ -22,6 +22,7 @@
 export interface RealmRegistry {
   put(realmId: string, readCapability: string): Promise<void>;
   delete(realmId: string): Promise<void>;
+  get?(realmId: string): Promise<string | null>;
 }
 
 /**
@@ -46,6 +47,9 @@ export function kvRegistry(kv: KVNamespace | undefined): RealmRegistry | undefin
   return {
     async delete(realmId) {
       await kv.delete(realmId);
+    },
+    async get(realmId) {
+      return await kv.get(realmId);
     },
     async put(realmId, readCapability) {
       await kv.put(realmId, JSON.stringify({
