@@ -38,7 +38,7 @@ async function probe(env: ReconciliationEnv, realm: string, capability: string, 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const read = async (): Promise<{ verdict: Verdict; cause: string }> => {
     try {
-      const response = await env.REALMS.get(env.REALMS.idFromName(realm)).fetch("https://realm.internal/list-logs", {
+      const response = await env.REALMS.get(env.REALMS.idFromName(realm)).fetch("https://realm.internal/list-log-ids", {
         method: "POST", headers: { authorization: `Bearer ${capability}`, "content-type": "application/json" },
         body: JSON.stringify({ limit: 1 }), signal: abort.signal,
       });

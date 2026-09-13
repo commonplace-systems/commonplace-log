@@ -12,8 +12,10 @@ stop. Only the local test entry exports `POST /run`. The production module expos
 no HTTP trigger. Tests use local Workers SQLite, KV, and R2; no Cloudflare account
 credentials are needed.
 
-The source contract is based on log main `b75ac47` plus the `/list-logs` addition
-in this round. Before activation, compare the deployed `prov:source-sha` to the
+The source contract is based on log main `b75ac47` plus the paginated log-id listing
+added in BACKUP-1b-ii. That route is `/list-log-ids` (renamed from its original
+name when the deployed restore port's bounded inventory route took that path;
+the request/response contract is unchanged). Before activation, compare the deployed `prov:source-sha` to the
 landed implementation containing that route; the pre-round deployed script cannot
 serve it. That deployment comparison is an activation prerequisite, not a check
 this code-and-tests round has performed.

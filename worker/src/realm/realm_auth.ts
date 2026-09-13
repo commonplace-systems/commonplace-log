@@ -115,6 +115,7 @@ async function matches(presented: string, expected: Uint8Array | null): Promise<
  */
 const READ_ROUTES: ReadonlySet<string> = new Set([
   "/list-logs",
+  "/list-log-ids",
   "/frontier",
   "/read-set",
   "/read-writer",

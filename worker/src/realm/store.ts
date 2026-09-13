@@ -1,5 +1,4 @@
 import { initSchema } from "./schema";
-import { validateEntry } from "../entry";
 import { createHash } from "node:crypto";
 
 export type RealmStorageErrorCode =
@@ -1114,11 +1113,12 @@ function validateRestoreArchive(archive: RestoreArchive, maxEntries: number): vo
     ids.add(entry.entryId);
     totalBytes += entry.canonicalBytes.byteLength;
     if (totalBytes > 16 * 1024 * 1024) throw new RealmStoreError("constraint");
-    const checked = validateEntry(entry.canonicalBytes);
-    if (!checked.ok || !sameBytes(checked.canonicalBytes, entry.canonicalBytes)) throw new RealmStoreError("constraint");
+    // Structural only: canonical/semantic entry validation is the restore caller's job (proposal §9).
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(new TextDecoder().decode(entry.canonicalBytes)) as Record<string, unknown>;
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(entry.canonicalBytes));
+      if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RealmStoreError("constraint");
+      parsed = value as Record<string, unknown>;
     } catch {
       throw new RealmStoreError("constraint");
     }

@@ -139,3 +139,32 @@ it("enumeration failure preserves rows and reports the partial inventory as unkn
   expect(result.rows[0]).toMatchObject({ verdict: "unknown", cause: "registry_enumeration_failed" });
   expect(await snapshot()).toEqual(before);
 });
+
+it("allocation arm: a realm allocated through /realm/allocate with no restore stays present; a never-allocated row goes absent", async () => {
+  const allocated = crypto.randomUUID();
+  const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const response = await env.REALMS.get(env.REALMS.idFromName(allocated)).fetch("https://realm.test/realm/allocate", {
+    method: "POST",
+    headers: { "x-commonplace-realm-id": allocated, "x-commonplace-realm-allocate": "1", "content-type": "application/json" },
+    body: JSON.stringify({ operation_id: crypto.randomUUID(), realm_secret: secret }),
+  });
+  const allocation = { status: response.status, body: await response.json() };
+  expect(allocation.status).toBe(201);
+  const allocatedRow = await env.REALM_REGISTRY.get(allocated);
+  expect(allocatedRow).not.toBeNull(); // written by RealmAuth.allocate's registry path, not by this test
+
+  // Control: a registry row whose DO was never allocated or created.
+  const never = crypto.randomUUID();
+  const neverCapability = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+  await env.REALM_REGISTRY.put(never, JSON.stringify({ realm_id: never, read_capability: neverCapability, registered_at: "fixture" }));
+
+  const report = await reconcile(env, deletion);
+  const allocatedResult = report.rows.find((r) => r.realm_id === allocated);
+  const neverResult = report.rows.find((r) => r.realm_id === never);
+  console.info("RECON ALLOCATION observed", { allocation: allocation.status, allocated: allocatedResult, control: neverResult });
+  expect(allocatedResult).toEqual({ realm_id: allocated, verdict: "present", cause: "read_ok", action: "keep" });
+  expect(await env.REALM_REGISTRY.get(allocated)).toBe(allocatedRow);
+  expect(neverResult).toEqual({ realm_id: never, verdict: "absent", cause: "not_found", action: "deleted" });
+  expect(await env.REALM_REGISTRY.get(never)).toBeNull();
+  expect(report.removed).toBe(1);
+});

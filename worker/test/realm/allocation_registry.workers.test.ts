@@ -304,3 +304,48 @@ describe("deployed-base allocation and registry", () => {
     expect(await env.REALM_REGISTRY.get(realm)).toBe(registryBefore);
   });
 });
+
+describe("restore-bundle-batch structural wire checks (LOG-MERGE-RESTORE-1)", () => {
+  // Proposal §9: the realm checks entry STRUCTURE only. Canonical/semantic refusal is not the
+  // realm's job; commonplace-next's archive decoder refuses those archives before sending.
+  it("accepts a structurally valid entry and refuses a neighbour missing writer_id with 400 malformed", async () => {
+    const realm = realmId();
+    const secret = realmSecret();
+    expect((await gatewayAllocation(realm, operationId(), secret)).status).toBe(201);
+    const log = crypto.randomUUID();
+    const writer = crypto.randomUUID();
+    const entry: Record<string, unknown> = {
+      body: {},
+      created_at: "2026-09-13T00:00:00Z",
+      entry_id: crypto.randomUUID(),
+      log_id: log,
+      prev_entry_id: null,
+      version: 1,
+      writer_id: writer,
+      writer_seq: 1,
+    };
+    const encode = (value: Record<string, unknown>) => btoa(JSON.stringify(value));
+    const restore = async (encoded: string) => {
+      const response = await SELF.fetch(`https://gateway.invalid/realms/${realm}/restore-bundle-batch`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          bundle_id: `bundle-${log}`,
+          max_logs: 1,
+          logs: [{ log_id: log, archive_id: `archive-${log}`, writer_id: writer, entries: [encoded] }],
+        }),
+      });
+      return { status: response.status, json: await response.json() as Json };
+    };
+
+    const { writer_id: _omitted, ...missingWriter } = entry;
+    const before = await realmSnapshot(realm);
+    const refused = await restore(encode(missingWriter));
+    expect(refused).toEqual({ status: 400, json: { ok: false, error: { code: "malformed" } } });
+    expect(await realmSnapshot(realm)).toEqual(before);
+
+    const accepted = await restore(encode(entry));
+    console.info("RESTORE WIRE refused", refused, "accepted", accepted);
+    expect(accepted).toEqual({ status: 200, json: { ok: true, result: { imported_logs: 1, skipped_logs: 0, complete: true } } });
+  });
+});

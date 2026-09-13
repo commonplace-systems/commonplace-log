@@ -6,7 +6,7 @@ export interface BackupEnv {
   BACKUP: Pick<R2Bucket, "get" | "put">;
 }
 
-type ReadRoute = "/list-logs" | "/frontier" | "/read-writer";
+type ReadRoute = "/list-log-ids" | "/frontier" | "/read-writer";
 type Tip = { writer_id: string; seq: number; entry_id: string };
 type Checkpoint = { version: 1; log_id: string; writers: Tip[] };
 type StopCode = "registry_invalid" | "registry_entry_missing" | "registry_unavailable"
@@ -102,7 +102,7 @@ async function listLogs(env: BackupEnv, realm: string, capability: string): Prom
   const logs: string[] = [];
   let after: string | undefined;
   for (;;) {
-    const page = await read(env, realm, capability, "/list-logs", { after_log_id: after, limit: PAGE_SIZE });
+    const page = await read(env, realm, capability, "/list-log-ids", { after_log_id: after, limit: PAGE_SIZE });
     const ids = array(page.log_ids).map(logIdentifier);
     for (const id of ids) {
       if (after !== undefined && id <= after) throw new Stop("invalid_response");

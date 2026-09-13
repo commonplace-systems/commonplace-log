@@ -110,29 +110,29 @@ describe("BACKUP-1b-ii", () => {
     expect(manifest).toBeNull();
     expect(await listing(realm)).toEqual([]);
     expect(await saved(`_runs/${run.run_id}.json`)).toEqual(run);
-    const first = await request(realm, "/list-logs", read, { limit: 1 });
+    const first = await request(realm, "/list-log-ids", read, { limit: 1 });
     expect(first.body).toEqual({ ok: true, log_ids: [""], next_after_log_id: "" });
-    const last = await request(realm, "/list-logs", read, { limit: 1, after_log_id: "" });
+    const last = await request(realm, "/list-log-ids", read, { limit: 1, after_log_id: "" });
     expect(last.body).toEqual({ ok: true, log_ids: ["log-a"], next_after_log_id: null });
     const repeated = await runBackup(env);
     expect(repeated.realms[0]).toMatchObject({ outcome: "stopped", stop: "unsupported_empty_log_id", entries_appended: 0, manifest_written: false });
   });
 
-  it("list-logs requires authority, admits READ alone, pages sorted IDs and stays realm-local", async () => {
+  it("list-log-ids requires authority, admits READ alone, pages sorted IDs and stays realm-local", async () => {
     const a = await createRealm(); const b = await createRealm();
-    console.info("LIST BASE", (await request(a.realm, "/list-logs", a.read)).body);
+    console.info("LIST BASE", (await request(a.realm, "/list-log-ids", a.read)).body);
     expect(await runInDurableObject(env.REALMS.get(env.REALMS.idFromName(a.realm)), (_i, state) =>
       state.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='logs'").toArray())).toEqual([]);
     await addLog(a.realm, a.write, "log-b"); await addLog(a.realm, a.write, "log-a");
     await addLog(b.realm, b.write, "only-b");
-    expect((await request(a.realm, "/list-logs")).status).toBe(401);
-    expect((await request(a.realm, "/list-logs", b.read)).status).toBe(401);
-    const first = await request(a.realm, "/list-logs", a.read, { limit: 1 });
+    expect((await request(a.realm, "/list-log-ids")).status).toBe(401);
+    expect((await request(a.realm, "/list-log-ids", b.read)).status).toBe(401);
+    const first = await request(a.realm, "/list-log-ids", a.read, { limit: 1 });
     expect(first).toEqual({ status: 200, body: { ok: true, log_ids: ["log-a"], next_after_log_id: "log-a" } });
-    const last = await request(a.realm, "/list-logs", a.read, { limit: 1, after_log_id: "log-a" });
+    const last = await request(a.realm, "/list-log-ids", a.read, { limit: 1, after_log_id: "log-a" });
     expect(last.body).toEqual({ ok: true, log_ids: ["log-b"], next_after_log_id: null });
-    expect((await request(a.realm, "/list-logs", a.read, { limit: 0 })).status).toBe(400);
-    expect((await request(a.realm, "/list-logs", a.read, { limit: 1001 })).status).toBe(400);
+    expect((await request(a.realm, "/list-log-ids", a.read, { limit: 0 })).status).toBe(400);
+    expect((await request(a.realm, "/list-log-ids", a.read, { limit: 1001 })).status).toBe(400);
     console.info("LIST RESULT no capability=401 other realm=401 READ=200", first.body, last.body);
   });
 

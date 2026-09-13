@@ -182,10 +182,15 @@ The first backup prompt described reading a frontier for each realm, then using
 `tail-local` per writer. The implementation exposes only **per-log** frontiers:
 every existing read route needs `log_id`, but the registry contains only realm IDs.
 The missing operation is log enumeration. This round adds a paginated
-`POST /list-logs` (`after_log_id`, `limit`; response `log_ids`, `next_after_log_id`)
+`POST /list-log-ids` (`after_log_id`, `limit`; response `log_ids`, `next_after_log_id`)
 and admits it through the existing READ scope. That scope is realm-wide; there
 was no per-log authorization restriction to widen. Reads of an empty realm
 return an empty inventory without creating the log schema.
+
+(2026-09-13, LOG-MERGE-RESTORE-1: the deployed restore provider port's bounded
+inventory, `POST /list-logs` (`max_logs` → `{generation, logs}`), took this route's
+original path, so the paginated ID listing moved to `/list-log-ids` with the same
+contract. Both are READ routes.)
 
 The storage schema makes `(log_id, writer_id, writer_seq)` unique. Section 3's
 old key drops `log_id`, so two legitimate entries can map to one R2 object.

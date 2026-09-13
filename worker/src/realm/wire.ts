@@ -1,4 +1,3 @@
-import { validateEntry } from "../entry";
 import { handleRealmRequest } from "./http";
 import { RealmStore, RealmStoreError, type EntryRow, type RestoreBundle } from "./store";
 
@@ -70,28 +69,36 @@ function decodeCanonical(value: unknown): Uint8Array {
   }
   if (decoded.byteLength > MAX_ENTRY_BYTES) throw new WireOversize();
   if (encodeBase64(decoded) !== value) throw new WireMalformed();
-  const checked = validateEntry(decoded);
-  if (!checked.ok || checked.canonicalBytes.byteLength !== decoded.byteLength ||
-      checked.canonicalBytes.some((byte, index) => byte !== decoded[index])) {
-    if (!checked.ok && checked.code === "entry_too_large") throw new WireOversize();
-    throw new WireMalformed();
-  }
   return decoded;
 }
 
+/**
+ * Structural checks only (LOG-MERGE-RESTORE-1, proposal §9). The realm does not decide whether
+ * entry bytes are canonical or semantically valid: the restore caller (commonplace-next's archive
+ * decoder) refuses tampered and non-canonical archives before sending, and the realm's normal
+ * write path already takes `canonical_bytes` opaque. Reopen if `/restore-bundle-batch` gains a
+ * caller that does not validate before sending.
+ */
 function entryFromCanonical(canonicalBytes: Uint8Array): EntryRow {
-  let parsed: Record<string, unknown>;
+  let value: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(canonicalBytes)) as Record<string, unknown>;
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(canonicalBytes));
   } catch {
     throw new WireMalformed();
   }
+  const parsed = object(value);
+  const { entry_id, writer_id, writer_seq, prev_entry_id, created_at } = parsed;
+  if (typeof entry_id !== "string" || typeof writer_id !== "string" || typeof created_at !== "string" ||
+      typeof writer_seq !== "number" || !Number.isSafeInteger(writer_seq) || writer_seq < 1 ||
+      (prev_entry_id !== null && typeof prev_entry_id !== "string")) {
+    throw new WireMalformed();
+  }
   return {
-    entryId: parsed.entry_id as string,
-    writerId: parsed.writer_id as string,
-    writerSeq: parsed.writer_seq as number,
-    prevEntryId: parsed.prev_entry_id as string | null,
-    createdAt: parsed.created_at as string,
+    entryId: entry_id,
+    writerId: writer_id,
+    writerSeq: writer_seq,
+    prevEntryId: prev_entry_id,
+    createdAt: created_at,
     canonicalBytes,
   };
 }
