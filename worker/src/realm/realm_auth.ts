@@ -250,6 +250,15 @@ function fail(code: string, status: number, details?: Record<string, string>): R
   );
 }
 
+async function cancelUnreadBody(request: Request): Promise<void> {
+  try { await request.body?.cancel(); } catch { /* runtime owns stream closure */ }
+}
+
+async function refused(request: Request, code: string, status: number): Promise<Response> {
+  await cancelUnreadBody(request);
+  return fail(code, status);
+}
+
 /** Both lifecycle operations must hold the DO input gate through their external KV await.
  * Otherwise recreation can register while an older removal is awaiting KV, and that
  * removal can erase the new live realm's row. Ordinary requests need no extra gate.
