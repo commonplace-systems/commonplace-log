@@ -207,7 +207,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar do
   @doc "Lists bounded metadata for every log in the configured sidecar target."
   @spec list_log_inventory(t(), pos_integer()) ::
           {:ok, %{generation: String.t(), logs: [map()]}} | {:error, term()}
-  def list_log_inventory(%__MODULE__{} = store, max_logs \\ @inventory_max_logs)
+  def list_log_inventory(store, max_logs \\ @inventory_max_logs)
 
   def list_log_inventory(%__MODULE__{} = store, max_logs)
       when is_integer(max_logs) and max_logs in 1..@inventory_max_logs do

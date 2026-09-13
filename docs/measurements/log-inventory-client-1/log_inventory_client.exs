@@ -14,8 +14,8 @@ case Kernel.ParallelCompiler.compile_to_path(source_files, isolated) do
     :ok
 
   {:error, errors, warnings} ->
-    IO.puts(:stderr, Exception.format_diagnostics(errors))
-    IO.puts(:stderr, Exception.format_diagnostics(warnings))
+    IO.inspect(errors, file: :stderr, limit: :infinity)
+    IO.inspect(warnings, file: :stderr, limit: :infinity)
     System.halt(2)
 end
 

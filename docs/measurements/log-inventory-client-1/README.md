@@ -28,3 +28,7 @@ python3 docs/measurements/log-inventory-client-1/run_log_inventory_client.py <fr
 
 This is a client parser and wire-shape proof using injected transport tests. It does not claim an
 actual provider HTTP round trip or account/auth admission.
+
+Each native attempt must use a new output directory. The retained first attempt
+`tmp/log-inventory-client-1` failed during compilation before tests ran; its raw diagnostics remain
+unchanged.
