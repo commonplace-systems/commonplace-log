@@ -188,15 +188,10 @@ export class RealmAuth {
       const allocation = storedAllocation(this.sql);
       if (allocation === null || allocation.realm_id !== realmId || allocation.operation_id !== operationId) throw new RealmAllocationConflict();
       const storedCapabilityHash = allocation.capability_hash;
-      if (storedCapabilityHash !== null && storedCapabilityHash !== undefined &&
-          !equalBytes(new Uint8Array(storedCapabilityHash as ArrayBuffer), capabilityHash)) throw new RealmAllocationConflict();
+      if (!(storedCapabilityHash instanceof ArrayBuffer) || storedCapabilityHash.byteLength !== 32 ||
+          !equalBytes(new Uint8Array(storedCapabilityHash), capabilityHash)) throw new RealmAllocationConflict();
       const current = storedReadHash(this.sql);
-      if (current !== null && !equalBytes(current, capabilityHash)) throw new RealmAllocationConflict();
-      if (current === null) {
-        if (storedCapabilityHash !== null && storedCapabilityHash !== undefined) throw new RealmAllocationConflict();
-        this.sql.exec("UPDATE realm_meta SET read_secret_hash = ?, read_created_at = ? WHERE singleton = 1",
-          capabilityHash.buffer.slice(capabilityHash.byteOffset, capabilityHash.byteOffset + capabilityHash.byteLength), new Date().toISOString());
-      }
+      if (current === null || !equalBytes(current, capabilityHash)) throw new RealmAllocationConflict();
       return capability;
     });
   }
@@ -286,12 +281,15 @@ export async function handlePublicRealmRequest(
       if (registry === undefined || registry.get === undefined) return fail("registry_not_bound", 503, { binding: "REALM_REGISTRY" });
       const state = await auth.allocate(realmId, row.operation_id, row.realm_secret);
       const capability = await auth.allocationReadCapability(realmId, row.operation_id, row.realm_secret);
-      const present = await registry.get(realmId);
+      let present: string | null;
+      try { present = await registry.get(realmId); } catch { return fail("registry_registration_failed", 503, { outcome: "registry_read_failed" }); }
       if (present !== null) {
         let registered: unknown;
         try { registered = JSON.parse(present); } catch { return fail("registry_registration_failed", 503, { outcome: "registry_malformed" }); }
+        if (typeof registered !== "object" || registered === null || Array.isArray(registered)) return fail("registry_registration_failed", 503, { outcome: "registry_malformed" });
         const rowRegistered = registered as Record<string, unknown>;
-        if (rowRegistered.realm_id !== realmId || rowRegistered.read_capability !== capability) return fail("registry_registration_failed", 503, { outcome: "registry_mismatch" });
+        if (typeof rowRegistered.realm_id !== "string" || typeof rowRegistered.read_capability !== "string" ||
+            rowRegistered.realm_id !== realmId || rowRegistered.read_capability !== capability) return fail("registry_registration_failed", 503, { outcome: "registry_mismatch" });
       } else {
         try { await registry.put(realmId, capability); } catch { return fail("registry_registration_failed", 503, { outcome: "registry_write_failed" }); }
       }
