@@ -31,6 +31,7 @@ CHILD_TIMEOUT = 90
 OUTER_TIMEOUT = 150
 TERM_GRACE = 5
 KILL_GRACE = 2
+ROOT_CLEANUP_GRACE = 30
 
 if len(sys.argv) != 2:
     raise SystemExit("usage: run_provider_worker_dry_run.py OUTPUT")
@@ -91,7 +92,8 @@ def check_source():
 
 
 check_source()
-OUT.mkdir(parents=True)
+OUT.mkdir(parents=True, mode=0o700)
+OUT.chmod(0o700)
 context = OUT / "context"
 context.mkdir()
 archive = subprocess.check_output(["git", "-C", str(ROOT), "archive", SOURCE_COMMIT, "worker", "commonplace_log"])
@@ -129,9 +131,13 @@ add("production-config", config)
 add("tool/node", NODE)
 add("tool/wrangler-cli", WRANGLER)
 add("tool/wrangler-package", WRANGLER_PACKAGE)
+add("packet/runner", pathlib.Path(__file__))
+add("packet/readme", pathlib.Path(__file__).with_name("README.md"))
+add("packet/wrangler-command", pathlib.Path(__file__).with_name("wrangler-command.json"))
 for path in sorted(p for p in WRANGLER_ROOT.rglob("*") if p.is_file()):
     add(f"worker-runtime/{path.relative_to(WRANGLER_ROOT)}", path)
 pre = {label: sha256(path) for label, path in sorted(files.items())}
+pre_runtime_paths = sorted(str(path.relative_to(WRANGLER_ROOT)) for path in WRANGLER_ROOT.rglob("*") if path.is_file())
 
 OUT.joinpath("input-sha256.json").write_text(json.dumps(pre, indent=2, sort_keys=True) + "\n")
 OUT.joinpath("source-pins.json").write_text(json.dumps({
@@ -152,13 +158,14 @@ OUT.joinpath("command.json").write_text(json.dumps({
     "cwd": str(context / "worker"),
     "child_timeout_seconds": CHILD_TIMEOUT,
     "outer_timeout_seconds": OUTER_TIMEOUT,
+    "root_cleanup_grace_seconds": ROOT_CLEANUP_GRACE,
     "term_grace_seconds": TERM_GRACE,
     "kill_grace_seconds": KILL_GRACE,
     "upload": False,
 }, indent=2, sort_keys=True) + "\n")
 
 for name in ("home", "tmp"):
-    (OUT / name).mkdir()
+    (OUT / name).mkdir(mode=0o700)
 env = {
     "PATH": "/usr/bin:/bin",
     "HOME": str(OUT / "home"),
@@ -262,16 +269,34 @@ finally:
     if "stdout_handle" in locals():
         stdout_handle.close()
         stderr_handle.close()
-    post = {label: sha256(path) for label, path in sorted(files.items()) if path.exists() and path.is_file()}
-    bundle_files = {str(path.relative_to(bundle)): sha256(path) for path in sorted(bundle.rglob("*")) if path.is_file()} if bundle.is_dir() else {}
-    metafile_hash = sha256(metafile) if metafile.is_file() else None
-    OUT.joinpath("bundle-sha256.json").write_text(json.dumps(bundle_files, indent=2, sort_keys=True) + "\n")
-    OUT.joinpath("metafile-sha256.json").write_text(json.dumps({"path": str(metafile), "sha256": metafile_hash}, indent=2, sort_keys=True) + "\n")
-    OUT.joinpath("post-input-sha256.json").write_text(json.dumps(post, indent=2, sort_keys=True) + "\n")
-    equal = pre == post
     for item in owned:
         item.pop("process", None)
     groups_closed = bool(owned) and all(item.get("group_absent") and item.get("leader_exit") is not None for item in owned)
+    cleanup_error = any(item.get("cleanup_error") for item in owned)
+    forced_kill = any(item.get("kill_sent") for item in owned)
+    native_info = {"child_rc": child_rc, "native_timeout": child_timeout, "signal_received": signal_received}
+    OUT.joinpath("native.rc").write_text(json.dumps(native_info) + "\n")
+    OUT.joinpath("process-groups.json").write_text(json.dumps({"groups": owned, "cleanup_in_finally": True, "term_grace_seconds": TERM_GRACE, "kill_grace_seconds": KILL_GRACE}, indent=2, sort_keys=True) + "\n")
+    post = {}
+    bundle_files = {}
+    metafile_hash = None
+    runtime_additions = []
+    runtime_removals = []
+    hash_error = None
+    try:
+        post = {label: sha256(path) for label, path in sorted(files.items()) if path.exists() and path.is_file()}
+        bundle_files = {str(path.relative_to(bundle)): sha256(path) for path in sorted(bundle.rglob("*")) if path.is_file()} if bundle.is_dir() else {}
+        metafile_hash = sha256(metafile) if metafile.is_file() else None
+        post_runtime_paths = sorted(str(path.relative_to(WRANGLER_ROOT)) for path in WRANGLER_ROOT.rglob("*") if path.is_file())
+        runtime_additions = sorted(set(post_runtime_paths) - set(pre_runtime_paths))
+        runtime_removals = sorted(set(pre_runtime_paths) - set(post_runtime_paths))
+        OUT.joinpath("bundle-sha256.json").write_text(json.dumps(bundle_files, indent=2, sort_keys=True) + "\n")
+        OUT.joinpath("metafile-sha256.json").write_text(json.dumps({"path": str(metafile), "sha256": metafile_hash}, indent=2, sort_keys=True) + "\n")
+        OUT.joinpath("post-input-sha256.json").write_text(json.dumps(post, indent=2, sort_keys=True) + "\n")
+        OUT.joinpath("runtime-inventory.json").write_text(json.dumps({"pre_count": len(pre_runtime_paths), "post_count": len(post_runtime_paths), "added": runtime_additions, "removed": runtime_removals}, indent=2, sort_keys=True) + "\n")
+    except BaseException as error:
+        hash_error = repr(error)
+    equal = hash_error is None and pre == post
     reasons = []
     if signal_received:
         reasons.append("runner received a signal")
@@ -281,14 +306,20 @@ finally:
         reasons.append("dry-run child rc is not zero")
     if not groups_closed:
         reasons.append("owned process group closure was not proven")
+    if forced_kill:
+        reasons.append("owned process group required KILL")
+    if cleanup_error:
+        reasons.append("owned process cleanup raised an error")
     if not equal:
         reasons.append("input PRE/POST hash mismatch")
+    if runtime_additions or runtime_removals:
+        reasons.append("worker runtime membership changed")
+    if hash_error:
+        reasons.append("post-run hash or receipt generation failed")
     if not bundle_files:
         reasons.append("dry-run bundle was not produced")
     if metafile_hash is None:
         reasons.append("dry-run metafile was not produced")
     verdict = 0 if not reasons else 125
-    OUT.joinpath("native.rc").write_text(json.dumps({"child_rc": child_rc, "native_timeout": child_timeout, "signal_received": signal_received}) + "\n")
-    OUT.joinpath("process-groups.json").write_text(json.dumps({"groups": owned, "cleanup_in_finally": True, "term_grace_seconds": TERM_GRACE, "kill_grace_seconds": KILL_GRACE}, indent=2, sort_keys=True) + "\n")
-    OUT.joinpath("verdict.json").write_text(json.dumps({"verdict_rc": verdict, "reasons": reasons, "bundle_file_count": len(bundle_files), "metafile_sha256": metafile_hash}, indent=2, sort_keys=True) + "\n")
+    OUT.joinpath("verdict.json").write_text(json.dumps({"verdict_rc": verdict, "reasons": reasons, "bundle_file_count": len(bundle_files), "metafile_sha256": metafile_hash, "hash_error": hash_error, "runtime_additions": runtime_additions, "runtime_removals": runtime_removals}, indent=2, sort_keys=True) + "\n")
 raise SystemExit(verdict)

@@ -3,5 +3,6 @@
   "containers_rollout": "none",
   "upload": false,
   "cloudflare_credentials": false,
-  "docker_build": false
+  "docker_build": false,
+  "root_cleanup_grace_seconds": 30
 }
