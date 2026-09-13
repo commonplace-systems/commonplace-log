@@ -1,0 +1,63 @@
+{
+  "artifact": "workers-pool-2",
+  "stage": "run-2",
+  "outcome": "wrapper_failed_after_native_success",
+  "source_commit": "4a22c1d65549577e42a12d390949d95e408eed2a",
+  "fixture_commit": "cc8afaac0f84fde21a621e37300cf0cb755d47ca",
+  "selected_case_count": 23,
+  "full_assertion_set_count": 43,
+  "assertion_records": {
+    "total": 43,
+    "passed": 23,
+    "failed": 0,
+    "skipped": 20,
+    "pending": 0,
+    "todo": 0
+  },
+  "vitest_aggregate": {
+    "numTotalTests": 43,
+    "numPassedTests": 23,
+    "numFailedTests": 0,
+    "numPendingTests": 20,
+    "numTodoTests": 0,
+    "numTotalTestSuites": 13,
+    "numPassedTestSuites": 13,
+    "numFailedTestSuites": 0,
+    "numPendingTestSuites": 0
+  },
+  "native_rc": 0,
+  "verdict_rc": 125,
+  "wrapper_reasons": [
+    "unexpected stream diagnostics"
+  ],
+  "stream_diagnostics": {
+    "count": 10,
+    "attributed": false,
+    "source": "tmp/workers-pool-2/stderr",
+    "note": "The wrapper rejected the run solely for the retained stream-diagnostic count; no URL/test attribution is asserted here."
+  },
+  "integrity": {
+    "input_count": 3277,
+    "pre_post_equal": true,
+    "runtime_pre_count": 3221,
+    "runtime_post_count": 3221,
+    "runtime_added": [],
+    "runtime_removed": []
+  },
+  "cleanup": {
+    "pid": 2075844,
+    "pgid": 2075844,
+    "group_absent": true,
+    "term_sent": false,
+    "kill_sent": false,
+    "timed_out": false,
+    "first_signal_received": null
+  },
+  "cross_run_coverage": {
+    "assertion_names_passed_across_run1_and_run2": 43,
+    "wrapper_acceptance": false,
+    "note": "The two retained runs together pass all 43 assertion names, but neither wrapper accepted because run 1 failed before completion and run 2 retained 10 stream diagnostics."
+  },
+  "raw_output_manifest": "tmp/workers-pool-2/original-output-sha256.json",
+  "raw_output": "tmp/workers-pool-2"
+}
