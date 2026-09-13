@@ -286,6 +286,9 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
     return await createRealmStub(env, route.realmId, decoded.locationHint).fetch(forwarded);
   }
 
+  // The DO-only allocation path must never be reachable through a realm route.
+  if (route.sidecarPath === "/realm/allocate") return fail("not_found", 404);
+
   // Realm routes are scoped in the DO. The gateway checks syntax only.
   const needsBufferedWireBody = request.method === "POST" && BUFFERED_WIRE_PATHS.has(route.sidecarPath);
   let bufferedBody: Uint8Array | undefined;
