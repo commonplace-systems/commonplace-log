@@ -35,6 +35,11 @@ defmodule Commonplace.Log.LogInventoryHTTPIntegrationTest do
         transport_options: [timeout: 5_000, connect_timeout: 5_000]
       )
 
+    assert {:ok, %{status: 400, body: malformed}} =
+             Httpc.request(:post, base_url <> "/list-logs", headers, "{", timeout: 5_000)
+
+    assert %{"ok" => false, "error" => %{"code" => "malformed"}} = Jason.decode!(malformed)
+
     assert {:ok, %{generation: initial_generation, logs: []}} =
              CloudflareSidecar.list_log_inventory(store)
 
@@ -55,7 +60,7 @@ defmodule Commonplace.Log.LogInventoryHTTPIntegrationTest do
     assert restored_generation != initial_generation
     assert Enum.map(restored_logs, & &1.log_id) == [@log_a, @log_b]
     assert Enum.map(restored_logs, & &1.format_version) == [1, 1]
-    assert Enum.map(restored_logs, & &1.revision) == [0, 0]
+    assert Enum.map(restored_logs, & &1.revision) == [1, 1]
     assert Enum.map(restored_logs, & &1.document_writer_id) == [@writer_a, @writer_b]
     assert Enum.map(restored_logs, & &1.writers) == [
              [%{writer_id: @writer_a, last_seq: 2, last_entry_id: "61000000-0000-4000-8000-000000000142"}],
@@ -123,7 +128,7 @@ defmodule Commonplace.Log.LogInventoryHTTPIntegrationTest do
            }
 
     IO.puts(
-      "LOG_INVENTORY_HTTP_WORKFLOW requests=13 logs=3 partial_obsolete=true replay_stable=true exact_commit_readback=true generation_changes=true"
+      "LOG_INVENTORY_HTTP_WORKFLOW requests=15 logs=3 partial_obsolete=true replay_stable=true exact_commit_readback=true generation_changes=true"
     )
   end
 

@@ -15,21 +15,24 @@ reads that exact canonical byte sequence back. It then checks generation
 changes after creation and commit. It expects one ExUnit test with zero
 failures, exclusions, or skips.
 
-The runner requires an explicit accepted full client SHA in
+The runner requires the accepted client source pin
+`32c1889023be5130428cfa128556bef39b367dda` in
 `LOG_INVENTORY_CLIENT_COMMIT`; it refuses to execute without that pin or when
-the client worktree HEAD differs. It archives the current provider worktree,
+the client worktree HEAD differs. It also checks the accepted
+`persistence/cloudflare_sidecar.ex` SHA256
+`7176c8e583d05296c3b831da2132248896934facacfa497a86e207fca78f4f6a`. It archives the current provider worktree,
 verifies its worker product remains based on provider product
 `804c4d43d7d56ed16942ea365733bd30e0674eaa`, and binds the client/provider
 sources, cached BEAMs, worker runtime files, exact commands, raw streams, and
 owned process groups before and after execution.
 
-After the client pin is accepted, run from this worktree:
+Run from this worktree:
 
 ```text
-LOG_INVENTORY_CLIENT_COMMIT=<accepted-full-client-sha> \
+LOG_INVENTORY_CLIENT_COMMIT=32c1889023be5130428cfa128556bef39b367dda \
 python3 docs/measurements/log-inventory-http-1/run_log_inventory_http.py /absolute/fresh/output
 ```
 
 No dependency installation, cloud endpoint, deployment, account activation,
-or public route is part of this draft. Native execution is intentionally held
-until the accepted client SHA is supplied.
+or public route is part of this draft. Native execution is owned by the root
+runner.

@@ -36,6 +36,7 @@ WORKER_DEPS = pathlib.Path(
 ELIXIR = os.environ.get(
     "LOG_INVENTORY_ELIXIR", "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir"
 )
+ELIXIR_BIN = str(pathlib.Path(ELIXIR).parent)
 NODE = "/usr/bin/node"
 ERLANG_BIN = "/home/jes/.asdf/installs/erlang/27.3.4.8/bin"
 TEST_SOURCE = PROVIDER_ROOT / "docs/measurements/log-inventory-http-1/log_inventory_http.exs"
@@ -105,6 +106,12 @@ def sha256(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+expected_client_sidecar_sha = "7176c8e583d05296c3b831da2132248896934facacfa497a86e207fca78f4f6a"
+client_sidecar = CLIENT_LIB / "persistence/cloudflare_sidecar.ex"
+if sha256(client_sidecar) != expected_client_sidecar_sha:
+    raise SystemExit("client sidecar source does not match accepted file pin")
 
 
 def discover_beams():
@@ -194,7 +201,7 @@ test_cmd = [ELIXIR, *beam_args, "-pa", str(isolated_ebin), str(SOURCE / "docs/me
 for private_dir in (OUTPUT / "home", OUTPUT / "config", OUTPUT / "tmp"):
     private_dir.mkdir(parents=True, exist_ok=True)
 env = {
-    "PATH": ERLANG_BIN + os.pathsep + "/usr/bin:/bin",
+    "PATH": ELIXIR_BIN + os.pathsep + ERLANG_BIN + os.pathsep + "/usr/bin:/bin",
     "HOME": str(OUTPUT / "home"),
     "XDG_CONFIG_HOME": str(OUTPUT / "config"),
     "TMPDIR": str(OUTPUT / "tmp"),
@@ -210,7 +217,7 @@ owned = []
 cleanup_in_progress = False
 first_signal_received = False
 signal_exit_code = None
-retention_active = True
+finalizing = False
 blocked_signals = {signal.SIGTERM, signal.SIGINT}
 
 
@@ -273,9 +280,10 @@ def on_signal(signum, _frame):
     global first_signal_received, signal_exit_code
     first_signal_received = True
     signal_exit_code = 128 + signum
+    if finalizing:
+        return
     cleanup_all()
-    if not retention_active:
-        raise SystemExit(signal_exit_code)
+    raise SystemExit(signal_exit_code)
 
 
 signal.signal(signal.SIGTERM, on_signal)
@@ -361,6 +369,7 @@ try:
     except BaseException as error:
         spawn_error = repr(error)
 finally:
+    finalizing = True
     cleanup_all()
     if wrangler_record is not None:
         wrangler_rc = wrangler_record["process"].poll()
@@ -418,5 +427,4 @@ finally:
         "kill_grace_seconds": 2,
         "cleanup_in_finally": True,
     }, indent=2, sort_keys=True) + "\n")
-    retention_active = False
 raise SystemExit(verdict)
