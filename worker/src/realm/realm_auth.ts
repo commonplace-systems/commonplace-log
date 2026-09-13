@@ -87,8 +87,9 @@ function fail(code: string, status: number): Response {
 
 /**
  * Refused requests must release an unread inbound stream before their response
- * is returned. Cancellation is bounded and does not inspect or drain caller
- * bytes; successful requests retain the existing body ownership.
+ * is returned. This makes one cancellation attempt without inspecting or
+ * draining caller bytes; the runtime owns cancellation completion. Successful
+ * requests retain the existing body ownership.
  */
 async function cancelUnreadBody(request: Request): Promise<void> {
   try {
