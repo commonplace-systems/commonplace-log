@@ -13,8 +13,9 @@ six client source files against the pinned 847 cached BEAM files, and runs
 compile plus selected tests in one owned child with a 180-second bound and
 5-second cleanup grace. It records source and cached-BEAM PRE/POST hashes,
 strips secret-like environment variables, records PID/PGID and signal state,
-and gates the verdict on input equality, exact test counts, and owned-process
-cleanup.
+and gates the verdict on input equality, exact test counts, timeout absence,
+signal absence, and owned-process cleanup. The child PATH explicitly prepends
+the pinned Elixir and Erlang bin directories.
 
 From the repository root, run with a fresh output directory:
 

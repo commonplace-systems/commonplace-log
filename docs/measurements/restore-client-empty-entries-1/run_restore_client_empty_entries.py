@@ -14,6 +14,7 @@ REPO = pathlib.Path(__file__).resolve().parents[3]
 OUT = pathlib.Path(sys.argv[1]).resolve()
 BEAM_ROOT = pathlib.Path(os.environ.get("RESTORE_CLIENT_EMPTY_ENTRIES_BEAM_ROOT", "/home/jes/codex-save-state-1/tmp/origin-receipt-1/_build/test/lib"))
 ELIXIR = pathlib.Path(os.environ.get("RESTORE_CLIENT_EMPTY_ENTRIES_ELIXIR", "/home/jes/.asdf/installs/elixir/1.18.4-otp-27/bin/elixir"))
+ERLANG_BIN = pathlib.Path(os.environ.get("RESTORE_CLIENT_EMPTY_ENTRIES_ERLANG_BIN", "/home/jes/.asdf/installs/erlang/27.3.4.8/bin"))
 BASE_COMMIT = "32c1889"
 TEST_FILE = REPO / "commonplace_log/test/restore_bundle_client_test.exs"
 SCRIPT_FILE = pathlib.Path(__file__).resolve().with_name("restore_client_empty_entries.exs")
@@ -76,6 +77,7 @@ def clean_env():
         "RESTORE_CLIENT_EMPTY_ENTRIES_TEST_FILE": str(TEST_FILE),
         "RESTORE_CLIENT_EMPTY_ENTRIES_COMPILE_SOURCES": json.dumps([str(path) for path in COMPILE_SOURCES]),
     })
+    env["PATH"] = os.pathsep.join([str(ELIXIR.parent), str(ERLANG_BIN), env.get("PATH", "")])
     return env
 
 
@@ -170,6 +172,8 @@ pre = input_manifest()
     "test_file": str(TEST_FILE),
     "compile_sources": [str(path) for path in COMPILE_SOURCES],
     "beam_root": str(BEAM_ROOT),
+    "elixir": str(ELIXIR),
+    "erlang_bin": str(ERLANG_BIN),
     "cached_beam_count": len(beams),
     "expected_total": EXPECTED_TOTAL,
     "expected_excluded": EXPECTED_EXCLUDED,
@@ -184,6 +188,8 @@ cmd = [str(ELIXIR), *beam_args, str(SCRIPT_FILE), str(OUT)]
     "source_commit": app_commit,
     "accepted_base_commit": base_commit,
     "compile_sources": [str(path) for path in COMPILE_SOURCES],
+    "elixir": str(ELIXIR),
+    "erlang_bin": str(ERLANG_BIN),
     "expected_total": EXPECTED_TOTAL,
     "expected_excluded": EXPECTED_EXCLUDED,
     "selected_tag": "restore_empty_entries",
@@ -272,6 +278,10 @@ finally:
         for signum in (signal.SIGTERM, signal.SIGINT):
             if signum in pending or signal.Signals(signum) in pending:
                 latch_signal(signum)
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, lambda signum, _frame: latch_signal(signum))
+        signal.pthread_sigmask(signal.SIG_SETMASK, cleanup_mask)
+        cleanup_mask = None
         try:
             post = input_manifest()
             manifest_error = None
@@ -345,7 +355,8 @@ finally:
     finally:
         for signum in (signal.SIGTERM, signal.SIGINT):
             signal.signal(signum, signal.SIG_IGN)
-        signal.pthread_sigmask(signal.SIG_SETMASK, cleanup_mask)
+        if cleanup_mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, cleanup_mask)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 
