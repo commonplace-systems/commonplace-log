@@ -110,8 +110,8 @@ async function sqlSnapshot(target: DurableObjectStub): Promise<Json> {
   });
 }
 
-describe("internal restore bundle wire", () => {
-  it("keeps restore private while public authorization remains the ordinary HTTP contract", async () => {
+describe("restore bundle wire", () => {
+  it("requires realm authorization before accepting the bounded public restore route", async () => {
     const target = stub("public");
     const secret = await createRealm(target);
     const body = bundle();
@@ -124,8 +124,11 @@ describe("internal restore bundle wire", () => {
       method: "POST", body: JSON.stringify(body),
       headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
     });
-    expect(authenticated.status).toBe(404);
-    expect(await authenticated.json()).toEqual({ ok: false, error: { code: "not_found" } });
+    expect(authenticated.status).toBe(200);
+    expect(await authenticated.json()).toEqual({
+      ok: true,
+      result: { imported_logs: 1, skipped_logs: 0, complete: false },
+    });
   });
 
   it("imports the full sorted inventory in bounded batches and resumes after a DO restart", async () => {
