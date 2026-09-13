@@ -1,10 +1,9 @@
 import { Container } from "@cloudflare/containers";
 import { containerFetchWithCapacityMapping } from "./capacity";
-import { handleRealmRequest } from "./http";
 import { storageInternal } from "./outbound";
 import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
 import { RealmStore } from "./store";
-import { handleStorageRequest } from "./wire";
+import { handleAuthenticatedRequest, handleStorageRequest } from "./wire";
 
 interface Env {
   REALM_NODE: DurableObjectNamespace<RealmNode>;
@@ -50,7 +49,7 @@ export class RealmNode extends Container<Env> {
         await this.containerFetch(new Request(url, request)));
     }
 
-    return await handleRealmRequest(request, this.store);
+    return await handleAuthenticatedRequest(request, this.store);
   }
 }
 

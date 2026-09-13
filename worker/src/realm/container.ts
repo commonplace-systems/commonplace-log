@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { handleRealmRequest } from "./http";
-import { handleStorageRequest } from "./wire";
+import { handleAuthenticatedRequest, handleStorageRequest } from "./wire";
 import { handlePublicRealmRequest, RealmAuth } from "./realm_auth";
 import { RealmStore } from "./store";
 
@@ -11,7 +10,7 @@ export class RealmContainer extends DurableObject {
 
   override async fetch(request: Request): Promise<Response> {
     return await handlePublicRealmRequest(request, this.auth, async (authorized) =>
-      await handleRealmRequest(authorized, this.store));
+      await handleAuthenticatedRequest(authorized, this.store));
   }
 
   /**

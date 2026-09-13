@@ -189,7 +189,20 @@ function storeFailure(error: RealmStoreError): Response {
   return failure("constraint", 409);
 }
 
-/** Internal storage wire adapter. Public realm dispatch never calls this function. */
+/**
+ * Dispatch the bounded inventory/restore wire only after the caller has passed
+ * the realm bearer-auth boundary. Ordinary realm requests retain the existing
+ * handler and validation path.
+ */
+export async function handleAuthenticatedRequest(request: Request, store: RealmStore): Promise<Response> {
+  const path = new URL(request.url).pathname;
+  if (path === "/list-logs" || path === "/restore-bundle-batch") {
+    return await handleStorageRequest(request, store);
+  }
+  return await handleRealmRequest(request, store);
+}
+
+/** Internal storage wire adapter. Platform storage traffic bypasses bearer auth. */
 export async function handleStorageRequest(request: Request, store: RealmStore): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (path === "/list-logs") {
