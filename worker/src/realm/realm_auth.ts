@@ -107,9 +107,9 @@ export class RealmAuth {
     if (!validOperationId(operationId) || !validSecret(secret)) throw new RealmAllocationConflict();
     const operationHash = await sha256(operationId);
     const secretHash = await sha256(secret);
-    initRealmAllocationSchema(this.sql);
 
     return this.txn.transactionSync(() => {
+      initRealmAllocationSchema(this.sql);
       const allocation = storedAllocation(this.sql);
       const realmHash = storedHash(this.sql);
 
