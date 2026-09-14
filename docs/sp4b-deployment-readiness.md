@@ -34,6 +34,13 @@ real wire — statuses, JSON shapes, and a non-UTF-8 payload surviving Elixir �
 workerd → storage → re-encode → Elixir. That is the best available evidence that the loopback
 double used by Tasks 4 and 5 was faithful, which is what makes their results transferable.
 
+> **HISTORICAL as of 08aa44c (2026-09-14), for the non-UTF-8 arm specifically:** the realm store
+> now refuses at commit any canonical bytes that are not a JSON object agreeing with the row's
+> `entry_id`/`writer_id`/`writer_seq` (`entry_bytes_mismatch`), so a raw non-UTF-8 payload can no
+> longer be stored through the realm surface — by design, not by accident. The byte-fidelity
+> property this result established is carried forward by the same arm using agreeing canonical
+> JSON with multibyte UTF-8 (`eae547e`). The rest of the Task 6 result stands.
+
 ---
 
 ## 2. What SP4b needs from jes
