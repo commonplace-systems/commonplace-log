@@ -237,9 +237,10 @@ created.
   11925, landed as `fecfc6b`, 2026-09-14). It is a development-only lever enabling the
   `x-commonplace-test-commit-delay-ms` header (a commit sleep up to 90 s in the Elixir
   RealmNode) and `allowUnboundRegistry` creation; tests set it in `wrangler.test.jsonc` or
-  inline. Note the two clocks above: the live production version (`8e3c8062` per the
-  2026-09-14 coordination record) was deployed *before* the strip, so the lever remains
-  active in production until the next provider deploy ships (`PROVIDER-DEPLOY-4`, boss-executed).
+  inline. `PROVIDER-DEPLOY-4` shipped the strip to production the same day (2026-09-14,
+  boss-executed, `--containers-rollout=none`) — a worked example of the two clocks above:
+  the Worker changed immediately, while `commonplace_log/` changes landed on main after the
+  image build wait for the next container-rebuild deploy.
 
 ## 9. Known gaps and roadmap
 
