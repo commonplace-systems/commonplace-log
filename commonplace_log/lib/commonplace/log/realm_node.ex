@@ -3,7 +3,7 @@ defmodule Commonplace.Log.RealmNode do
 
   use Plug.Router
 
-  alias Commonplace.Log.{DocumentProfile, Engine, UUID}
+  alias Commonplace.Log.{DocumentProfile, Engine, Entry, UUID}
   alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.{CloudflareSidecar, LocalSQLite}
   alias Commonplace.Log.RealmNode.{DocumentHandles, Incarnation}
@@ -22,31 +22,37 @@ defmodule Commonplace.Log.RealmNode do
   end
 
   post "/v1/documents/:log_id/create" do
-    with_document_store(conn, fn conn, store ->
-      case DocumentProfile.create_log(log_id, lane: {SidecarLane, store}) do
-        {:ok, handle} -> cache_document_handle(conn, log_id, handle, 201)
-        other -> result(conn, other)
-      end
+    with_valid_log_id(conn, log_id, fn conn ->
+      with_document_store(conn, fn conn, store ->
+        case DocumentProfile.create_log(log_id, lane: {SidecarLane, store}) do
+          {:ok, handle} -> cache_document_handle(conn, log_id, handle, 201)
+          other -> result(conn, other)
+        end
+      end)
     end)
   end
 
   post "/v1/documents/:log_id/open" do
-    with_document_store(conn, fn conn, store ->
-      case DocumentProfile.open_log(log_id, lane: {SidecarLane, store}) do
-        {:ok, handle} -> cache_document_handle(conn, log_id, handle, 200)
-        other -> result(conn, other)
-      end
+    with_valid_log_id(conn, log_id, fn conn ->
+      with_document_store(conn, fn conn, store ->
+        case DocumentProfile.open_log(log_id, lane: {SidecarLane, store}) do
+          {:ok, handle} -> cache_document_handle(conn, log_id, handle, 200)
+          other -> result(conn, other)
+        end
+      end)
     end)
   end
 
   post "/v1/documents/:log_id/append" do
-    with {:ok, request_body} <- decode_object(conn),
-         {:ok, entry_body} <- required_object(request_body, "body"),
-         {:ok, created_at} <- created_at(request_body) do
-      append_document(conn, log_id, entry_body, created_at)
-    else
-      {:error, reason} -> error(conn, 400, "invalid_entry", %{reason: reason})
-    end
+    with_valid_log_id(conn, log_id, fn conn ->
+      with {:ok, request_body} <- decode_object(conn),
+           {:ok, entry_body} <- required_object(request_body, "body"),
+           {:ok, created_at} <- created_at(request_body) do
+        append_document(conn, log_id, entry_body, created_at)
+      else
+        {:error, reason} -> error(conn, 400, "invalid_entry", %{reason: reason})
+      end
+    end)
   end
 
   post "/v1/logs/:log_id/create" do
@@ -108,7 +114,26 @@ defmodule Commonplace.Log.RealmNode do
     error(conn, 404, "not_found", %{})
   end
 
+  # Path segments arrive percent-decoded (Plug/Bandit), so a log_id such as
+  # "..%2F..%2Fetc%2Fx" reaches routes as "../../etc/x". Validate every
+  # :log_id at the HTTP boundary — spec section "log_id" requires a lowercase
+  # canonical UUID — before it can reach a persistence adapter, where
+  # LocalSQLite joins it into a filesystem path and CloudflareSidecar
+  # forwards it upstream.
+  defp with_valid_log_id(conn, log_id, fun) do
+    case Entry.uuid_problem(log_id) do
+      nil -> fun.(conn)
+      problem -> error(conn, 400, "invalid_log_id", %{reason: to_string(problem)})
+    end
+  end
+
   defp with_store(conn, log_id, fun) do
+    with_valid_log_id(conn, log_id, fn conn ->
+      dispatch_to_store(conn, log_id, fun)
+    end)
+  end
+
+  defp dispatch_to_store(conn, log_id, fun) do
     case persistence_config() do
       {LocalSQLite, options} when is_list(options) ->
         data_dir = Keyword.fetch!(options, :data_dir)

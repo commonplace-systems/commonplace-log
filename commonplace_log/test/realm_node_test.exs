@@ -34,7 +34,126 @@ defmodule Commonplace.Log.RealmNodeTest do
       File.rm_rf!(data_dir)
     end)
 
-    %{log_id: UUID.uuidv7()}
+    %{log_id: UUID.uuidv7(), data_dir: data_dir}
+  end
+
+  describe "log_id validation at the HTTP boundary" do
+    test "a percent-encoded traversal log_id is rejected before persistence and writes no file outside data_dir",
+         context do
+      escaped_name = "#{Path.basename(context.data_dir)}-escaped"
+      escape_target = Path.expand(Path.join(context.data_dir, "../#{escaped_name}.sqlite3"))
+      on_exit(fn -> File.rm(escape_target) end)
+      refute File.exists?(escape_target)
+
+      assert %{
+               "ok" => false,
+               "error" => %{
+                 "code" => "invalid_log_id",
+                 "details" => %{"reason" => "uuid_malformed"}
+               }
+             } = request(:post, "/v1/logs/..%2F#{escaped_name}/create", %{}, 400)
+
+      refute File.exists?(escape_target)
+
+      # Rejected before any persistence adapter ran: open/2 would have created data_dir.
+      refute File.exists?(context.data_dir)
+
+      # Positive control: a canonical lowercase UUID still creates a log end-to-end.
+      assert %{"ok" => true} = request(:post, "/v1/logs/#{context.log_id}/create", %{}, 201)
+      assert File.exists?(Path.join(context.data_dir, context.log_id <> ".sqlite3"))
+    end
+
+    test "a deeper percent-encoded traversal on append is rejected with the error envelope",
+         context do
+      assert %{
+               "ok" => false,
+               "error" => %{
+                 "code" => "invalid_log_id",
+                 "details" => %{"reason" => "uuid_malformed"}
+               }
+             } =
+               request(
+                 :post,
+                 "/v1/logs/..%2F..%2Fetc%2Fx/append",
+                 %{"writer_id" => @writer_id, "body" => %{"value" => 1}},
+                 400
+               )
+
+      refute File.exists?(context.data_dir)
+    end
+
+    test "a non-UUID log_id is rejected on every log route", context do
+      for {method, path, body} <- [
+            {:post, "/v1/logs/not-a-uuid/create", %{}},
+            {:post, "/v1/logs/not-a-uuid/append", %{"writer_id" => @writer_id, "body" => %{}}},
+            {:post, "/v1/logs/not-a-uuid/merge", %{"entries" => []}},
+            {:get, "/v1/logs/not-a-uuid/frontier", nil}
+          ] do
+        assert %{
+                 "ok" => false,
+                 "error" => %{
+                   "code" => "invalid_log_id",
+                   "details" => %{"reason" => "uuid_malformed"}
+                 }
+               } = request(method, path, body, 400)
+      end
+
+      refute File.exists?(context.data_dir)
+    end
+
+    test "an uppercase UUID log_id is rejected as not lowercase", context do
+      uppercase = String.upcase(context.log_id)
+
+      assert %{
+               "ok" => false,
+               "error" => %{
+                 "code" => "invalid_log_id",
+                 "details" => %{"reason" => "uuid_not_lowercase"}
+               }
+             } = request(:post, "/v1/logs/#{uppercase}/create", %{}, 400)
+
+      refute File.exists?(context.data_dir)
+    end
+
+    test "an empty log_id segment never reaches persistence", context do
+      # An empty path segment collapses, so no :log_id route matches; the
+      # catch-all 404 answers and no adapter runs.
+      assert %{"ok" => false, "error" => %{"code" => "not_found"}} =
+               request(:post, "/v1/logs//create", %{}, 404)
+
+      refute File.exists?(context.data_dir)
+    end
+
+    test "a traversal log_id on the document routes is rejected before the sidecar", _context do
+      configure_sidecar()
+
+      for path <- [
+            "/v1/documents/..%2Fdoc-escape/create",
+            "/v1/documents/..%2Fdoc-escape/open"
+          ] do
+        assert %{
+                 "ok" => false,
+                 "error" => %{
+                   "code" => "invalid_log_id",
+                   "details" => %{"reason" => "uuid_malformed"}
+                 }
+               } = request(:post, path, %{}, 400)
+      end
+
+      assert %{
+               "ok" => false,
+               "error" => %{
+                 "code" => "invalid_log_id",
+                 "details" => %{"reason" => "uuid_malformed"}
+               }
+             } =
+               request(
+                 :post,
+                 "/v1/documents/..%2Fdoc-escape/append",
+                 %{"body" => %{"n" => 1}},
+                 400
+               )
+    end
   end
 
   test "create, append, and frontier round trip; one writer advances from seq 1 to 2", context do
