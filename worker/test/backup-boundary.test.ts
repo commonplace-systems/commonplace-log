@@ -4,8 +4,14 @@ import { describe, expect, it } from "vitest";
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 describe("backup deployment boundary", () => {
   it("A4: production backup references no realm-write surface; live realm code is the positive control", () => {
+    // Single source of truth for the write-surface pattern. scripts/check-backup-boundary.sh
+    // deliberately carries no second copy; it points here. Every .ts under backup/ is scanned
+    // so the corpus tracks the set that scripts/backup-output-review.json pins.
     const pattern = /\/(?:create-log|take-lease|commit|realm\/read-capability)|realm_secret|write_secret|storageFetch/g;
-    const backup = source("../backup/index.ts") + source("../backup/run.ts");
+    const backupDirectory = new URL("../backup/", import.meta.url);
+    const backupFiles = readdirSync(backupDirectory).filter((p) => p.endsWith(".ts"));
+    expect(backupFiles.length).toBeGreaterThan(0); // corpus non-empty: a moved directory must not read as a pass
+    const backup = backupFiles.map((p) => readFileSync(new URL(p, backupDirectory), "utf8")).join("\n");
     const directory = new URL("../src/realm/", import.meta.url);
     const live = readdirSync(directory).filter((p) => p.endsWith(".ts"))
       .map((p) => readFileSync(new URL(p, directory), "utf8")).join("\n");

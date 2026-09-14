@@ -30,6 +30,13 @@ bash scripts/check-backup-boundary.sh
 npm test
 ```
 
+When reviewing a round, also run the review-time arm with the round's own
+pre-round base (a required parameter; there is no default):
+
+```sh
+bash scripts/check-backup-boundary.sh --review-base <pre-round-commit>
+```
+
 The normal test command includes the backup project. The focused TypeScript check
 does not include unrelated legacy test files; the existing full check still
 reports the two previously documented TS2307 errors in the read-capability tests.
@@ -80,11 +87,27 @@ derived keys stay; contents AND listings require roster-level confidentiality.
 Do not paste live inventories, manifests or run payloads into channels, tickets
 or reports. Fixture-only evidence is labelled as such.
 
-`check-backup-boundary.sh` checks hashes of the complete reviewed production
-source set using `scripts/backup-output-review.json`. It fails on changed code or
-new modules. Before updating hashes, review all output paths: only realm reads
+`check-backup-boundary.sh` has three arms with three dispositions. Run without
+arguments, it runs the durable custody arm (D4): hashes of the complete reviewed
+production source set, from `scripts/backup-output-review.json`. It fails on
+changed code or new modules and stays green under legitimate change elsewhere in
+the repository. Before updating hashes, review all output paths: only realm reads
 and R2 writes; scheduled errors may expose a fixed code and opaque run ID only.
 Do not refresh hashes merely to pass the check. This is an integrity/review gate,
 not a proof about arbitrary future code, manual exports or provider telemetry.
 The tool prints its test/fixture/operator exclusions. No access-policy change or
 deployment is performed by this check.
+
+The write-surface scan (A4: backup code references no realm-write surface, with
+live realm code as the positive control) has exactly one copy, in
+`test/backup-boundary.test.ts`; CI runs it on every push and pull request via
+`npm test`. The script carries no second copy of that regex and prints a pointer
+instead.
+
+The zero-diff arm (A6: the round under review leaves `wrangler.jsonc`,
+`src/index.ts` and `commonplace_log/` untouched) is review-time only and runs
+solely with an explicit `--review-base <pre-round-commit>` supplied by the
+reviewer — the base of the changeset being reviewed, not any fixed commit. It is
+deliberately a required parameter: the property belongs to a changeset against
+its own base, and a baked-in default would turn every later legitimate change
+into a false alarm indistinguishable from a real boundary violation.
