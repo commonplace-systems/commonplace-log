@@ -1,0 +1,68 @@
+name: Fresh-seed fuzz
+
+# The per-PR CI job replays ONE pinned seed (20260823) for reproducibility,
+# which means it never explores a new input. This workflow derives its seed
+# from the run date, so every week the cross-runtime differential fuzz
+# actually tries inputs no previous run has seen.
+#
+# REPRODUCIBILITY OF A RED RUN: the step below echoes the seed BEFORE
+# fuzz.sh starts, and fuzz.sh's own summary prints "SEED: <seed>
+# (reproduce: conformance/fuzz.sh <n> <seed>)" ahead of its RED/GREEN
+# verdict — so a failure names the seed even if generation crashes early.
+# Reproduce any red run with:
+#
+#   bash conformance/fuzz.sh 2000 <seed from the log>
+
+on:
+  schedule:
+    # Weekly, Monday 04:17 UTC (an off-peak minute; scheduled workflows run
+    # against the default branch only).
+    - cron: '17 4 * * 1'
+  # Manual runs allowed, e.g. to retry after a red week or to burn a spare
+  # seed on demand.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fresh-fuzz:
+    name: Cross-runtime fuzz on a fresh seed (2000 cases)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pinned Erlang and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27.3.4.8'
+          elixir-version: '1.18.4-otp-27'
+          version-type: strict
+
+      # fuzz-check.ts imports only node: builtins and worker/src, run via
+      # Node's native type stripping — no npm ci needed here.
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Cache Mix dependencies and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            commonplace_log/deps
+            commonplace_log/_build
+          key: ${{ runner.os }}-otp-27.3.4.8-elixir-1.18.4-otp-27-mix-${{ hashFiles('commonplace_log/mix.lock') }}
+
+      - name: Fetch Mix dependencies
+        working-directory: commonplace_log
+        run: mix deps.get
+
+      - name: Fuzz with a date-derived seed
+        run: |
+          SEED="$(date -u +%Y%m%d)"
+          echo "FRESH FUZZ SEED: ${SEED} (reproduce a red run with: bash conformance/fuzz.sh 2000 ${SEED})"
+          bash conformance/fuzz.sh 2000 "${SEED}"

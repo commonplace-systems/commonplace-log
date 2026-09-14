@@ -205,7 +205,7 @@ async function allocationBody(
 ): Promise<{ operationId: string; secret: string; locationHint?: LocationHint } | null> {
   try {
     const raw = await readBufferedWireBody(request, 4_096);
-    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(raw));
     if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
     const row = value as Record<string, unknown>;
     if (Object.keys(row).some((key) => !["operation_id", "realm_secret", "location_hint"].includes(key))) return null;

@@ -18,17 +18,24 @@ jobs:
     timeout-minutes: 30
 
     # A green job certifies the Elixir reference suite and formatting, the
-    # TypeScript workalike suite, cross-runtime byte equality on the fixed
-    # corpus, and the bounded seeded fuzz below.
+    # worker typecheck (both tsconfig projects), the TypeScript workalike
+    # suite, cross-runtime byte equality on the fixed corpus, the bounded
+    # seeded fuzz below, the four persistence-contract mutation arms (each
+    # asserted RED — they exist to prove the contract can go red), and the
+    # wrangler real-socket arm in both directions (green, plus its wrong-port
+    # red arm).
     #
     # WHAT IT DOES NOT CERTIFY, stated because a green tick reads as "all of
     # it" and these are invisible in every number the suites print:
-    #   * the gated arms named in commonplace_log/test/GATED_ARMS.txt. Check 1
-    #     pins that SET so a new one cannot appear silently; nothing here RUNS
-    #     them. They need a real wrangler dev socket or a real deployment, and
-    #     they are run by hand — see the readiness doc.
+    #   * the DEPLOYED-system arm (test/cloudflare_deployed_integration_test.exs
+    #     in commonplace_log/test/GATED_ARMS.txt). It needs a real gateway URL
+    #     and token and is still run by hand — see the readiness doc.
     #   * the Cloudflare deployment itself. It exists (readiness doc 4b), but
     #     no job here touches it; every claim about it was run by hand.
+    #   * fuzz coverage beyond the one pinned seed: check 7 replays seed
+    #     20260823 for reproducibility, so a green tick here never means a NEW
+    #     random input was tried. Fresh seeds are explored only by the weekly
+    #     fuzz-fresh.yml workflow.
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -65,28 +72,56 @@ jobs:
         working-directory: worker
         run: npm ci
 
-      # Runs FIRST and costs no BEAM: it names the arms this job does NOT
-      # exercise. A module wrapped in a column-0 `if System.get_env(...) do`
-      # is absent from every number `mix test` prints, so a green job below
-      # says nothing about it.
-      - name: Check 1 of 6 - gated-arm inventory matches its manifest
+      # Runs FIRST and costs no BEAM: it pins the SET of env-gated arms so a
+      # new one cannot appear silently. A module wrapped in a column-0
+      # `if System.get_env(...) do` is absent from every number `mix test`
+      # prints, so check 2 below says nothing about any of them. Checks 8-9
+      # RUN the two arms that need no Cloudflare credentials; the
+      # deployed-system arm stays manual.
+      - name: Check 1 of 9 - gated-arm inventory matches its manifest
         working-directory: commonplace_log
         run: bash scripts/check_gated_arms.sh
 
-      - name: Check 2 of 6 - Elixir tests
+      - name: Check 2 of 9 - Elixir tests
         working-directory: commonplace_log
         run: mix test
 
-      - name: Check 3 of 6 - Elixir formatting
+      - name: Check 3 of 9 - Elixir formatting
         working-directory: commonplace_log
         run: mix format --check-formatted
 
-      - name: Check 4 of 6 - worker tests
+      # Vitest strips types without checking them, so check 5 alone would
+      # leave both tsconfig projects decorative.
+      - name: Check 4 of 9 - worker typecheck
+        working-directory: worker
+        run: npm run typecheck
+
+      - name: Check 5 of 9 - worker tests
         working-directory: worker
         run: npm test
 
-      - name: Check 5 of 6 - fixed cross-runtime conformance
+      - name: Check 6 of 9 - fixed cross-runtime conformance
         run: bash conformance/check.sh
 
-      - name: Check 6 of 6 - seeded cross-runtime fuzz (500 cases)
+      - name: Check 7 of 9 - seeded cross-runtime fuzz (500 cases)
         run: bash conformance/fuzz.sh 500 20260823
+
+      # Anti-vacuity arms: each mutation compiles a deliberately broken
+      # adapter (or lane) into the persistence contract, so the EXPECTED
+      # outcome is a FAILING suite. The script inverts the exit code and
+      # refuses zero-test greens and wrong-referent reds — a plain
+      # "exit 0 == pass" step here would certify that the contract CANNOT
+      # see the breakage.
+      - name: Check 8 of 9 - persistence-contract mutation arms (expected red)
+        working-directory: commonplace_log
+        run: bash scripts/check_mutation_arms.sh
+
+      # Boots real `wrangler dev` on a 127.0.0.1 socket (no Cloudflare
+      # credentials). The green arm must pass AND its wrong-port red arm must
+      # fail, or the green arm is not known to be able to fail. ~2 minutes,
+      # so it stays in the per-PR job rather than a nightly.
+      - name: Check 9 of 9 - wrangler real-socket arm, green and red
+        working-directory: commonplace_log
+        env:
+          COMMONPLACE_LOG_WORKER_DIR: ../worker
+        run: bash scripts/check_wrangler_arms.sh
