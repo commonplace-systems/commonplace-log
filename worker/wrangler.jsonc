@@ -6,8 +6,10 @@
   // (workerd 1.20260310.1).
   "compatibility_date": "2026-03-10",
   "compatibility_flags": ["nodejs_compat"],
-  // Development deployment only. This must be "" or absent in every other deployment.
-  "vars": { "REALM_TEST_LEVERS": "1" },
+  // REALM_TEST_LEVERS is deliberately ABSENT: it is a development-only lever (it enables the
+  // x-commonplace-test-commit-delay-ms commit sleep and unbound-registry creation) and must never be
+  // set on this production config. Removed by jes's ruling, Telegram 11925 (2026-09-14). Tests set it
+  // in wrangler.test.jsonc or inline env.
   // BACKUP-1b-i: the realm registry. Created 2026-09-05 by boss-clod under the deploy order at
   // commonplace-plan docs/plans/orders/2026-09-05-BACKUP-1b-i-deploy-order.md.
   // Every VALUE in this namespace is a realm read capability: the id may be recorded, no value may.
