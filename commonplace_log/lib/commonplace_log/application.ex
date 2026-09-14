@@ -10,11 +10,14 @@ defmodule CommonplaceLog.Application do
     children =
       [
         {Commonplace.Log.RealmNode.Incarnation, incarnation},
-        Commonplace.Log.RealmNode.DocumentHandles,
-        {Registry, keys: :unique, name: Commonplace.LogStore.SQLite.Registry},
-        {DynamicSupervisor,
-         strategy: :one_for_one, name: Commonplace.LogStore.SQLite.DynamicSupervisor}
-      ] ++ realm_http_children()
+        Commonplace.Log.RealmNode.DocumentHandles
+      ] ++
+        Commonplace.Log.RealmNode.DocumentAppendQueue.child_specs() ++
+        [
+          {Registry, keys: :unique, name: Commonplace.LogStore.SQLite.Registry},
+          {DynamicSupervisor,
+           strategy: :one_for_one, name: Commonplace.LogStore.SQLite.DynamicSupervisor}
+        ] ++ realm_http_children()
 
     Supervisor.start_link(children, strategy: :one_for_one, name: CommonplaceLog.Supervisor)
   end

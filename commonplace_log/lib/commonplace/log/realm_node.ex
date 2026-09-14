@@ -6,7 +6,7 @@ defmodule Commonplace.Log.RealmNode do
   alias Commonplace.Log.{DocumentProfile, Engine, Entry, UUID}
   alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.{CloudflareSidecar, LocalSQLite}
-  alias Commonplace.Log.RealmNode.{DocumentHandles, Incarnation}
+  alias Commonplace.Log.RealmNode.{DocumentAppendQueue, DocumentHandles, Incarnation}
 
   # Request-body cap for every route that reads a body. 8 MiB mirrors the realm sidecar
   # surface's raw-body cap: entries are at most 1 MiB canonical each, so the largest
@@ -199,26 +199,53 @@ defmodule Commonplace.Log.RealmNode do
     json(conn, status, %{ok: true, writer_id: handle.writer_id, lease_epoch: handle.lease})
   end
 
+  # Concurrent appends to one document must queue, not race: without
+  # serialization both prepare at the same coordinate and the loser's commit
+  # reports writer_fork — the halt-everything corruption code — for an
+  # ordinary write race. prepare→commit runs inside the per-document
+  # DocumentAppendQueue serializer; appends to different documents are
+  # unrelated serializers and proceed concurrently.
   defp append_document(conn, log_id, body, created_at) do
     case DocumentHandles.fetch(log_id) do
       {:ok, handle} ->
-        opts = [operation_id: UUID.uuidv7(), created_at: created_at]
+        case DocumentAppendQueue.run(log_id, fn ->
+               perform_document_append(conn, handle, body, created_at)
+             end) do
+          {:ok, append_result} ->
+            document_append_response(conn, log_id, append_result)
 
-        with {:ok, prepared} <- DocumentProfile.prepare_append(handle, [body], opts),
-             :ok <- maybe_delay_document_commit(conn),
-             {:ok, receipt} <- DocumentProfile.commit_prepared(handle, prepared) do
-          json(conn, 200, %{ok: true, result: receipt})
-        else
-          {:error, {:writer_lease_fenced, _details}} = fenced ->
-            :ok = DocumentHandles.delete(log_id)
-            result(conn, fenced)
+          {:error, :append_queue_timeout} ->
+            error(conn, 503, "append_queue_timeout", %{retryable: true})
 
-          other ->
-            result(conn, other)
+          {:error, :append_queue_unavailable} ->
+            error(conn, 503, "append_queue_unavailable", %{retryable: true})
         end
 
       :error ->
         error(conn, 409, "document_not_open", %{})
+    end
+  end
+
+  defp perform_document_append(conn, handle, body, created_at) do
+    opts = [operation_id: UUID.uuidv7(), created_at: created_at]
+
+    with {:ok, prepared} <- DocumentProfile.prepare_append(handle, [body], opts),
+         :ok <- maybe_delay_document_commit(conn) do
+      DocumentProfile.commit_prepared(handle, prepared)
+    end
+  end
+
+  defp document_append_response(conn, log_id, append_result) do
+    case append_result do
+      {:ok, receipt} ->
+        json(conn, 200, %{ok: true, result: receipt})
+
+      {:error, {:writer_lease_fenced, _details}} = fenced ->
+        :ok = DocumentHandles.delete(log_id)
+        result(conn, fenced)
+
+      other ->
+        result(conn, other)
     end
   end
 

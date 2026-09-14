@@ -7,7 +7,7 @@ defmodule Commonplace.Log.RealmNodeTest do
   alias Commonplace.Log.{DocumentProfile, Entry, RealmNode, UUID}
   alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.CloudflareSidecar
-  alias Commonplace.Log.RealmNode.DocumentHandles
+  alias Commonplace.Log.RealmNode.{DocumentAppendQueue, DocumentHandles}
   alias Commonplace.Log.Test.{InMemoryPersistence, SidecarLoopback}
 
   @writer_id "018f5e2a-8b3c-7d4e-9f10-123456789abd"
@@ -470,6 +470,172 @@ defmodule Commonplace.Log.RealmNodeTest do
              )
 
     assert System.monotonic_time(:millisecond) - started < 700
+  end
+
+  describe "concurrent document appends" do
+    # The success arm here IS the proof of the per-document serialization fix:
+    # before it, concurrent appends to one document all prepared at the same
+    # coordinate and the losers surfaced writer_fork — the halt-everything
+    # corruption code — for an ordinary write race.
+    test "N concurrent appends to one document all succeed with consecutive seqs and no writer_fork",
+         context do
+      store = configure_sidecar()
+      request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+
+      n = 12
+      parent = self()
+
+      tasks =
+        for i <- 1..n do
+          Task.async(fn ->
+            send(parent, {:ready, self()})
+
+            receive do
+              :go -> :ok
+            end
+
+            conn =
+              conn(
+                :post,
+                "/v1/documents/#{context.log_id}/append",
+                Jason.encode!(%{"body" => %{"n" => i}})
+              )
+
+            conn = RealmNode.call(put_req_header(conn, "content-type", "application/json"), [])
+            {conn.status, Jason.decode!(conn.resp_body)}
+          end)
+        end
+
+      # Barrier: every task is parked on the same receive before any is released,
+      # so all N requests are in flight together.
+      released =
+        for _ <- 1..n do
+          assert_receive {:ready, pid}, 5_000
+          pid
+        end
+
+      Enum.each(released, &send(&1, :go))
+      results = Task.await_many(tasks, 30_000)
+
+      error_codes =
+        for {_status, %{"ok" => false, "error" => %{"code" => code}}} <- results, do: code
+
+      assert error_codes == []
+      refute "writer_fork" in error_codes
+
+      assert Enum.all?(results, fn {status, body} ->
+               status == 200 and body["ok"] == true and
+                 body["result"]["inserted"] == 1 and body["result"]["present"] == 0
+             end)
+
+      # Every append landed at its own revision, 1..n with no gaps: the appends
+      # queued and each prepared against the frontier its predecessor committed.
+      revisions = Enum.map(results, fn {_status, body} -> body["result"]["revision"] end)
+      assert Enum.sort(revisions) == Enum.to_list(1..n)
+
+      # One writer lane, tip at seq n: the N appends are consecutive, none lost.
+      assert {:ok, %{writers: [%{seq: ^n}]}} =
+               CloudflareSidecar.frontier(store, context.log_id)
+    end
+
+    test "appends to a different document proceed while one document's queue is held; the held document's wait is bounded",
+         context do
+      configure_sidecar()
+      configure_append_queue_timeout(200)
+
+      other_log_id = UUID.uuidv7()
+      request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+      request(:post, "/v1/documents/#{other_log_id}/create", %{}, 201)
+
+      # Occupy document A's serializer deterministically: the closure runs
+      # inside the serializer process and parks until released.
+      parent = self()
+
+      holder =
+        Task.async(fn ->
+          DocumentAppendQueue.run(
+            context.log_id,
+            fn ->
+              send(parent, {:held, self()})
+
+              receive do
+                :release -> :held_done
+              end
+            end,
+            60_000
+          )
+        end)
+
+      assert_receive {:held, serializer_pid}, 5_000
+
+      # Different document, same moment: completes. A global append lock would
+      # park this behind the held serializer and time out instead.
+      assert %{"ok" => true, "result" => %{"inserted" => 1}} =
+               request(
+                 :post,
+                 "/v1/documents/#{other_log_id}/append",
+                 %{"body" => %{"other" => true}},
+                 200
+               )
+
+      # Same document: the wait is bounded — a retryable 503, not a deadlock
+      # and not writer_fork.
+      assert %{
+               "ok" => false,
+               "error" => %{"code" => "append_queue_timeout", "details" => %{"retryable" => true}}
+             } =
+               request(
+                 :post,
+                 "/v1/documents/#{context.log_id}/append",
+                 %{"body" => %{"queued" => true}},
+                 503
+               )
+
+      send(serializer_pid, :release)
+      assert {:ok, :held_done} = Task.await(holder, 5_000)
+
+      # Released cleanly: the next append to the held document succeeds.
+      assert %{"ok" => true, "result" => %{"inserted" => 1}} =
+               request(
+                 :post,
+                 "/v1/documents/#{context.log_id}/append",
+                 %{"body" => %{"after_release" => true}},
+                 200
+               )
+    end
+
+    test "a crashed append re-raises in the caller and releases the queue for the next append",
+         context do
+      configure_sidecar()
+      request(:post, "/v1/documents/#{context.log_id}/create", %{}, 201)
+
+      assert_raise RuntimeError, "append blew up", fn ->
+        DocumentAppendQueue.run(context.log_id, fn -> raise "append blew up" end)
+      end
+
+      # No lock left behind: the crash was caught in the serializer, so the
+      # same document accepts the next append immediately.
+      assert %{"ok" => true, "result" => %{"inserted" => 1}} =
+               request(
+                 :post,
+                 "/v1/documents/#{context.log_id}/append",
+                 %{"body" => %{"after_crash" => true}},
+                 200
+               )
+    end
+  end
+
+  defp configure_append_queue_timeout(timeout_ms) do
+    previous = Application.get_env(:commonplace_log, DocumentAppendQueue)
+    Application.put_env(:commonplace_log, DocumentAppendQueue, timeout_ms: timeout_ms)
+
+    on_exit(fn ->
+      if previous do
+        Application.put_env(:commonplace_log, DocumentAppendQueue, previous)
+      else
+        Application.delete_env(:commonplace_log, DocumentAppendQueue)
+      end
+    end)
   end
 
   defp configure_sidecar do
