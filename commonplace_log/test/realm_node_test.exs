@@ -4,7 +4,7 @@ defmodule Commonplace.Log.RealmNodeTest do
   import Plug.Conn
   import Plug.Test
 
-  alias Commonplace.Log.{DocumentProfile, RealmNode, UUID}
+  alias Commonplace.Log.{DocumentProfile, Entry, RealmNode, UUID}
   alias Commonplace.Log.DocumentProfile.Lane.Sidecar, as: SidecarLane
   alias Commonplace.Log.Persistence.CloudflareSidecar
   alias Commonplace.Log.RealmNode.DocumentHandles
@@ -122,6 +122,40 @@ defmodule Commonplace.Log.RealmNodeTest do
                request(:post, "/v1/logs//create", %{}, 404)
 
       refute File.exists?(context.data_dir)
+    end
+
+    test "next-style sha256-derived UUIDv7 log ids pass validation and round-trip the boundary",
+         _context do
+      # commonplace-next derives log ids (documents and chit-store alike) as
+      # sha256(seed) -> first 16 bytes -> stamp UUIDv7 version/variant ->
+      # lowercase 8-4-4-4-12. The seeds are arbitrary; the SHAPE is the contract.
+      document_id = derived_log_id("document:workspace/notes.md")
+      chit_id = derived_log_id("chit:2026-09-14/example")
+
+      for id <- [document_id, chit_id] do
+        assert Entry.uuid_problem(id) == nil
+
+        # Guard the helper itself against drifting from the shape it claims:
+        # version nibble "7" at position 14, variant nibble 10xx at position 19.
+        assert String.at(id, 14) == "7"
+        assert String.at(id, 19) in ~w(8 9 a b)
+        assert id =~ ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+      end
+
+      assert %{"ok" => true} = request(:post, "/v1/logs/#{document_id}/create", %{}, 201)
+
+      assert %{"ok" => true, "entry" => %{"writer_seq" => 1}} =
+               request(
+                 :post,
+                 "/v1/logs/#{document_id}/append",
+                 %{"writer_id" => @writer_id, "body" => %{"derived" => true}},
+                 200
+               )
+
+      assert %{
+               "ok" => true,
+               "frontier" => %{"writers" => [%{"writer_id" => @writer_id, "seq" => 1}]}
+             } = request(:get, "/v1/logs/#{document_id}/frontier", nil, 200)
     end
 
     test "a traversal log_id on the document routes is rejected before the sidecar", _context do
@@ -407,6 +441,23 @@ defmodule Commonplace.Log.RealmNodeTest do
 
     Application.put_env(:commonplace_log, RealmNode, persistence: {CloudflareSidecar, store})
     store
+  end
+
+  # Local reimplementation of commonplace-next's id derivation shape
+  # (organization/identity.ex seed_document_id): sha256 of a seed string,
+  # first 16 bytes, version nibble stamped to 7 and variant bits to 10xx,
+  # formatted as a lowercase 8-4-4-4-12 UUID. Deliberately not imported
+  # from next — this pins the wire shape, not their code.
+  defp derived_log_id(seed) do
+    <<head::binary-size(6), _::4, version_rest::12, _::2, variant_rest::62>> =
+      binary_part(:crypto.hash(:sha256, seed), 0, 16)
+
+    stamped = <<head::binary, 7::4, version_rest::12, 2::2, variant_rest::62>>
+
+    <<p1::binary-size(8), p2::binary-size(4), p3::binary-size(4), p4::binary-size(4),
+      p5::binary-size(12)>> = Base.encode16(stamped, case: :lower)
+
+    Enum.join([p1, p2, p3, p4, p5], "-")
   end
 
   defp restore_env(name, nil), do: System.delete_env(name)
