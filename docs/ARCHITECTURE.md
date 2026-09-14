@@ -233,14 +233,13 @@ created.
 - **Deploy authority.** Provider deploys are executed by boss through a plan packet with an
   existing-state readback (the 2026-09-13 outage rule). This repository's rounds implement and
   land; they do not ship.
-- **`REALM_TEST_LEVERS`.** The default config carries it, and production currently runs with
-  it **by jes's deliberate choice** (kept in the current provider deploys; production version
-  `8e3c8062` per the 2026-09-14 coordination record). What it enables today: the
+- **`REALM_TEST_LEVERS`.** Stripped from the production config by jes's ruling (Telegram
+  11925, landed as `fecfc6b`, 2026-09-14). It is a development-only lever enabling the
   `x-commonplace-test-commit-delay-ms` header (a commit sleep up to 90 s in the Elixir
-  RealmNode) and `allowUnboundRegistry` (moot while the registry is bound). The planned change
-  (§9, item 1 as amended) makes the lever *visible* at deploy time — an assertion that refuses
-  a levered config without an explicit acknowledgement — without changing what deploys until
-  jes rules on stripping it.
+  RealmNode) and `allowUnboundRegistry` creation; tests set it in `wrangler.test.jsonc` or
+  inline. Note the two clocks above: the live production version (`8e3c8062` per the
+  2026-09-14 coordination record) was deployed *before* the strip, so the lever remains
+  active in production until the next provider deploy ships (`PROVIDER-DEPLOY-4`, boss-executed).
 
 ## 9. Known gaps and roadmap
 
@@ -253,7 +252,7 @@ the do/ surface set, and in instruments that look enforced but are not.
 
 | # | Item | Effort | Disposition (2026-09-14) |
 |---|---|---|---|
-| 1 | `REALM_TEST_LEVERS` shipped-by-default, comment-guarded | S | Amended scope (§8): deploy-time visibility assertion only; stripping is jes's open decision |
+| 1 | `REALM_TEST_LEVERS` shipped-by-default, comment-guarded | S | Closed: jes ruled strip (Telegram 11925), landed as `fecfc6b` (§8); reaches production on the next provider deploy |
 | 2 | `RealmStore.commit` enforces no invariants; `/create-log` accepts empty log id — an authorized writer can wedge a realm's backup | M | Released to this repo, conditioned on the legacy-realm gate and app-request-shape compatibility (every new refusal needs a valid-neighbour arm) |
 | 3 | Realm HTTP surface lacks the do/ surface's size/limit gates, both runtimes | M | Same release and conditions as #2 |
 | 4 | CI enforces neither the TS typecheck nor any gated arm; fuzz seed fixed since 2026-08-23 | M | In flight |
