@@ -28,7 +28,7 @@ export class RealmNode extends Container<Env> {
   override async fetch(request: Request): Promise<Response> {
     const dispatch = () => handlePublicRealmRequest(request, this.auth, async (authorized) =>
       await this.fetchAuthorized(authorized), kvRegistry(this.env.REALM_REGISTRY),
-      this.env.REALM_TEST_LEVERS === "1", () => this.ctx.storage.deleteAll());
+      this.env.REALM_TEST_LEVERS === "1", () => this.ctx.storage.deleteAll(), this.ctx.id.name);
     if (isRealmLifecycleRequest(request)) return await this.ctx.blockConcurrencyWhile(dispatch);
     return await dispatch();
   }

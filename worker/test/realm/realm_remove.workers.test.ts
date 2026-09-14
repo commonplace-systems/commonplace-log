@@ -341,6 +341,8 @@ describe("REALM-REMOVE-1b", () => {
           env: { REALM_TEST_LEVERS: "1" },
           ctx: {
             storage: state.storage,
+            // Real pool id: its .name is undefined here, the identity check's skip case.
+            id: state.id,
             async blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T> {
               gated.push(operation);
               return await state.blockConcurrencyWhile(fn);

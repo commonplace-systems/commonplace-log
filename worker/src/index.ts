@@ -315,6 +315,12 @@ export async function handleIngress(request: Request, env: Env): Promise<Respons
   forwarded.headers.delete(REALM_CREATE_HEADER);
   forwarded.headers.delete(REALM_ID_HEADER);
   forwarded.headers.delete(REALM_ALLOCATE_HEADER);
+  // Removal is the one ordinary-lane request that carries the realm identity, set from the
+  // canonical route after every client copy is stripped above. The DO's removal branch uses it
+  // to name the registry row to delete (its SQL truth is already wiped by then), and its
+  // identity check verifies it against ctx.id.name. It does NOT let a retry clean an orphan
+  // registry row: after the wipe the DO answers 204 (not_found) before any removal logic runs,
+  // and orphan rows are reconciled out of band by worker/reconciliation/ (8bb134d).
   if (request.method === "DELETE" && url.pathname === `${REALM_PREFIX}${route.realmId}`) {
     forwarded.headers.set(REALM_ID_HEADER, route.realmId);
   }

@@ -281,8 +281,24 @@ export async function handlePublicRealmRequest(
   // 201 -- the unsafe behaviour has to be asked for by name.
   allowUnboundRegistry = false,
   wipeStorage?: () => Promise<void>,
+  // ctx.id.name of the Durable Object serving this request -- undefined when the object was not
+  // addressed by name (ALWAYS the case under vitest-pool-workers, the SP2 finding).
+  objectName?: string,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
+
+  // The realm surface's §13.1 analogue (do/http.ts): every lifecycle request carries the
+  // gateway-set realm-id header, and it must name THIS object. Without this, a gateway routing
+  // bug would create/serve/delete under a mismatched identity -- and reconciliation would later
+  // delete the registry row pointing at the real data. ⇒ ONE check at this shared choke point
+  // covers create, allocate and removal; a copy per branch would be three things to keep in step.
+  // When ctx.id.name is undefined there is no name to verify (the test pool's permanent state),
+  // and ordinary app routes carry no realm-id header, so neither is ever refused here.
+  const identityHeader = request.headers.get(REALM_ID_HEADER);
+  if (identityHeader !== null && objectName !== undefined && identityHeader !== objectName) {
+    await cancelUnreadBody(request);
+    return fail("wrong_realm", 409, { object_name: objectName, realm_id: identityHeader });
+  }
   if (path === "/realm/allocate" && request.headers.get(REALM_ALLOCATE_HEADER) === "1") {
     const realmId = request.headers.get(REALM_ID_HEADER);
     if (realmId === null || request.method !== "POST") return refused(request, "malformed_request", 400);
@@ -399,8 +415,12 @@ export async function handlePublicRealmRequest(
   }
 
   if (isRemoval) {
-    // The gateway overwrites this from the canonical route, never from client headers.
-    // It survives SQL deletion so a retry can remove an orphan registry row.
+    // The gateway overwrites this from the canonical route, never from client headers. It names
+    // the registry row to delete (SQL truth is already gone by then) and feeds the identity check
+    // at the top of this function. A RETRY CANNOT reach this branch to remove an orphan row: once
+    // storage is wiped, authorize() reads not_found and the 204 above returns first. Orphan
+    // registry rows are cleared out of band by the reconciliation library
+    // (worker/reconciliation/, 8bb134d), never by retrying this DELETE.
     const realmId = request.headers.get(REALM_ID_HEADER);
     if (realmId === null || realmId.length === 0) return fail("malformed_request", 400);
     if (registry === undefined && !allowUnboundRegistry) {
