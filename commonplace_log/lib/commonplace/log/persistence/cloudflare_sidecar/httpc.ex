@@ -3,6 +3,21 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar.Httpc do
 
   @behaviour Commonplace.Log.Persistence.CloudflareSidecar.Transport
 
+  # :httpc defaults both timeouts to infinity, so a hung sidecar would wedge the
+  # calling process forever. Connecting to the sidecar should take at most
+  # seconds even across a container boundary; the whole request must still cover
+  # a multi-MiB commit body (entries are up to 1 MiB and batches exist) plus
+  # sidecar processing, so it gets a minute.
+  @default_connect_timeout 5_000
+  @default_request_timeout 60_000
+
+  @doc "Fills in finite `timeout`/`connect_timeout` defaults; caller-supplied values win."
+  def with_default_timeouts(options) when is_list(options) do
+    options
+    |> Keyword.put_new(:timeout, @default_request_timeout)
+    |> Keyword.put_new(:connect_timeout, @default_connect_timeout)
+  end
+
   @impl true
   def request(:post, url, headers, body, options)
       when is_binary(url) and is_list(headers) and is_binary(body) and is_list(options) do
@@ -20,7 +35,7 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecar.Httpc do
         body
       }
 
-      case :httpc.request(:post, request, options, body_format: :binary) do
+      case :httpc.request(:post, request, with_default_timeouts(options), body_format: :binary) do
         {:ok, {{_http_version, status, _reason_phrase}, response_headers, response_body}} ->
           {:ok,
            %{

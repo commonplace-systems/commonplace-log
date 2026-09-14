@@ -351,6 +351,36 @@ defmodule Commonplace.Log.Persistence.CloudflareSidecarTest do
     assert {:error, {:transport_error, _reason}} = CloudflareSidecar.frontier(store, "probe")
   end
 
+  test "the httpc transport applies finite timeout defaults and caller-supplied values win" do
+    defaults = CloudflareSidecar.Httpc.with_default_timeouts([])
+    assert defaults[:timeout] == 60_000
+    assert defaults[:connect_timeout] == 5_000
+
+    merged =
+      CloudflareSidecar.Httpc.with_default_timeouts(
+        timeout: 250,
+        connect_timeout: 125,
+        ssl: [verify: :verify_none]
+      )
+
+    assert merged[:timeout] == 250
+    assert merged[:connect_timeout] == 125
+    assert merged[:ssl] == [verify: :verify_none]
+  end
+
+  test "a silent sidecar socket surfaces a timeout as a transport error tuple" do
+    {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+    {:ok, {{127, 0, 0, 1}, port}} = :inet.sockname(listener)
+
+    store =
+      CloudflareSidecar.new("http://127.0.0.1:#{port}",
+        transport_options: [timeout: 200, connect_timeout: 200]
+      )
+
+    assert {:error, {:transport_error, :timeout}} = CloudflareSidecar.frontier(store, "probe")
+    :ok = :gen_tcp.close(listener)
+  end
+
   test "a realm-prefixed base_url with a trailing slash composes exactly with every path" do
     {:ok, transport} = TransportDouble.start_link([error_response(404, "not_found")])
 
