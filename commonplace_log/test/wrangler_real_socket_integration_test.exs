@@ -11,7 +11,21 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
     @writer_id "018f1000-0000-7000-8000-000000000002"
     @entry_id "018f1000-0000-7000-8000-000000000003"
     @fork_entry_id "018f1000-0000-7000-8000-000000000004"
-    @wire_bytes <<0, 127, 128, 254, 255>>
+    # Since 08aa44c the realm store refuses rows whose canonical bytes do not
+    # parse as a JSON object agreeing with entry_id/writer_id/writer_seq
+    # (entry_bytes_mismatch), so the old raw non-UTF-8 fixture <<0,127,128,254,255>>
+    # can no longer be stored — by design. Multibyte UTF-8 in the body keeps this
+    # fixture proving exact byte fidelity through base64 → HTTP → workerd → storage.
+    @wire_bytes Commonplace.Log.Jcs.canonicalize(%{
+                  "version" => 1,
+                  "log_id" => @log_id,
+                  "entry_id" => @entry_id,
+                  "writer_id" => @writer_id,
+                  "writer_seq" => 1,
+                  "prev_entry_id" => nil,
+                  "created_at" => "2026-08-23T00:01:00Z",
+                  "body" => %{"påyload" => "bytes≠ascii — ⭐"}
+                })
 
     defmodule WranglerProcess do
       use GenServer
