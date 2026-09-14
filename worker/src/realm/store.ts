@@ -9,7 +9,10 @@ export type RealmStorageErrorCode =
   | "constraint"
   | "storage_full"
   | "inventory_oversize"
-  | "inventory_invalid";
+  | "inventory_invalid"
+  | "entry_bytes_mismatch"
+  | "invalid_writer_seq"
+  | "tip_regression";
 
 export class RealmStoreError extends Error {
   constructor(
@@ -698,6 +701,46 @@ export class RealmStore {
         }
         if (Number(log.lease_epoch) !== plan.expectedEpoch) {
           throw new RealmStoreError("obsolete_epoch");
+        }
+
+        // LOG-REALM-HARDEN-2 commit invariants. Structural agreement ONLY: the realm does not
+        // borrow the do/ surface's canonical/semantic entry validation (proposal §9), it merely
+        // refuses to store a row whose indexed columns disagree with its own bytes — a row that
+        // would answer coordinate reads and id reads with two different truths. The restore path
+        // (wire.ts entryFromCanonical) derives columns FROM bytes and does not pass through
+        // commit, so restore-imported rows agree by construction.
+        for (const entry of plan.insertEntries) {
+          if (!Number.isSafeInteger(entry.writerSeq) || entry.writerSeq < 1) {
+            throw new RealmStoreError("invalid_writer_seq");
+          }
+          let parsed: Record<string, unknown>;
+          try {
+            const value: unknown = JSON.parse(
+              new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(entry.canonicalBytes),
+            );
+            if (typeof value !== "object" || value === null || Array.isArray(value)) {
+              throw new RealmStoreError("entry_bytes_mismatch");
+            }
+            parsed = value as Record<string, unknown>;
+          } catch {
+            throw new RealmStoreError("entry_bytes_mismatch");
+          }
+          if (parsed.entry_id !== entry.entryId || parsed.writer_id !== entry.writerId ||
+              parsed.writer_seq !== entry.writerSeq) {
+            throw new RealmStoreError("entry_bytes_mismatch");
+          }
+        }
+        // A tip may only hold or advance: the log is append-only and a regressed tip would
+        // silently un-publish committed entries from every frontier and read-set answer.
+        for (const tip of plan.putTips) {
+          const stored = this.sql.exec(
+            `SELECT last_seq FROM writer_tips WHERE log_id = ? AND writer_id = ?`,
+            plan.logId,
+            tip.writerId,
+          ).toArray()[0];
+          if (stored !== undefined && tip.lastSeq < Number(stored.last_seq)) {
+            throw new RealmStoreError("tip_regression");
+          }
         }
 
         for (const entry of plan.insertEntries) {

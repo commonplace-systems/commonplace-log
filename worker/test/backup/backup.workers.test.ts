@@ -99,7 +99,14 @@ describe("BACKUP-1b-ii", () => {
 
   it("empty log ID stops backup explicitly and differs from an absent pagination cursor", async () => {
     const { realm, write, read } = await createRealm();
-    await addLog(realm, write, "");
+    // The front door now refuses an empty log_id (realm hardening); the runner's own stop is
+    // the second layer, still needed for realms an earlier deployment already wrote. Prove
+    // the door refuses, then seed the pre-hardening shape directly in storage.
+    expect(await request(realm, "/create-log", write, { log_id: "" }))
+      .toEqual({ status: 400, body: { ok: false, error: { code: "invalid_log_id" } } });
+    await runInDurableObject(env.REALMS.get(env.REALMS.idFromName(realm)), (_i, state) => {
+      new RealmStore(state.storage.sql, state.storage).createLog("");
+    });
     await addLog(realm, write, "log-a");
     await append(realm, write, "", "writer-a", 1);
     const run = await runBackup(env);

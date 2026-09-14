@@ -11,6 +11,8 @@ defmodule Commonplace.Log.RealmNodeTest do
   alias Commonplace.Log.Test.{InMemoryPersistence, SidecarLoopback}
 
   @writer_id "018f5e2a-8b3c-7d4e-9f10-123456789abd"
+  # Must equal RealmNode's @max_request_body_bytes; the arms below pin the boundary exactly.
+  @max_body_bytes 8 * 1024 * 1024
 
   setup do
     DocumentHandles.clear()
@@ -35,6 +37,46 @@ defmodule Commonplace.Log.RealmNodeTest do
     end)
 
     %{log_id: UUID.uuidv7(), data_dir: data_dir}
+  end
+
+  describe "request body cap at the HTTP boundary" do
+    test "a body over the cap is refused 413 with the error envelope; at the cap it is served",
+         context do
+      assert %{"ok" => true} = request(:post, "/v1/logs/#{context.log_id}/create", %{}, 201)
+
+      # JSON ignores unknown keys on the merge route, so a "pad" string reaches the exact
+      # byte boundary without changing what the request means.
+      prefix = ~s({"entries": [], "pad": ")
+      suffix = ~s("})
+      pad = @max_body_bytes - byte_size(prefix) - byte_size(suffix)
+      at_cap = prefix <> String.duplicate("a", pad) <> suffix
+      assert byte_size(at_cap) == @max_body_bytes
+      over_cap = prefix <> String.duplicate("a", pad + 1) <> suffix
+
+      assert %{
+               "ok" => false,
+               "error" => %{
+                 "code" => "body_too_large",
+                 "details" => %{"max_bytes" => @max_body_bytes}
+               }
+             } = raw_request(:post, "/v1/logs/#{context.log_id}/merge", over_cap, 413)
+
+      # Valid neighbour: exactly at the cap, the same request is read in full and served
+      # by the engine (an empty merge batch answers with the log's current revision).
+      assert %{"ok" => true, "inserted" => 0, "present" => 0} =
+               raw_request(:post, "/v1/logs/#{context.log_id}/merge", at_cap, 200)
+    end
+
+    test "the cap refuses before the engine or persistence can run", context do
+      pad = String.duplicate("a", @max_body_bytes)
+      body = ~s({"writer_id": "#{@writer_id}", "body": {"pad": "#{pad}"}})
+
+      assert %{"ok" => false, "error" => %{"code" => "body_too_large"}} =
+               raw_request(:post, "/v1/logs/#{context.log_id}/append", body, 413)
+
+      # Refused while reading the body: no persistence adapter ran, so no store was created.
+      refute File.exists?(context.data_dir)
+    end
   end
 
   describe "log_id validation at the HTTP boundary" do
@@ -471,6 +513,13 @@ defmodule Commonplace.Log.RealmNodeTest do
 
   defp request(method, path, body, expected_status) do
     conn = conn(method, path, Jason.encode!(body))
+    conn = RealmNode.call(put_req_header(conn, "content-type", "application/json"), [])
+    assert conn.status == expected_status
+    Jason.decode!(conn.resp_body)
+  end
+
+  defp raw_request(method, path, raw_body, expected_status) do
+    conn = conn(method, path, raw_body)
     conn = RealmNode.call(put_req_header(conn, "content-type", "application/json"), [])
     assert conn.status == expected_status
     Jason.decode!(conn.resp_body)

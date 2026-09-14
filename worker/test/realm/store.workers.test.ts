@@ -7,6 +7,11 @@ const B = "log-b";
 const W1 = "writer-1";
 const W2 = "writer-2";
 
+/** Canonical bytes that structurally agree with their row columns (the commit invariant). */
+function canonicalText(entryId: string, writerId: string, writerSeq: number, body: string): string {
+  return JSON.stringify({ entry_id: entryId, writer_id: writerId, writer_seq: writerSeq, body });
+}
+
 function plan(logId: string, revision: number, epoch: number, suffix: string, writerId = W1): CommitPlan {
   return {
     logId,
@@ -14,10 +19,15 @@ function plan(logId: string, revision: number, epoch: number, suffix: string, wr
     expectedEpoch: epoch,
     insertEntries: [{
       entryId: `entry-${suffix}`, writerId, writerSeq: 1, prevEntryId: null,
-      createdAt: "2026-08-23T00:00:00Z", canonicalBytes: bytes(`bytes-${suffix}`),
+      createdAt: "2026-08-23T00:00:00Z",
+      canonicalBytes: bytes(canonicalText(`entry-${suffix}`, writerId, 1, `bytes-${suffix}`)),
     }],
     putTips: [{ writerId, lastSeq: 1, lastEntryId: `entry-${suffix}` }],
   };
+}
+
+function body(value: Uint8Array): string {
+  return String((JSON.parse(decoded(value)) as { body: string }).body);
 }
 
 function code(error: unknown): string | undefined {
@@ -111,8 +121,8 @@ describe("realm store", () => {
       })).toEqual({
         logId: A, formatVersion: 1, revision: 1, leaseEpoch: 0, documentWriterId: null,
         tips: [{ writerId: W1, lastSeq: 1, lastEntryId: "entry-one" }],
-        coordinates: [{ writerId: W1, writerSeq: 1, canonicalBytes: bytes("bytes-one") }],
-        entryIds: [{ entryId: "entry-one", canonicalBytes: bytes("bytes-one") }],
+        coordinates: [{ writerId: W1, writerSeq: 1, canonicalBytes: bytes(canonicalText("entry-one", W1, 1, "bytes-one")) }],
+        entryIds: [{ entryId: "entry-one", canonicalBytes: bytes(canonicalText("entry-one", W1, 1, "bytes-one")) }],
       });
     });
   });
@@ -139,12 +149,12 @@ describe("realm store", () => {
         writers: [W1], coordinates: [{ writerId: W1, writerSeq: 1 }], entryIds: ["entry-a", "entry-b"],
       });
       expect(aRead.tips.map((tip) => tip.lastEntryId)).toEqual(["entry-a"]);
-      expect(aRead.coordinates.map((entry) => decoded(entry.canonicalBytes))).toEqual(["bytes-a"]);
+      expect(aRead.coordinates.map((entry) => body(entry.canonicalBytes))).toEqual(["bytes-a"]);
       expect(aRead.entryIds.map((entry) => entry.entryId)).toEqual(["entry-a"]);
       expect(store.frontier(A)).toEqual({ writers: [{ writerId: W1, seq: 1, entryId: "entry-a" }] });
-      expect(store.readWriter(A, W1, { afterSeq: 0, limit: 10 }).entries.map((entry) => decoded(entry.canonicalBytes)))
+      expect(store.readWriter(A, W1, { afterSeq: 0, limit: 10 }).entries.map((entry) => body(entry.canonicalBytes)))
         .toEqual(["bytes-a"]);
-      expect(store.tailLocal(A, { afterArrival: 0, limit: 10 }).entries.map((entry) => decoded(entry.canonicalBytes)))
+      expect(store.tailLocal(A, { afterArrival: 0, limit: 10 }).entries.map((entry) => body(entry.canonicalBytes)))
         .toEqual(["bytes-a"]);
     });
   });
@@ -153,7 +163,12 @@ describe("realm store", () => {
     await withRealm((sql, store) => {
       store.createLog(A);
       const bad = plan(A, 0, 0, "bad");
-      bad.insertEntries.push({ ...bad.insertEntries[0]!, canonicalBytes: bytes("different") });
+      // Same entry_id, structurally agreeing bytes, different byte content: the SQLite
+      // UNIQUE (log_id, entry_id) constraint is what refuses, not the agreement gate.
+      bad.insertEntries.push({
+        ...bad.insertEntries[0]!,
+        canonicalBytes: bytes(canonicalText("entry-bad", W1, 1, "different")),
+      });
       expect(code(caught(() => store.commit(bad)))).toBe("constraint");
       expect(sql.exec("SELECT COUNT(*) AS n FROM entries WHERE log_id = ?", A).one().n).toBe(0);
       expect(sql.exec("SELECT COUNT(*) AS n FROM writer_tips WHERE log_id = ?", A).one().n).toBe(0);
@@ -165,11 +180,12 @@ describe("realm store", () => {
     await withRealm((_sql, store) => {
       store.createLog(A);
       const entries = [1, 2, 3].map((n) => ({ entryId: `e${n}`, writerId: W1, writerSeq: n,
-        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now", canonicalBytes: bytes(`b${n}`) }));
+        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now",
+        canonicalBytes: bytes(canonicalText(`e${n}`, W1, n, `b${n}`)) }));
       store.commit({ logId: A, expectedRevision: 0, expectedEpoch: 0, insertEntries: entries,
         putTips: [{ writerId: W1, lastSeq: 3, lastEntryId: "e3" }] });
       const first = store.readWriter(A, W1, { afterSeq: 0, throughSeq: 3, limit: 2 });
-      expect(first.entries.map((entry) => [decoded(entry.canonicalBytes), entry.writerSeq])).toEqual([["b1", 1], ["b2", 2]]);
+      expect(first.entries.map((entry) => [body(entry.canonicalBytes), entry.writerSeq])).toEqual([["b1", 1], ["b2", 2]]);
       expect(first.nextAfterSeq).toBe(2);
       const last = store.readWriter(A, W1, { afterSeq: 2, throughSeq: 3, limit: 2 });
       expect(last.entries.map((entry) => entry.writerSeq)).toEqual([3]);
@@ -181,14 +197,15 @@ describe("realm store", () => {
     await withRealm((_sql, store) => {
       store.createLog(A);
       const entries = [1, 2, 3].map((n) => ({ entryId: `e${n}`, writerId: W1, writerSeq: n,
-        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now", canonicalBytes: bytes(`b${n}`) }));
+        prevEntryId: n === 1 ? null : `e${n - 1}`, createdAt: "now",
+        canonicalBytes: bytes(canonicalText(`e${n}`, W1, n, `b${n}`)) }));
       store.commit({ logId: A, expectedRevision: 0, expectedEpoch: 0, insertEntries: entries,
         putTips: [{ writerId: W1, lastSeq: 3, lastEntryId: "e3" }] });
       const first = store.tailLocal(A, { afterArrival: 0, limit: 2 });
-      expect(first.entries.map((entry) => decoded(entry.canonicalBytes))).toEqual(["b1", "b2"]);
+      expect(first.entries.map((entry) => body(entry.canonicalBytes))).toEqual(["b1", "b2"]);
       expect(first.nextAfterArrival).toBe(first.entries[1]!.arrivalSeq);
       const last = store.tailLocal(A, { afterArrival: first.nextAfterArrival!, limit: 2 });
-      expect(last.entries.map((entry) => decoded(entry.canonicalBytes))).toEqual(["b3"]);
+      expect(last.entries.map((entry) => body(entry.canonicalBytes))).toEqual(["b3"]);
       expect(last.nextAfterArrival).toBeNull();
     });
   });

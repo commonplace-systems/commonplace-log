@@ -8,8 +8,24 @@ defmodule Commonplace.Log.RealmNode do
   alias Commonplace.Log.Persistence.{CloudflareSidecar, LocalSQLite}
   alias Commonplace.Log.RealmNode.{DocumentHandles, Incarnation}
 
+  # Request-body cap for every route that reads a body. 8 MiB mirrors the realm sidecar
+  # surface's raw-body cap: entries are at most 1 MiB canonical each, so the largest
+  # legitimate requests (merge batches) sit far below it. Enforced while the chunks are
+  # still being accumulated in read_entire_body/2, never after.
+  @max_request_body_bytes 8 * 1024 * 1024
+
   plug(:match)
   plug(:dispatch)
+
+  # The cap must answer 413 with this surface's error envelope from every body-reading
+  # route without touching those routes' own error mapping, so the oversize signal
+  # travels as a throw from read_entire_body/2 to this single choke point.
+  def call(conn, opts) do
+    super(conn, opts)
+  catch
+    :body_too_large ->
+      error(conn, 413, "body_too_large", %{max_bytes: @max_request_body_bytes})
+  end
 
   get "/ping" do
     conn
@@ -249,10 +265,23 @@ defmodule Commonplace.Log.RealmNode do
 
   defp read_entire_body(conn, accumulated \\ "") do
     case Plug.Conn.read_body(conn) do
-      {:ok, body, conn} -> {:ok, accumulated <> body, conn}
-      {:more, body, conn} -> read_entire_body(conn, accumulated <> body)
-      {:error, reason} -> {:error, reason}
+      {:ok, body, conn} ->
+        {:ok, capped_body(accumulated, body), conn}
+
+      {:more, body, conn} ->
+        read_entire_body(conn, capped_body(accumulated, body))
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp capped_body(accumulated, body) do
+    if byte_size(accumulated) + byte_size(body) > @max_request_body_bytes do
+      throw(:body_too_large)
+    end
+
+    accumulated <> body
   end
 
   defp required_string(body, key) do

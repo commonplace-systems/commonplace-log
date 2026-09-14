@@ -9,10 +9,52 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
+/**
+ * LOG-REALM-HARDEN-3 size gates, mirroring the class of gates the do/ surface has
+ * (do/http.ts: raw-body cap, batch caps, limit clamp at 1000).
+ *
+ * Raw body cap: ordinary realm traffic is engine commit/read traffic whose entries are at most
+ * 1 MiB canonical each (schema.ts ENTRY_SIZE_TRIGGER enforces that on insert). The do/ surface
+ * caps a batch at 4 MiB canonical bytes; this surface carries the same bytes base64-framed
+ * (x4/3 ≈ 5.6 MiB), so 8 MiB covers the largest legitimate commit with headroom while staying
+ * far below the 32 MiB cap the restore-only wire (wire.ts) uses at the gateway.
+ */
+const MAX_RAW_BODY_BYTES = 8 * 1024 * 1024;
+/** Page limit clamp — same cap as do/http.ts clampLimit. Clamped, never refused: the engine's
+ * document lane sends limit = tip_seq, which grows without bound, and a refusal there would be
+ * an outage. */
+const MAX_PAGE_LIMIT = 1000;
+/**
+ * /read-set arrays expand into SQL placeholders (writers and entry_ids one each, coordinates
+ * two each, always alongside log_id). Workers SQLite refuses any statement with more than 100
+ * bound parameters ("too many SQL variables", measured under workerd), so these are the largest
+ * sets the storage can answer at all; refusing above them replaces an opaque 500 with a named
+ * 413, and the engine's real queries (one writer, one coordinate/entry_id per merged entry with
+ * merge pages of ~100 halved by the coordinate doubling) sit far below the bound.
+ */
+const MAX_READ_SET_WRITERS = 99;
+const MAX_READ_SET_COORDINATES = 49;
+const MAX_READ_SET_ENTRY_IDS = 99;
+/** The id-size bound the restore wire (wire.ts MAX_ID_BYTES) already enforces for imported ids. */
+const MAX_LOG_ID_BYTES = 256;
+
+const UTF8 = new TextEncoder();
+
 class MalformedRequest extends Error {
   constructor() {
     super("malformed_request");
     this.name = "MalformedRequest";
+  }
+}
+
+/** A refusal that already knows its wire code and status. */
+class RequestRefused extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+  ) {
+    super(code);
+    this.name = "RequestRefused";
   }
 }
 
@@ -89,8 +131,34 @@ function encodeBase64(value: Uint8Array): string {
 
 async function body(request: Request): Promise<JsonRecord> {
   if (request.method !== "POST") throw new MalformedRequest();
+  if (request.body === null) throw new MalformedRequest();
+  // Streamed with a running byte count (the wire.ts readRawBody shape) rather than a
+  // Content-Length precheck: the cap then holds for chunked bodies and lying headers alike.
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    return object(await request.json());
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > MAX_RAW_BODY_BYTES) {
+        try { await reader.cancel(); } catch { /* preserve the oversize result */ }
+        throw new RequestRefused("oversize", 413);
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const raw = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    raw.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return object(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(raw)));
   } catch (error) {
     if (error instanceof MalformedRequest) throw error;
     throw new MalformedRequest();
@@ -151,18 +219,24 @@ function commitPlan(value: JsonRecord): CommitPlan {
   };
 }
 
+function boundedArray(value: unknown, maxItems: number): unknown[] {
+  const items = array(value);
+  if (items.length > maxItems) throw new RequestRefused("oversize", 413);
+  return items;
+}
+
 function readQuery(value: JsonRecord): { logId: string; query: ReadQuery } {
   const { log_id, writers, coordinates, entry_ids } = value;
   return {
     logId: string(log_id),
     query: {
-      writers: array(writers).map(string),
-      coordinates: array(coordinates).map((coordinate) => {
+      writers: boundedArray(writers, MAX_READ_SET_WRITERS).map(string),
+      coordinates: boundedArray(coordinates, MAX_READ_SET_COORDINATES).map((coordinate) => {
         const row = object(coordinate);
         const { writer_id, writer_seq } = row;
         return { writerId: string(writer_id), writerSeq: integer(writer_seq) };
       }),
-      entryIds: array(entry_ids).map(string),
+      entryIds: boundedArray(entry_ids, MAX_READ_SET_ENTRY_IDS).map(string),
     },
   };
 }
@@ -177,6 +251,9 @@ function storageError(error: RealmStoreError): Response {
     case "stale_epoch": return fail("obsolete_epoch", 409);
     case "inventory_oversize": return fail("oversize", 413);
     case "inventory_invalid": return fail("constraint_violation", 409);
+    case "entry_bytes_mismatch": return fail("entry_bytes_mismatch", 409);
+    case "invalid_writer_seq": return fail("invalid_writer_seq", 409);
+    case "tip_regression": return fail("tip_regression", 409);
   }
 }
 
@@ -195,8 +272,21 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
 
     if (path === "/create-log") {
       const { log_id, format_version, created_at } = value;
-      store.createLog(string(log_id), {
-        formatVersion: optionalInteger(format_version),
+      const logId = string(log_id);
+      // Validated in code, not schema DDL, so the gate also protects legacy realms whose
+      // stored schema predates it. An empty log_id is unaddressable downstream (the backup
+      // runner hard-stops on it, worker/backup/run.ts); the byte bound is the id bound the
+      // restore wire already enforces.
+      if (logId.length === 0 || UTF8.encode(logId).byteLength > MAX_LOG_ID_BYTES) {
+        throw new RequestRefused("invalid_log_id", 400);
+      }
+      const formatVersion = optionalInteger(format_version);
+      // Format version 1 is the only format this implementation writes or reads.
+      if (formatVersion !== undefined && formatVersion !== 1) {
+        throw new RequestRefused("unsupported_format_version", 400);
+      }
+      store.createLog(logId, {
+        formatVersion,
         createdAt: created_at === undefined ? undefined : string(created_at),
       });
       return json({ ok: true }, 201);
@@ -262,7 +352,8 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
       const result = store.readWriter(string(log_id), string(writer_id), {
         afterSeq: integer(after_seq),
         throughSeq: optionalInteger(through_seq),
-        limit: positiveInteger(limit),
+        // Clamped, never refused (see MAX_PAGE_LIMIT): callers page via next_after_seq.
+        limit: Math.min(positiveInteger(limit), MAX_PAGE_LIMIT),
       });
       return json({
         ok: true,
@@ -280,7 +371,8 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
       const { log_id, after_arrival, limit } = value;
       const result = store.tailLocal(string(log_id), {
         afterArrival: integer(after_arrival),
-        limit: positiveInteger(limit),
+        // Clamped, never refused (see MAX_PAGE_LIMIT): callers page via next_after_arrival.
+        limit: Math.min(positiveInteger(limit), MAX_PAGE_LIMIT),
       });
       return json({
         ok: true,
@@ -297,6 +389,7 @@ export async function handleRealmRequest(request: Request, store: RealmStore): P
     return fail("not_found", 404);
   } catch (error) {
     if (error instanceof MalformedRequest) return fail("malformed_request", 400);
+    if (error instanceof RequestRefused) return fail(error.code, error.status);
     if (error instanceof RealmStoreError) return storageError(error);
     throw error;
   }
