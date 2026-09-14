@@ -5,6 +5,13 @@ defmodule Commonplace.Log.Test.SidecarLoopback do
 
   alias Commonplace.Log.Persistence.CommitPlan
 
+  # Pinned counterpart of worker/src/realm/http.ts MAX_PAGE_LIMIT: the deployed
+  # provider clamps /read-writer page limits at 1000 (Math.min(limit, 1000)) and
+  # signals truncation through next_after_seq, so this double must too — an
+  # unclamped double would certify readers that cannot survive a partial page.
+  # If the worker's clamp limit ever changes, it MUST be mirrored here.
+  @max_page_limit 1000
+
   @impl true
   def request(:post, url, _headers, body, {module, store}) do
     url
@@ -79,7 +86,7 @@ defmodule Commonplace.Log.Test.SidecarLoopback do
 
   defp dispatch("/read-writer", module, store, payload) do
     opts =
-      [after_seq: payload["after_seq"], limit: payload["limit"]]
+      [after_seq: payload["after_seq"], limit: min(payload["limit"], @max_page_limit)]
       |> maybe_put(:through_seq, payload["through_seq"])
 
     case module.read_writer(store, payload["log_id"], payload["writer_id"], opts) do

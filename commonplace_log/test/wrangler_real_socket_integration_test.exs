@@ -262,6 +262,95 @@ if System.get_env("RUN_WRANGLER_INTEGRATION") == "1" do
       assert {:ok, %{writer_seq: 2}} = DocumentProfile.append(second, %{"n" => 2}, [])
     end
 
+    test "prepare pages a lane past the real /read-writer clamp", context do
+      # Wider timeout than the other tests: this one moves 100-entry commits
+      # and 1000-entry pages, which can exceed 5s on a cold first workerd run.
+      store =
+        CloudflareSidecar.new(adapter_base_url(context.base_url),
+          transport_options: [timeout: 15_000, connect_timeout: 5_000]
+        )
+
+      log_id = UUID.uuidv7()
+      lane = [lane: {SidecarLane, store}]
+      assert {:ok, handle} = DocumentProfile.create_log(log_id, lane)
+
+      seed_lane(store, log_id, handle.writer_id, handle.lease, 1001)
+
+      # Positive control: the deployed clamp (worker/src/realm/http.ts
+      # MAX_PAGE_LIMIT) really truncates a whole-lane read at 1000 and hands
+      # back a resume cursor. If the worker's clamp limit changes, this
+      # assertion goes red and the mirrored clamp in
+      # test/support/sidecar_loopback.ex must change with it.
+      assert {:ok, %{entries: clamped, next_after_seq: 1000}} =
+               CloudflareSidecar.read_writer(store, log_id, handle.writer_id,
+                 after_seq: 0,
+                 limit: 1001
+               )
+
+      assert length(clamped) == 1000
+
+      assert {:ok, %{inserted: 1, present: 0}} =
+               DocumentProfile.append_batch(handle, [%{"kind" => "after_real_clamp"}],
+                 operation_id: "wrangler-paged-append",
+                 created_at: "2026-09-14T00:00:00Z"
+               )
+
+      writer_id = handle.writer_id
+
+      assert {:ok, %{writers: [%{writer_id: ^writer_id, seq: 1002}]}} =
+               CloudflareSidecar.frontier(store, log_id)
+    end
+
+    # Seeds `count` chained version-1 entries through the real /commit surface
+    # in chunks, so the >clamp fixture does not need `count` profile appends.
+    defp seed_lane(store, log_id, writer_id, lease, count) do
+      {entries, _last_entry_id} =
+        Enum.map_reduce(1..count, nil, fn seq, prev_entry_id ->
+          entry_id = UUID.uuidv7()
+
+          bytes =
+            Jcs.canonicalize(%{
+              "version" => 1,
+              "log_id" => log_id,
+              "entry_id" => entry_id,
+              "writer_id" => writer_id,
+              "writer_seq" => seq,
+              "prev_entry_id" => prev_entry_id,
+              "created_at" => "2026-09-14T00:00:00Z",
+              "body" => %{"n" => seq}
+            })
+
+          {%{
+             log_id: log_id,
+             entry_id: entry_id,
+             writer_id: writer_id,
+             writer_seq: seq,
+             prev_entry_id: prev_entry_id,
+             created_at: "2026-09-14T00:00:00Z",
+             canonical_bytes: bytes
+           }, entry_id}
+        end)
+
+      entries
+      |> Enum.chunk_every(100)
+      |> Enum.reduce(0, fn chunk, revision ->
+        tip = List.last(chunk)
+
+        plan = %CommitPlan{
+          log_id: log_id,
+          expected_revision: revision,
+          expected_epoch: lease,
+          insert_entries: chunk,
+          put_tips: [%{writer_id: writer_id, seq: tip.writer_seq, entry_id: tip.entry_id}]
+        }
+
+        {:ok, new_revision} = CloudflareSidecar.commit(store, plan)
+        new_revision
+      end)
+
+      :ok
+    end
+
     defp initial_plan do
       %CommitPlan{
         log_id: @log_id,

@@ -345,14 +345,40 @@ defmodule Commonplace.Log.DocumentProfile do
 
   defp read_lane(_handle, nil), do: {:ok, []}
 
+  # The provider clamps page limits (worker/src/realm/http.ts MAX_PAGE_LIMIT,
+  # currently 1000) instead of refusing them, so a lane longer than the clamp
+  # comes back as partial pages with `next_after_seq` set. Follow the cursor
+  # until it is nil, accumulating entries in lane order. A cursor that does not
+  # strictly advance is a protocol violation and must fail, never loop.
   defp read_lane(handle, %{seq: tip_seq}) do
-    with {:ok, %{entries: entries, next_after_seq: nil}} <-
+    read_lane_pages(handle, tip_seq, 0, [])
+  end
+
+  defp read_lane_pages(handle, tip_seq, after_seq, acc) do
+    with {:ok, %{entries: entries, next_after_seq: next_after_seq}} <-
            handle.lane.read_writer(handle,
-             after_seq: 0,
+             after_seq: after_seq,
              through_seq: tip_seq,
              limit: tip_seq
            ) do
-      {:ok, Enum.map(entries, & &1.canonical_bytes)}
+      acc = Enum.reduce(entries, acc, fn entry, bytes -> [entry.canonical_bytes | bytes] end)
+
+      case next_after_seq do
+        nil ->
+          {:ok, Enum.reverse(acc)}
+
+        cursor when is_integer(cursor) and cursor > after_seq ->
+          read_lane_pages(handle, tip_seq, cursor, acc)
+
+        cursor ->
+          {:error,
+           {:storage,
+            %{
+              reason:
+                {:nonadvancing_read_writer_cursor,
+                 %{after_seq: after_seq, next_after_seq: cursor}}
+            }}}
+      end
     end
   end
 
