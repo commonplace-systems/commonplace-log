@@ -59,6 +59,9 @@ defmodule Commonplace.LogStore.SQLite do
   def restore_log(log_id, entries, %RestoreRequest{} = request) do
     with {:ok, spec} <- Restore.prepare(log_id, entries, request),
          {:ok, server} <- restore_server(log_id, spec),
+         # CHECKPOINT-SNAP-1: a restore is a new incarnation; no checkpoint
+         # sidecar survives into it (it would be refused anyway, by incarnation).
+         :ok <- Commonplace.Log.LocalSidecar.clear(Commonplace.Log.LocalSidecar.path(data_dir(), log_id)),
          {:ok, result} <- Server.restore(server, spec.entries, spec) do
       {:ok, result}
     end
@@ -107,6 +110,42 @@ defmodule Commonplace.LogStore.SQLite do
 
   @impl true
   def tail_local(log_id, opts), do: dispatch(log_id, :open, &Server.tail_local(&1, opts))
+
+  @doc """
+  The verifiable `Commonplace.Log.LocalFrontier` through `arrival_seq` for an
+  existing log (CHECKPOINT-SNAP-1 R3).
+  """
+  @spec local_frontier(String.t(), non_neg_integer()) ::
+          {:ok, Commonplace.Log.LocalFrontier.t()} | {:error, term()}
+  def local_frontier(log_id, arrival_seq),
+    do: dispatch(log_id, :open, &Server.local_frontier(&1, arrival_seq))
+
+  @doc """
+  The verified, backend-paged suffix after `frontier` for an existing log; see
+  `Commonplace.Log.LocalSuffix.read/3`.
+  """
+  @spec read_local_suffix(String.t(), Commonplace.Log.LocalFrontier.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def read_local_suffix(log_id, frontier, opts \\ []) do
+    case server_for(log_id, :open) do
+      {:ok, server} ->
+        safe_call(fn ->
+          Commonplace.Log.LocalSuffix.read(
+            %{module: Commonplace.Log.Persistence.SQLiteServer, store: server, log_id: log_id},
+            frontier,
+            opts
+          )
+        end)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+    |> normalize()
+  end
+
+  @doc "The local checkpoint sidecar path for an existing log."
+  @spec sidecar_path(String.t()) :: {:ok, Path.t()} | {:error, term()}
+  def sidecar_path(log_id), do: dispatch(log_id, :open, &Server.sidecar_path/1)
 
   defp dispatch(log_id, mode, operation) do
     case server_for(log_id, mode) do
@@ -235,6 +274,11 @@ defmodule Commonplace.LogStore.SQLite do
     do: {:error, {:storage, details_map(details)}}
 
   defp normalize({:error, %Frontier.Error{}} = error), do: error
+
+  # CHECKPOINT-SNAP-1: local-suffix refusals are statements about a caller's
+  # local frontier, not storage failures; they pass through unwrapped.
+  defp normalize({:error, {:local_frontier_refused, _reason}} = error), do: error
+  defp normalize({:error, {:local_suffix_inconsistent, _reason}} = error), do: error
 
   defp normalize({:error, reason}), do: storage_error(reason)
   defp normalize(other), do: other

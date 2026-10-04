@@ -103,6 +103,21 @@ defmodule Commonplace.LogStore.SQLite.Server do
   @doc false
   def tail_local(server, opts), do: GenServer.call(server, {:tail_local, opts})
 
+  @doc false
+  def local_frontier(server, arrival_seq),
+    do: GenServer.call(server, {:local_frontier, arrival_seq})
+
+  @doc false
+  def open_local_suffix(server, frontier),
+    do: GenServer.call(server, {:open_local_suffix, frontier})
+
+  @doc false
+  def read_local_page(server, after_arrival, through_arrival, limit),
+    do: GenServer.call(server, {:read_local_page, after_arrival, through_arrival, limit})
+
+  @doc false
+  def sidecar_path(server), do: GenServer.call(server, :sidecar_path)
+
   @doc "The one log this server owns, so a caller can refuse a mismatched request."
   @spec log_id(server()) :: String.t()
   def log_id(server), do: GenServer.call(server, :log_id)
@@ -260,6 +275,24 @@ defmodule Commonplace.LogStore.SQLite.Server do
 
   def handle_call({:tail_local, opts}, _from, state) do
     {:reply, LocalSQLite.tail_local(state.store, state.log_id, opts), state}
+  end
+
+  def handle_call({:local_frontier, arrival_seq}, _from, state) do
+    {:reply, LocalSQLite.local_frontier(state.store, state.log_id, arrival_seq), state}
+  end
+
+  def handle_call({:open_local_suffix, frontier}, _from, state) do
+    {:reply, LocalSQLite.open_local_suffix(state.store, state.log_id, frontier), state}
+  end
+
+  def handle_call({:read_local_page, after_arrival, through_arrival, limit}, _from, state) do
+    {:reply,
+     LocalSQLite.read_local_page(state.store, state.log_id, after_arrival, through_arrival, limit),
+     state}
+  end
+
+  def handle_call(:sidecar_path, _from, state) do
+    {:reply, LocalSQLite.sidecar_path(state.store, state.log_id), state}
   end
 
   def handle_call(:log_id, _from, state) do

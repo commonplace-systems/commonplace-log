@@ -167,4 +167,26 @@ defmodule Commonplace.Log.Persistence do
 
   @callback tail_local(store(), log_id :: String.t(), keyword()) ::
               {:ok, local_page()} | {:error, term()}
+
+  # CHECKPOINT-SNAP-1 R3: verified local frontier and bounded local suffix
+  # pages (see `Commonplace.Log.LocalSuffix`). OPTIONAL: an adapter without
+  # them answers `:local_suffix_unsupported` through `LocalSuffix`, and its
+  # consumers replay in full.
+  @callback local_frontier(store(), log_id :: String.t(), arrival_seq :: non_neg_integer()) ::
+              {:ok, Commonplace.Log.LocalFrontier.t()} | {:error, term()}
+
+  @callback open_local_suffix(store(), log_id :: String.t(), Commonplace.Log.LocalFrontier.t()) ::
+              {:ok, %{through: non_neg_integer()}} | {:error, term()}
+
+  @callback read_local_page(
+              store(),
+              log_id :: String.t(),
+              after_arrival :: non_neg_integer(),
+              through_arrival :: non_neg_integer(),
+              limit :: pos_integer()
+            ) :: {:ok, local_page()} | {:error, term()}
+
+  @callback sidecar_path(store(), log_id :: String.t()) :: {:ok, Path.t()} | {:error, term()}
+
+  @optional_callbacks local_frontier: 3, open_local_suffix: 3, read_local_page: 5, sidecar_path: 2
 end

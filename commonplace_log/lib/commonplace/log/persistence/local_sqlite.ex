@@ -11,7 +11,7 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
 
   @behaviour Commonplace.Log.Persistence
 
-  alias Commonplace.Log.Entry
+  alias Commonplace.Log.{Entry, LocalFrontier}
   alias Commonplace.Log.Persistence.{CommitPlan, ReadSet}
   alias Commonplace.LogStore.SQLite.Schema
   alias Exqlite.Sqlite3
@@ -362,6 +362,273 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
          entries: entries,
          next_after_arrival: if(more, do: page |> List.last() |> Enum.at(1), else: nil)
        }}
+    end
+  end
+
+  # ── CHECKPOINT-SNAP-1 R3: verified local frontier + backend-paged suffix ──
+  #
+  # See `Commonplace.Log.LocalFrontier` for what F is and what verifying it
+  # proves; `Commonplace.Log.LocalSuffix` drives the paging.
+
+  @doc """
+  The incarnation of this local copy of `log_id`: lowercase hex SHA-256 over
+  the stored log identity, creation stamp and format version, and the restore
+  marker's identity fields when the copy was restored. Read-only.
+  """
+  @spec incarnation(t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def incarnation(%__MODULE__{} = store, log_id) do
+    transaction(store.conn, "BEGIN", fn -> read_incarnation(store, log_id) end)
+  end
+
+  @doc """
+  The `Commonplace.Log.LocalFrontier` naming the arrival prefix through
+  `arrival_seq` (0 = the empty prefix). Refuses a coordinate with no stored
+  entry (`:coordinate_missing`). Read-only.
+  """
+  @spec local_frontier(t(), String.t(), non_neg_integer()) ::
+          {:ok, LocalFrontier.t()} | {:error, term()}
+  @impl true
+  def local_frontier(%__MODULE__{} = store, log_id, arrival_seq)
+      when is_integer(arrival_seq) and arrival_seq >= 0 do
+    transaction(store.conn, "BEGIN", fn ->
+      with {:ok, incarnation} <- read_incarnation(store, log_id) do
+        case build_local_frontier(store.conn, log_id, incarnation, arrival_seq) do
+          {:error, :coordinate_missing} -> {:error, {:local_frontier_refused, :coordinate_missing}}
+          other -> other
+        end
+      end
+    end)
+  end
+
+  def local_frontier(%__MODULE__{}, _log_id, _arrival_seq),
+    do: {:error, {:local_frontier_refused, :bad_coordinate}}
+
+  @doc """
+  Verifies `frontier` against this log -- same log, same incarnation, the same
+  entry stored at F, and the same per-writer prefix at F, recomputed from the
+  log and never taken from the value -- and, in the SAME read transaction,
+  captures the ending coordinate E (the current maximum arrival).
+
+  Returns `{:ok, %{through: e}}` with `e >= F`, or
+  `{:error, {:local_frontier_refused, reason}}` where `reason` is one of
+  `:malformed`, `:log_mismatch`, `:incarnation_mismatch`, `:beyond_end`,
+  `:coordinate_missing`, `:entry_mismatch`, `:writer_prefix_mismatch`. A
+  refused F is never answered as an empty suffix.
+  """
+  @spec open_local_suffix(t(), String.t(), LocalFrontier.t()) ::
+          {:ok, %{through: non_neg_integer()}} | {:error, term()}
+  @impl true
+  def open_local_suffix(%__MODULE__{} = store, log_id, frontier) do
+    with :ok <- refuse_malformed(frontier),
+         :ok <- refuse(frontier.log_id == log_id, :log_mismatch) do
+      transaction(store.conn, "BEGIN", fn ->
+        with {:ok, incarnation} <- read_incarnation(store, log_id),
+             :ok <- refuse(incarnation == frontier.incarnation, :incarnation_mismatch),
+             {:ok, through} <- max_arrival(store.conn),
+             :ok <- refuse(frontier.arrival_seq <= through, :beyond_end),
+             {:ok, actual} <-
+               build_local_frontier(store.conn, log_id, incarnation, frontier.arrival_seq),
+             :ok <-
+               refuse(
+                 actual.entry_id == frontier.entry_id and
+                   actual.entry_digest == frontier.entry_digest,
+                 :entry_mismatch
+               ),
+             :ok <- refuse(actual.writers == frontier.writers, :writer_prefix_mismatch) do
+          {:ok, %{through: through}}
+        else
+          {:error, {:local_frontier_refused, _}} = refused -> refused
+          {:error, :coordinate_missing} -> {:error, {:local_frontier_refused, :coordinate_missing}}
+          {:error, _reason} = error -> error
+        end
+      end)
+    end
+  end
+
+  @doc """
+  One page of the bounded local suffix: entries with
+  `after_arrival < arrival_seq <= through_arrival` in arrival order, at most
+  `limit`, with the same page shape as `tail_local/3`. A pure range read: the
+  caller (`Commonplace.Log.LocalSuffix`) verifies F and captures `through`
+  first with `open_local_suffix/3`.
+  """
+  @spec read_local_page(t(), String.t(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
+          {:ok, Commonplace.Log.Persistence.local_page()} | {:error, term()}
+  @impl true
+  def read_local_page(%__MODULE__{} = store, log_id, after_arrival, through_arrival, limit)
+      when is_integer(after_arrival) and after_arrival >= 0 and is_integer(through_arrival) and
+             is_integer(limit) and limit > 0 do
+    with :ok <- stored_log_matches(store, log_id),
+         {:ok, rows} <-
+           query(
+             store.conn,
+             "SELECT canonical_json, arrival_seq FROM entries " <>
+               "WHERE arrival_seq > ? AND arrival_seq <= ? ORDER BY arrival_seq LIMIT ?",
+             [after_arrival, through_arrival, limit + 1]
+           ) do
+      {page, more} = split_page(rows, limit)
+
+      {:ok,
+       %{
+         entries:
+           Enum.map(page, fn [canonical_bytes, arrival_seq] ->
+             %{
+               canonical_bytes: canonical_bytes,
+               arrival_seq: arrival_seq,
+               operation_id: Entry.operation_id(canonical_bytes)
+             }
+           end),
+         next_after_arrival: if(more, do: page |> List.last() |> Enum.at(1), else: nil)
+       }}
+    end
+  end
+
+  @doc "The local checkpoint sidecar path beside this log's database file."
+  @spec sidecar_path(t(), String.t()) :: {:ok, Path.t()} | {:error, term()}
+  @impl true
+  def sidecar_path(%__MODULE__{} = store, log_id) do
+    with :ok <- handle_matches(store, log_id),
+         do: {:ok, Commonplace.Log.LocalSidecar.path(store.data_dir, log_id)}
+  end
+
+  defp refuse_malformed(frontier) do
+    case LocalFrontier.validate(frontier) do
+      :ok -> :ok
+      {:error, _} -> {:error, {:local_frontier_refused, :malformed}}
+    end
+  end
+
+  defp refuse(true, _reason), do: :ok
+  defp refuse(false, reason), do: {:error, {:local_frontier_refused, reason}}
+
+  defp read_incarnation(store, log_id) do
+    with :ok <- stored_log_matches(store, log_id),
+         {:ok, [[stored_log_id, format_version, created_at]]} <-
+           query(store.conn, "SELECT log_id, format_version, created_at FROM log_meta WHERE singleton = 1"),
+         {:ok, restore} <- restore_identity(store.conn) do
+      # A plain length-prefixed digest (persistence owns no canonicalization).
+      fields =
+        [
+          "commonplace.log.incarnation/v1",
+          stored_log_id,
+          Integer.to_string(format_version),
+          created_at
+        ] ++
+          case restore do
+            nil ->
+              ["unrestored"]
+
+            r ->
+              [
+                "restored",
+                r["writer_id"],
+                Integer.to_string(r["writer_seq"]),
+                r["tip_entry_id"],
+                r["frontier_digest"],
+                Integer.to_string(r["entry_count"])
+              ]
+          end
+
+      digest = :crypto.hash(:sha256, Enum.map(fields, &[<<byte_size(&1)::32>>, &1]))
+      {:ok, Base.encode16(digest, case: :lower)}
+    end
+  end
+
+  # The restore marker's identity, without its pending/complete state (a
+  # restore completing does not make a new incarnation; the restore did).
+  defp restore_identity(conn) do
+    case query(
+           conn,
+           "SELECT writer_id, writer_seq, tip_entry_id, frontier_digest, entry_count FROM restore_meta WHERE singleton = 1"
+         ) do
+      {:ok, []} ->
+        {:ok, nil}
+
+      {:ok, [[writer_id, seq, tip, digest, count]]} ->
+        {:ok,
+         %{
+           "writer_id" => writer_id,
+           "writer_seq" => seq,
+           "tip_entry_id" => tip,
+           "frontier_digest" => Base.encode16(digest, case: :lower),
+           "entry_count" => count
+         }}
+
+      {:error, "no such table: restore_meta"} ->
+        {:ok, nil}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp max_arrival(conn) do
+    case query(conn, "SELECT MAX(arrival_seq) FROM entries") do
+      {:ok, [[nil]]} -> {:ok, 0}
+      {:ok, [[max]]} -> {:ok, max}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp build_local_frontier(_conn, log_id, incarnation, 0) do
+    {:ok,
+     %LocalFrontier{
+       log_id: log_id,
+       incarnation: incarnation,
+       arrival_seq: 0,
+       entry_id: nil,
+       entry_digest: nil,
+       writers: []
+     }}
+  end
+
+  defp build_local_frontier(conn, log_id, incarnation, arrival_seq) do
+    with {:ok, [[entry_id, canonical_bytes]]} <-
+           query(conn, "SELECT entry_id, canonical_json FROM entries WHERE arrival_seq = ?", [
+             arrival_seq
+           ]),
+         {:ok, writer_rows} <- query(conn, "SELECT writer_id FROM writer_tips ORDER BY writer_id"),
+         {:ok, writers} <- writers_at(conn, Enum.map(writer_rows, &hd/1), arrival_seq) do
+      {:ok,
+       %LocalFrontier{
+         log_id: log_id,
+         incarnation: incarnation,
+         arrival_seq: arrival_seq,
+         entry_id: entry_id,
+         entry_digest: LocalFrontier.entry_digest(canonical_bytes),
+         writers: writers
+       }}
+    else
+      {:ok, []} -> {:error, :coordinate_missing}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # For each writer, its highest sequence stored at or before `arrival_seq`
+  # (one descending probe of `entries_by_writer` per writer). Writers with no
+  # entry at or before it are absent.
+  defp writers_at(conn, writer_ids, arrival_seq) do
+    Enum.reduce_while(writer_ids, {:ok, []}, fn writer_id, {:ok, acc} ->
+      case query(
+             conn,
+             "SELECT writer_seq, entry_id, arrival_seq FROM entries " <>
+               "WHERE writer_id = ? AND arrival_seq <= ? ORDER BY writer_seq DESC LIMIT 1",
+             [writer_id, arrival_seq]
+           ) do
+        {:ok, []} ->
+          {:cont, {:ok, acc}}
+
+        {:ok, [[seq, entry_id, arrival]]} ->
+          {:cont,
+           {:ok, [%{writer_id: writer_id, seq: seq, entry_id: entry_id, arrival_seq: arrival} | acc]}}
+
+        {:error, _} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, writers} -> {:ok, Enum.reverse(writers)}
+      error -> error
     end
   end
 

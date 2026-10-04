@@ -80,6 +80,28 @@ defmodule Commonplace.Log.Persistence.SQLiteServer do
     bound(server, log_id, fn -> Server.tail_local(server, options) end)
   end
 
+  @impl true
+  def local_frontier(server, log_id, arrival_seq) do
+    bound(server, log_id, fn -> Server.local_frontier(server, arrival_seq) end)
+  end
+
+  @impl true
+  def open_local_suffix(server, log_id, frontier) do
+    bound(server, log_id, fn -> Server.open_local_suffix(server, frontier) end)
+  end
+
+  @impl true
+  def read_local_page(server, log_id, after_arrival, through_arrival, limit) do
+    bound(server, log_id, fn ->
+      Server.read_local_page(server, after_arrival, through_arrival, limit)
+    end)
+  end
+
+  @impl true
+  def sidecar_path(server, log_id) do
+    bound(server, log_id, fn -> Server.sidecar_path(server) end)
+  end
+
   # The one boundary: a call reaches the server only for the log that server owns.
   defp bound(server, log_id, operation) do
     case Server.log_id(server) do
