@@ -144,6 +144,30 @@ defmodule Commonplace.LogStore.SQLite do
     |> normalize()
   end
 
+  @doc """
+  The verify step alone for an existing log (no row paged); see
+  `Commonplace.Log.LocalSuffix.verify/2`.
+  """
+  @spec verify_local_suffix(String.t(), Commonplace.Log.LocalFrontier.t()) :: {:ok, map()} | {:error, term()}
+  def verify_local_suffix(log_id, frontier),
+    do: with_owner(log_id, &Commonplace.Log.LocalSuffix.verify(&1, frontier))
+
+  @doc "Pages a `verify_local_suffix/2` result; see `Commonplace.Log.LocalSuffix.read_verified/3`."
+  @spec read_verified_local_suffix(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def read_verified_local_suffix(log_id, verified, opts \\ []),
+    do: with_owner(log_id, &Commonplace.Log.LocalSuffix.read_verified(&1, verified, opts))
+
+  defp with_owner(log_id, fun) do
+    case server_for(log_id, :open) do
+      {:ok, server} ->
+        safe_call(fn -> fun.(%{module: Commonplace.Log.Persistence.SQLiteServer, store: server, log_id: log_id}) end)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+    |> normalize()
+  end
+
   @doc "The local checkpoint sidecar path for an existing log."
   @spec sidecar_path(String.t()) :: {:ok, Path.t()} | {:error, term()}
   def sidecar_path(log_id), do: dispatch(log_id, :open, &Server.sidecar_path/1)

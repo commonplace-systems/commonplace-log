@@ -65,13 +65,53 @@ defmodule Commonplace.Log.LocalSuffix do
   end
 
   @doc """
-  Reads the verified suffix after `frontier`. Options: `:page_size` (default
-  #{@default_page_size}). Returns
-  `{:ok, %{entries: rows, after: f, through: e, pages: n}}` or an error.
+  The VERIFY step alone (read-only, no row is paged): verifies `frontier`
+  against the log exactly as `read/3` does and captures the ending coordinate
+  E with every writer's tip at E, in the same read transaction.
+
+  Returns `{:ok, verified}` with
+
+      %{frontier: f, after: f.arrival_seq, through: e,
+        applied: Σ seq_w(F), suffix_count: Σ seq_w(E) - Σ seq_w(F),
+        writers_at_end: [...]}
+
+  `applied` is the number of entries at or before F, counting ALL writers;
+  `suffix_count` is exactly the number of entries in `(F, E]` (writer
+  sequences are gapless and accepted in order), i.e. the length of the suffix
+  `read_verified/3` will return. A caller can therefore decide whether the
+  suffix is worth reading BEFORE reading it. Refusals are those of `read/3`.
   """
-  @spec read(log(), LocalFrontier.t(), keyword()) :: {:ok, map()} | {:error, term()}
-  def read(%{module: module, store: store, log_id: log_id}, %LocalFrontier{} = frontier, opts \\ []) do
+  @spec verify(log(), LocalFrontier.t()) :: {:ok, map()} | {:error, term()}
+  def verify(%{module: module, store: store, log_id: log_id}, %LocalFrontier{} = frontier) do
+    if supported?(module) do
+      with {:ok, %{through: through, writers: at_end}} <- module.open_local_suffix(store, log_id, frontier) do
+        applied = Enum.reduce(frontier.writers, 0, &(&1.seq + &2))
+
+        {:ok,
+         %{
+           frontier: frontier,
+           after: frontier.arrival_seq,
+           through: through,
+           applied: applied,
+           suffix_count: Enum.reduce(at_end, 0, &(&1.seq + &2)) - applied,
+           writers_at_end: at_end
+         }}
+      end
+    else
+      {:error, :local_suffix_unsupported}
+    end
+  end
+
+  @doc """
+  Pages exactly the suffix a `verify/2` result names, `(F, E]`, and checks it
+  (range, end, per-writer runs against the writers captured at E). Rows at or
+  before E are immutable, so the range verified earlier is still the range
+  read. Options: `:page_size` (default #{@default_page_size}).
+  """
+  @spec read_verified(log(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def read_verified(%{module: module, store: store, log_id: log_id}, verified, opts \\ []) do
     page_size = Keyword.get(opts, :page_size, @default_page_size)
+    %{frontier: frontier, through: through, writers_at_end: at_end} = verified
 
     cond do
       not supported?(module) ->
@@ -81,14 +121,33 @@ defmodule Commonplace.Log.LocalSuffix do
         {:error, {:invalid_page_size, page_size}}
 
       true ->
-        with {:ok, %{through: through, writers: at_end}} <-
-               module.open_local_suffix(store, log_id, frontier),
-             {:ok, rows, pages} <-
+        with {:ok, rows, pages} <-
                pages(module, store, log_id, frontier.arrival_seq, through, page_size, [], 0),
              :ok <- check_range(rows, frontier.arrival_seq, through),
              :ok <- check_writers(rows, frontier.writers, at_end) do
           {:ok, %{entries: rows, after: frontier.arrival_seq, through: through, pages: pages}}
         end
+    end
+  end
+
+  @doc """
+  Reads the verified suffix after `frontier`: `verify/2` then
+  `read_verified/3`. Options: `:page_size` (default #{@default_page_size}).
+  Returns `{:ok, %{entries: rows, after: f, through: e, pages: n}}` or an error.
+  """
+  @spec read(log(), LocalFrontier.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def read(log, %LocalFrontier{} = frontier, opts \\ []) do
+    page_size = Keyword.get(opts, :page_size, @default_page_size)
+
+    cond do
+      not supported?(log.module) ->
+        {:error, :local_suffix_unsupported}
+
+      not (is_integer(page_size) and page_size > 0) ->
+        {:error, {:invalid_page_size, page_size}}
+
+      true ->
+        with {:ok, verified} <- verify(log, frontier), do: read_verified(log, verified, opts)
     end
   end
 

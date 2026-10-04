@@ -526,6 +526,38 @@ defmodule Commonplace.Log.LocalSuffixTest do
              LocalSuffix.check_writers([Map.delete(row, :writer_id)], [], [])
   end
 
+  test "verify/2 pages nothing and its suffix_count equals the paged count, over generated logs", %{root: root} do
+    checked =
+      Enum.reduce(1..40, 0, fn seed, checked ->
+        {target, cuts} = generate(root, 20_000 + seed)
+        log = log_of(target)
+
+        n =
+          Enum.reduce(cuts, 0, fn {f, prefix}, n ->
+            # a page source that refuses every page proves verify reads none
+            no_pages = %{module: PageSource, store: {log, :refuse_pages, nil}, log_id: target.log_id}
+            assert {:ok, v} = LocalSuffix.verify(no_pages, f)
+            assert v.applied == length(prefix)
+            assert {:ok, r} = LocalSuffix.read_verified(log, v)
+            assert v.suffix_count == length(r.entries)
+            assert {:ok, ^r} = LocalSuffix.read(log, f)
+            n + 1
+          end)
+
+        LocalSQLite.close(target)
+        checked + n
+      end)
+
+    assert checked >= 40
+  end
+
+  test "verify/2 refuses what read/3 refuses", %{root: root} do
+    {target, _} = generate(root, 77)
+    {:ok, f} = LocalSQLite.local_frontier(target, target.log_id, 3)
+    assert {:error, {:local_frontier_refused, :incarnation_mismatch}} =
+             LocalSuffix.verify(log_of(target), %{f | incarnation: String.duplicate("a", 64)})
+  end
+
   # ── I2: the per-writer probe is planner-proof ──────────────────────────────
 
   # Measured: with 1 or 2 writers (a Document log is single-writer) ANALYZE
@@ -643,6 +675,9 @@ defmodule Commonplace.Log.LocalSuffixTest.PageSource do
 
   def local_frontier({inner, _mode, _}, _log_id, arrival), do: LocalSuffix.local_frontier(inner, arrival)
   def open_local_suffix({inner, _, _}, log_id, f), do: inner.module.open_local_suffix(inner.store, log_id, f)
+
+  def read_local_page({_inner, :refuse_pages, _}, _log_id, _after, _through, _limit),
+    do: raise("a page was read")
 
   def read_local_page({inner, mode, _}, log_id, after_arrival, through, limit) do
     if mode == :append_between_pages and after_arrival > 10 do
