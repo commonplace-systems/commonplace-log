@@ -51,9 +51,10 @@ defmodule Commonplace.Log.LocalSuffixTest do
     {:ok, _} = Engine.append(LocalSQLite, store, store.log_id, writer, %{"n" => n}, @created_at)
   end
 
+  # Every row, in the read_local_page shape (with the coordinate columns).
   defp all_rows(store) do
     {:ok, %{entries: rows, next_after_arrival: nil}} =
-      LocalSQLite.tail_local(store, store.log_id, after_arrival: 0, limit: 1_000_000)
+      LocalSQLite.read_local_page(store, store.log_id, 0, 1_000_000_000, 1_000_000)
 
     rows
   end
@@ -390,7 +391,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
 
       for r <- reads do
         expected = Enum.filter(all, &(&1.arrival_seq > 15 and &1.arrival_seq <= r.through))
-        assert r.entries == expected
+        assert Enum.map(r.entries, &Map.take(&1, [:canonical_bytes, :arrival_seq, :operation_id])) == expected
       end
 
       # (whether these reads actually interleaved with appends is scheduling;
@@ -400,7 +401,8 @@ defmodule Commonplace.Log.LocalSuffixTest do
       last = List.last(reads)
       {:ok, f2} = SQLite.local_frontier(log_id, last.through)
       {:ok, rest} = SQLite.read_local_suffix(log_id, f2)
-      assert last.entries ++ rest.entries == Enum.filter(all, &(&1.arrival_seq > 15))
+      assert Enum.map(last.entries ++ rest.entries, &Map.take(&1, [:canonical_bytes, :arrival_seq, :operation_id])) ==
+               Enum.filter(all, &(&1.arrival_seq > 15))
       assert rest.through == List.last(all).arrival_seq
     end
 
@@ -417,10 +419,12 @@ defmodule Commonplace.Log.LocalSuffixTest do
       assert r.through == 30 and r.pages == 5
       {:ok, %{entries: all, next_after_arrival: nil}} = SQLite.tail_local(log_id, after_arrival: 0, limit: 1_000_000)
       assert length(all) == 34, "an append did not land between pages"
-      assert r.entries == Enum.filter(all, &(&1.arrival_seq in 11..30))
+      assert Enum.map(r.entries, &Map.take(&1, [:canonical_bytes, :arrival_seq, :operation_id])) ==
+               Enum.filter(all, &(&1.arrival_seq in 11..30))
       {:ok, f2} = SQLite.local_frontier(log_id, r.through)
       {:ok, rest} = SQLite.read_local_suffix(log_id, f2)
-      assert rest.entries == Enum.filter(all, &(&1.arrival_seq > 30))
+      assert Enum.map(rest.entries, &Map.take(&1, [:canonical_bytes, :arrival_seq, :operation_id])) ==
+               Enum.filter(all, &(&1.arrival_seq > 30))
     end
 
     test "restore_log clears a sidecar left at the target path" do
@@ -506,6 +510,20 @@ defmodule Commonplace.Log.LocalSuffixTest do
     rows = all_rows(store) |> Enum.filter(&(&1.arrival_seq in [5, 6, 8]))
     assert :ok == LocalSuffix.check_range(rows, 4, 8)
     assert {:error, {:local_suffix_inconsistent, :writer_run}} = LocalSuffix.check_writers(rows, f.writers, at_end)
+  end
+
+  test "page rows carry coordinate columns equal to their canonical entry's fields", %{root: root} do
+    {target, _} = generate(root, 515)
+
+    for row <- all_rows(target) do
+      e = Jason.decode!(row.canonical_bytes)
+      assert {row.writer_id, row.writer_seq, row.entry_id} == {e["writer_id"], e["writer_seq"], e["entry_id"]}
+    end
+
+    # and a row without them is refused, not decoded
+    [row | _] = all_rows(target)
+    assert {:error, {:local_suffix_inconsistent, :unreadable_row}} =
+             LocalSuffix.check_writers([Map.delete(row, :writer_id)], [], [])
   end
 
   # ── I2: the per-writer probe is planner-proof ──────────────────────────────

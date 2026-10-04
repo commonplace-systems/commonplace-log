@@ -37,8 +37,9 @@ defmodule Commonplace.Log.LocalSuffix do
        per-writer sequences are gapless, so every missing or extra row breaks
        some writer's run.
 
-  Rows are `%{canonical_bytes, arrival_seq, operation_id}`, the
-  `tail_local/3` row shape.
+  Rows are `%{canonical_bytes, arrival_seq, operation_id, writer_id,
+  writer_seq, entry_id}`: the `tail_local/3` row shape plus the stored
+  coordinate columns.
   """
 
   alias Commonplace.Log.LocalFrontier
@@ -139,16 +140,16 @@ defmodule Commonplace.Log.LocalSuffix do
     end
   end
 
+  # Rows carry their stored coordinate columns (`read_local_page/5`); no JSON
+  # is decoded here. A row without them is refused, never guessed.
   defp group_rows(rows) do
     rows
-    |> Enum.reduce_while({:ok, %{}}, fn row, {:ok, acc} ->
-      case Jason.decode(row.canonical_bytes) do
-        {:ok, %{"writer_id" => w, "writer_seq" => seq, "entry_id" => id}} when is_binary(w) and is_integer(seq) ->
-          {:cont, {:ok, Map.update(acc, w, [{seq, id}], &[{seq, id} | &1])}}
+    |> Enum.reduce_while({:ok, %{}}, fn
+      %{writer_id: w, writer_seq: seq, entry_id: id}, {:ok, acc} when is_binary(w) and is_integer(seq) ->
+        {:cont, {:ok, Map.update(acc, w, [{seq, id}], &[{seq, id} | &1])}}
 
-        _ ->
-          {:halt, {:error, {:local_suffix_inconsistent, :unreadable_row}}}
-      end
+      _row, _acc ->
+        {:halt, {:error, {:local_suffix_inconsistent, :unreadable_row}}}
     end)
     |> case do
       {:ok, acc} -> {:ok, Map.new(acc, fn {w, run} -> {w, Enum.reverse(run)} end)}

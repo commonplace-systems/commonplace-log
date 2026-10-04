@@ -468,20 +468,27 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
          {:ok, rows} <-
            query(
              store.conn,
-             "SELECT canonical_json, arrival_seq FROM entries " <>
+             "SELECT canonical_json, arrival_seq, writer_id, writer_seq, entry_id FROM entries " <>
                "WHERE arrival_seq > ? AND arrival_seq <= ? ORDER BY arrival_seq LIMIT ?",
              [after_arrival, through_arrival, limit + 1]
            ) do
       {page, more} = split_page(rows, limit)
 
+      # The coordinate columns are written from the SAME parsed canonical entry
+      # as `canonical_json` (Engine.batch_entry/1 -> insert_row/1 ->
+      # insert_entries/2), so the per-writer suffix check reads them instead of
+      # decoding every row's JSON.
       {:ok,
        %{
          entries:
-           Enum.map(page, fn [canonical_bytes, arrival_seq] ->
+           Enum.map(page, fn [canonical_bytes, arrival_seq, writer_id, writer_seq, entry_id] ->
              %{
                canonical_bytes: canonical_bytes,
                arrival_seq: arrival_seq,
-               operation_id: Entry.operation_id(canonical_bytes)
+               operation_id: Entry.operation_id(canonical_bytes),
+               writer_id: writer_id,
+               writer_seq: writer_seq,
+               entry_id: entry_id
              }
            end),
          next_after_arrival: if(more, do: page |> List.last() |> Enum.at(1), else: nil)
