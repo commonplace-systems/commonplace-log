@@ -153,7 +153,7 @@ defmodule Commonplace.LogStore.SQLite do
     do: with_owner(log_id, &Commonplace.Log.LocalSuffix.verify(&1, frontier))
 
   @doc "Pages a `verify_local_suffix/2` result; see `Commonplace.Log.LocalSuffix.read_verified/3`."
-  @spec read_verified_local_suffix(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec read_verified_local_suffix(String.t(), Commonplace.Log.LocalSuffix.Verified.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def read_verified_local_suffix(log_id, verified, opts \\ []),
     do: with_owner(log_id, &Commonplace.Log.LocalSuffix.read_verified(&1, verified, opts))
 

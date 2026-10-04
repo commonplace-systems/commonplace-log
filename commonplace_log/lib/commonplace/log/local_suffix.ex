@@ -44,6 +44,17 @@ defmodule Commonplace.Log.LocalSuffix do
 
   alias Commonplace.Log.LocalFrontier
 
+  defmodule Verified do
+    @moduledoc """
+    The result of `Commonplace.Log.LocalSuffix.verify/2`, OPAQUE to callers:
+    bound to the log (`log_id`) and incarnation it was verified against.
+    `read_verified/3` pages only for that log, after re-verifying F there.
+    Read `applied`, `suffix_count` and `through`; never build one by hand.
+    """
+    @enforce_keys [:log_id, :incarnation, :frontier, :after, :through, :applied, :suffix_count, :writers_at_end]
+    defstruct @enforce_keys
+  end
+
   @default_page_size 500
 
   @type log :: %{module: module(), store: term(), log_id: String.t()}
@@ -88,7 +99,9 @@ defmodule Commonplace.Log.LocalSuffix do
         applied = Enum.reduce(frontier.writers, 0, &(&1.seq + &2))
 
         {:ok,
-         %{
+         %Verified{
+           log_id: log_id,
+           incarnation: frontier.incarnation,
            frontier: frontier,
            after: frontier.arrival_seq,
            through: through,
@@ -107,11 +120,20 @@ defmodule Commonplace.Log.LocalSuffix do
   (range, end, per-writer runs against the writers captured at E). Rows at or
   before E are immutable, so the range verified earlier is still the range
   read. Options: `:page_size` (default #{@default_page_size}).
+
+  The value is BOUND to the log it was verified against: anything but a
+  `%Verified{}` is `{:error, {:local_suffix_inconsistent, :malformed_verified}}`;
+  a value for another log is `{:local_frontier_refused, :log_mismatch}`; and F
+  is re-verified on THIS log (incarnation, entry, per-writer prefix; a few
+  index probes) before any page is read, so a foreign or stale value -- even
+  one naming an empty suffix -- is refused, never answered as empty.
   """
-  @spec read_verified(log(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-  def read_verified(%{module: module, store: store, log_id: log_id}, verified, opts \\ []) do
+  @spec read_verified(log(), Verified.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def read_verified(log, verified, opts \\ [])
+
+  def read_verified(%{module: module, store: store, log_id: log_id}, %Verified{} = verified, opts) do
     page_size = Keyword.get(opts, :page_size, @default_page_size)
-    %{frontier: frontier, through: through, writers_at_end: at_end} = verified
+    %Verified{frontier: frontier, through: through, writers_at_end: at_end} = verified
 
     cond do
       not supported?(module) ->
@@ -120,13 +142,38 @@ defmodule Commonplace.Log.LocalSuffix do
       not (is_integer(page_size) and page_size > 0) ->
         {:error, {:invalid_page_size, page_size}}
 
+      not well_formed?(verified) ->
+        {:error, {:local_suffix_inconsistent, :malformed_verified}}
+
+      verified.log_id != log_id ->
+        {:error, {:local_frontier_refused, :log_mismatch}}
+
       true ->
-        with {:ok, rows, pages} <-
+        with :ok <- reverify(module, store, log_id, verified),
+             {:ok, rows, pages} <-
                pages(module, store, log_id, frontier.arrival_seq, through, page_size, [], 0),
              :ok <- check_range(rows, frontier.arrival_seq, through),
              :ok <- check_writers(rows, frontier.writers, at_end) do
           {:ok, %{entries: rows, after: frontier.arrival_seq, through: through, pages: pages}}
         end
+    end
+  end
+
+  def read_verified(_log, _verified, _opts),
+    do: {:error, {:local_suffix_inconsistent, :malformed_verified}}
+
+  defp well_formed?(%Verified{} = v) do
+    LocalFrontier.validate(v.frontier) == :ok and v.incarnation == v.frontier.incarnation and
+      v.log_id == v.frontier.log_id and is_integer(v.through) and v.through >= v.frontier.arrival_seq and
+      is_list(v.writers_at_end)
+  end
+
+  # F re-verified on this log; E can only have grown since (same incarnation).
+  defp reverify(module, store, log_id, %Verified{frontier: f, through: through}) do
+    case module.open_local_suffix(store, log_id, f) do
+      {:ok, %{through: now}} when now >= through -> :ok
+      {:ok, _} -> {:error, {:local_frontier_refused, :beyond_end}}
+      {:error, _} = error -> error
     end
   end
 

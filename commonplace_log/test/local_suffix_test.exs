@@ -51,6 +51,16 @@ defmodule Commonplace.Log.LocalSuffixTest do
     {:ok, _} = Engine.append(LocalSQLite, store, store.log_id, writer, %{"n" => n}, @created_at)
   end
 
+  # The INDEPENDENT reference: every row via tail_local/3 (not the pager under test).
+  defp ref_rows(store) do
+    {:ok, %{entries: rows, next_after_arrival: nil}} =
+      LocalSQLite.tail_local(store, store.log_id, after_arrival: 0, limit: 1_000_000)
+
+    rows
+  end
+
+  defp strip(rows), do: Enum.map(rows, &Map.take(&1, [:canonical_bytes, :arrival_seq, :operation_id]))
+
   # Every row, in the read_local_page shape (with the coordinate columns).
   defp all_rows(store) do
     {:ok, %{entries: rows, next_after_arrival: nil}} =
@@ -117,7 +127,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
 
   # A cut at a random existing arrival coordinate (or 0, or the end).
   defp cut(store) do
-    rows = all_rows(store)
+    rows = ref_rows(store)
     arrivals = [0 | Enum.map(rows, & &1.arrival_seq)]
     at = Enum.random(arrivals)
     {:ok, f} = LocalSQLite.local_frontier(store, store.log_id, at)
@@ -127,7 +137,10 @@ defmodule Commonplace.Log.LocalSuffixTest do
   # ── the oracle ─────────────────────────────────────────────────────────
 
   # `result` must be exactly the tail of `rows_now` after F through E.
+  # `rows_now` and `prefix_at_cut` come from tail_local/3 (the independent
+  # reference); the result's rows are compared on the tail_local fields only.
   def check_cut(rows_now, %LocalFrontier{} = f, prefix_at_cut, result) do
+    result = %{result | entries: strip(result.entries)}
     through = result.through
     expected = Enum.filter(rows_now, &(&1.arrival_seq > f.arrival_seq and &1.arrival_seq <= through))
     prefix_now = Enum.filter(rows_now, &(&1.arrival_seq <= f.arrival_seq))
@@ -177,7 +190,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
     stats =
       Enum.reduce(1..@histories, %{cuts: 0, nonempty: 0, multiwriter: 0, pages: 0}, fn seed, stats ->
         {target, cuts} = generate(root, seed)
-        rows_now = all_rows(target)
+        rows_now = ref_rows(target)
         writers = rows_now |> Enum.map(&Jason.decode!(&1.canonical_bytes)["writer_id"]) |> Enum.uniq()
 
         stats =
@@ -213,12 +226,15 @@ defmodule Commonplace.Log.LocalSuffixTest do
     fired =
       Enum.reduce(1..60, %{off_by_one: 0, prefix_leak: 0, skipped_writer: 0, short: 0, mid_skip: 0, dup: 0}, fn seed, fired ->
         {target, cuts} = generate(root, 10_000 + seed)
+        # mutants are built from paged rows (they carry the columns the
+        # production checks read); the oracle compares against tail_local
         rows_now = all_rows(target)
+        ref = ref_rows(target)
 
         fired =
           Enum.reduce(cuts, fired, fn {f, prefix}, fired ->
             {:ok, good} = LocalSuffix.read(log_of(target), f)
-            assert :ok == check_cut(rows_now, f, prefix, good)
+            assert :ok == check_cut(ref, f, prefix, good)
 
             mutants = %{
               off_by_one: Enum.filter(rows_now, &(&1.arrival_seq >= f.arrival_seq and &1.arrival_seq > 0)),
@@ -249,7 +265,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
               if entries == good.entries do
                 fired
               else
-                assert {:error, _} = check_cut(rows_now, f, prefix, %{good | entries: entries}), "#{arm}"
+                assert {:error, _} = check_cut(ref, f, prefix, %{good | entries: entries}), "#{arm}"
                 # the PRODUCTION checks (range + per-writer runs against the
                 # writers the log captured at E) refuse every shape
                 {:ok, %{writers: at_end}} = LocalSQLite.open_local_suffix(target, target.log_id, f)
@@ -540,6 +556,8 @@ defmodule Commonplace.Log.LocalSuffixTest do
             assert v.applied == length(prefix)
             assert {:ok, r} = LocalSuffix.read_verified(log, v)
             assert v.suffix_count == length(r.entries)
+            # independent of the pager: total minus prefix, both from tail_local
+            assert v.suffix_count == length(ref_rows(target)) - length(prefix)
             assert {:ok, ^r} = LocalSuffix.read(log, f)
             n + 1
           end)
@@ -549,6 +567,53 @@ defmodule Commonplace.Log.LocalSuffixTest do
       end)
 
     assert checked >= 40
+  end
+
+  test "read_verified/3 is bound to its log: a foreign value (even E == F) is refused, malformed is an error", %{root: root} do
+    {a, _} = generate(root, 91)
+    {b, _} = generate(root, 92)
+    end_a = List.last(ref_rows(a)).arrival_seq
+    {:ok, fa} = LocalSQLite.local_frontier(a, a.log_id, end_a)
+    {:ok, va} = LocalSuffix.verify(log_of(a), fa)
+    assert va.through == va.after and va.suffix_count == 0
+
+    # control: the same log accepts it (an honestly empty suffix)
+    assert {:ok, %{entries: []}} = LocalSuffix.read_verified(log_of(a), va)
+    # a value verified against A, presented to B: refused, never "empty"
+    assert {:error, {:local_frontier_refused, :log_mismatch}} = LocalSuffix.read_verified(log_of(b), va)
+    # the log id rewritten to B's: F is re-verified on B and refused
+    forged = %{va | log_id: b.log_id, frontier: %{va.frontier | log_id: b.log_id}}
+    assert {:error, {:local_frontier_refused, _}} = LocalSuffix.read_verified(log_of(b), forged)
+    # malformed values: an error, not a raise
+    assert {:error, {:local_suffix_inconsistent, :malformed_verified}} = LocalSuffix.read_verified(log_of(a), %{through: 1})
+    assert {:error, {:local_suffix_inconsistent, :malformed_verified}} = LocalSuffix.read_verified(log_of(a), :nope)
+    assert {:error, {:local_suffix_inconsistent, :malformed_verified}} =
+             LocalSuffix.read_verified(log_of(a), %{va | incarnation: String.duplicate("f", 64)})
+    assert {:error, {:local_suffix_inconsistent, :malformed_verified}} = LocalSuffix.read_verified(log_of(a), %{va | frontier: :x})
+  end
+
+  test "decline count: beside the sidecar, sidecar file discipline, garbage reads as 0, cleared with it", %{root: root} do
+    path = LocalSidecar.path(root, uuid())
+    assert LocalSidecar.count_path(path) == path <> "-declines"
+    assert LocalSidecar.read_count(path) == 0
+    :ok = LocalSidecar.write_count(path, 2)
+    assert LocalSidecar.read_count(path) == 2
+    assert {:ok, %File.Stat{mode: mode}} = File.stat(LocalSidecar.count_path(path))
+    assert Bitwise.band(mode, 0o777) == 0o600
+    for garbage <- ["", "x", "-3", "1.5", String.duplicate("9", 40), <<255, 0>>] do
+      File.rm!(LocalSidecar.count_path(path))
+      File.write!(LocalSidecar.count_path(path), garbage)
+      File.chmod!(LocalSidecar.count_path(path), 0o600)
+      assert LocalSidecar.read_count(path) == 0, inspect(garbage)
+    end
+    :ok = LocalSidecar.write_count(path, 3)
+    :ok = LocalSidecar.write(path, "ckpt")
+    :ok = LocalSidecar.clear(path)
+    refute File.exists?(LocalSidecar.count_path(path))
+    refute File.exists?(path)
+    :ok = LocalSidecar.write_count(path, 1)
+    :ok = LocalSidecar.write_count(path, 0)
+    refute File.exists?(LocalSidecar.count_path(path))
   end
 
   test "verify/2 refuses what read/3 refuses", %{root: root} do

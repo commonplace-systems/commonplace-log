@@ -166,18 +166,58 @@ defmodule Commonplace.Log.LocalSidecar do
   end
 
   @doc """
-  Removes the sidecar if present, and any leftover temporary files of this
-  sidecar (from a write a crash interrupted). `:ok` when absent.
+  Removes the sidecar if present, its DECLINE COUNT file (`count_path/1`), and
+  any leftover temporary files of either (from a write a crash interrupted).
+  `:ok` when absent.
   """
   @spec clear(Path.t()) :: :ok | {:error, term()}
   def clear(path) do
-    Path.wildcard(Path.join(tmp_dir(path), Path.basename(path) <> ".tmp-*"))
-    |> Enum.each(&File.rm/1)
+    for p <- [path, count_path(path)] do
+      Path.wildcard(Path.join(tmp_dir(p), Path.basename(p) <> ".tmp-*")) |> Enum.each(&File.rm/1)
+    end
 
+    with :ok <- rm(count_path(path)), do: rm(path)
+  end
+
+  defp rm(path) do
     case File.rm(path) do
       :ok -> :ok
       {:error, :enoent} -> :ok
       {:error, reason} -> {:error, {:clear_failed, reason}}
     end
   end
+
+  # ── the consecutive-decline count (CHECKPOINT-SNAP-1 R3 FF6, Plan #42764) ──
+  #
+  # How many consecutive boots have DECLINED this sidecar's checkpoint (the
+  # consumer's restore policy). A small file beside the sidecar,
+  # `<data_dir>/<log_id>.checkpoint-declines`, holding a decimal integer,
+  # written with the sidecar's own discipline (0700 temp dir, mode 600,
+  # fsync, atomic rename; reads refuse symlinks and bound the size). It is
+  # removed by `clear/1`. Anything unreadable or malformed reads as 0.
+
+  @count_suffix "-declines"
+  @max_count_bytes 32
+
+  @doc "The decline-count path for a sidecar path: `<sidecar>-declines`."
+  @spec count_path(Path.t()) :: Path.t()
+  def count_path(path), do: path <> @count_suffix
+
+  @doc "The decline count for a sidecar path; 0 when absent, unreadable or malformed."
+  @spec read_count(Path.t()) :: non_neg_integer()
+  def read_count(path) do
+    with {:ok, bytes} <- read(count_path(path), @max_count_bytes),
+         {n, ""} when n >= 0 <- Integer.parse(String.trim(bytes)) do
+      n
+    else
+      _ -> 0
+    end
+  end
+
+  @doc "Sets the decline count (0 removes the file). `:ok` or `{:error, reason}`."
+  @spec write_count(Path.t(), non_neg_integer()) :: :ok | {:error, term()}
+  def write_count(path, 0), do: rm(count_path(path))
+
+  def write_count(path, n) when is_integer(n) and n > 0,
+    do: write(count_path(path), Integer.to_string(n) <> "\n")
 end
