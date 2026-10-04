@@ -176,7 +176,8 @@ defmodule Commonplace.Log.Persistence do
               {:ok, Commonplace.Log.LocalFrontier.t()} | {:error, term()}
 
   @callback open_local_suffix(store(), log_id :: String.t(), Commonplace.Log.LocalFrontier.t()) ::
-              {:ok, %{through: non_neg_integer()}} | {:error, term()}
+              {:ok, %{through: non_neg_integer(), writers: [Commonplace.Log.LocalFrontier.writer()]}}
+              | {:error, term()}
 
   @callback read_local_page(
               store(),

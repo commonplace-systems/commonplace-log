@@ -58,10 +58,11 @@ defmodule Commonplace.LogStore.SQLite do
           {:ok, map()} | {:error, term()}
   def restore_log(log_id, entries, %RestoreRequest{} = request) do
     with {:ok, spec} <- Restore.prepare(log_id, entries, request),
-         {:ok, server} <- restore_server(log_id, spec),
          # CHECKPOINT-SNAP-1: a restore is a new incarnation; no checkpoint
-         # sidecar survives into it (it would be refused anyway, by incarnation).
+         # sidecar survives into it (it would be refused anyway, by
+         # incarnation). Cleared BEFORE the restore owner exists.
          :ok <- Commonplace.Log.LocalSidecar.clear(Commonplace.Log.LocalSidecar.path(data_dir(), log_id)),
+         {:ok, server} <- restore_server(log_id, spec),
          {:ok, result} <- Server.restore(server, spec.entries, spec) do
       {:ok, result}
     end

@@ -28,10 +28,14 @@ defmodule Commonplace.Log.LocalSuffix do
        after E and are simply not part of this result (a later read from E
        returns them).
     3. Pages are bounded range reads `(cursor, E]`; the prefix is never read.
-    4. The result is checked before it is returned: strictly increasing
-       arrival coordinates, all in `(F, E]`, and -- unless empty, which only
-       `E == F` allows -- ending exactly AT E. A page source that skipped or
-       repeated rows cannot pass.
+    4. The result is checked before it is returned, against facts the log
+       captured with E: strictly increasing arrival coordinates, all in
+       `(F, E]`, ending exactly AT E unless empty (only `E == F`), and, WRITER
+       BY WRITER, exactly the sequences `seq_w(F)+1 .. seq_w(E)` in order,
+       contiguous, ending at the entry the log names as w's tip at E. A page
+       source that skipped, repeated, reordered or leaked a row cannot pass:
+       per-writer sequences are gapless, so every missing or extra row breaks
+       some writer's run.
 
   Rows are `%{canonical_bytes, arrival_seq, operation_id}`, the
   `tail_local/3` row shape.
@@ -76,10 +80,12 @@ defmodule Commonplace.Log.LocalSuffix do
         {:error, {:invalid_page_size, page_size}}
 
       true ->
-        with {:ok, %{through: through}} <- module.open_local_suffix(store, log_id, frontier),
+        with {:ok, %{through: through, writers: at_end}} <-
+               module.open_local_suffix(store, log_id, frontier),
              {:ok, rows, pages} <-
                pages(module, store, log_id, frontier.arrival_seq, through, page_size, [], 0),
-             :ok <- check_range(rows, frontier.arrival_seq, through) do
+             :ok <- check_range(rows, frontier.arrival_seq, through),
+             :ok <- check_writers(rows, frontier.writers, at_end) do
           {:ok, %{entries: rows, after: frontier.arrival_seq, through: through, pages: pages}}
         end
     end
@@ -98,6 +104,55 @@ defmodule Commonplace.Log.LocalSuffix do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  @doc false
+  # Writer by writer, the suffix rows must be exactly seq_w(F)+1 .. seq_w(E),
+  # in order, ending at w's tip entry at E. Public for the proof.
+  def check_writers(rows, writers_at_f, writers_at_e) do
+    from = Map.new(writers_at_f, &{&1.writer_id, &1.seq})
+
+    with {:ok, by_writer} <- group_rows(rows) do
+      expected_writers =
+        for %{writer_id: w, seq: tip} <- writers_at_e, tip > Map.get(from, w, 0), into: %{}, do: {w, tip}
+
+      cond do
+        MapSet.new(Map.keys(by_writer)) != MapSet.new(Map.keys(expected_writers)) ->
+          {:error, {:local_suffix_inconsistent, :writer_set}}
+
+        not Enum.all?(writers_at_e, fn %{writer_id: w, seq: tip, entry_id: id} ->
+               case Map.fetch(by_writer, w) do
+                 :error ->
+                   tip <= Map.get(from, w, 0)
+
+                 {:ok, run} ->
+                   Enum.map(run, &elem(&1, 0)) == Enum.to_list((Map.get(from, w, 0) + 1)..tip//1) and
+                     elem(List.last(run), 1) == id
+               end
+             end) ->
+          {:error, {:local_suffix_inconsistent, :writer_run}}
+
+        true ->
+          :ok
+      end
+    end
+  end
+
+  defp group_rows(rows) do
+    rows
+    |> Enum.reduce_while({:ok, %{}}, fn row, {:ok, acc} ->
+      case Jason.decode(row.canonical_bytes) do
+        {:ok, %{"writer_id" => w, "writer_seq" => seq, "entry_id" => id}} when is_binary(w) and is_integer(seq) ->
+          {:cont, {:ok, Map.update(acc, w, [{seq, id}], &[{seq, id} | &1])}}
+
+        _ ->
+          {:halt, {:error, {:local_suffix_inconsistent, :unreadable_row}}}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Map.new(acc, fn {w, run} -> {w, Enum.reverse(run)} end)}
+      error -> error
     end
   end
 

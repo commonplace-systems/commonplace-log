@@ -20,6 +20,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
   use ExUnit.Case, async: false
 
   alias Commonplace.Log.{Engine, LocalFrontier, LocalSidecar, LocalSuffix}
+  alias Commonplace.Log.LocalSuffixTest.PageSource
   alias Commonplace.Log.Persistence.LocalSQLite
   alias Commonplace.LogStore.SQLite
 
@@ -209,7 +210,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
   test "red arms: the oracle refuses off-by-one, prefix leak, skipped writer and short reads",
        %{root: root} do
     fired =
-      Enum.reduce(1..60, %{off_by_one: 0, prefix_leak: 0, skipped_writer: 0, short: 0}, fn seed, fired ->
+      Enum.reduce(1..60, %{off_by_one: 0, prefix_leak: 0, skipped_writer: 0, short: 0, mid_skip: 0, dup: 0}, fn seed, fired ->
         {target, cuts} = generate(root, 10_000 + seed)
         rows_now = all_rows(target)
 
@@ -230,7 +231,17 @@ defmodule Commonplace.Log.LocalSuffixTest do
                   [] ->
                     []
                 end,
-              short: Enum.drop(good.entries, -1)
+              short: Enum.drop(good.entries, -1),
+              # F=4, E=8, pages 5,6,8: range-check-clean, still a skip
+              mid_skip:
+                (if length(good.entries) >= 3,
+                   do: List.delete_at(good.entries, div(length(good.entries), 2)),
+                   else: good.entries),
+              dup:
+                case good.entries do
+                  [a, b | rest] -> [a, a, b | rest] |> Enum.drop(-1)
+                  _ -> good.entries
+                end
             }
 
             Enum.reduce(mutants, fired, fn {arm, entries}, fired ->
@@ -238,11 +249,13 @@ defmodule Commonplace.Log.LocalSuffixTest do
                 fired
               else
                 assert {:error, _} = check_cut(rows_now, f, prefix, %{good | entries: entries}), "#{arm}"
-                # the production-side range check refuses the shapes it can see alone
-                if arm in [:off_by_one, :prefix_leak, :short] do
-                  assert {:error, {:local_suffix_inconsistent, _}} =
-                           LocalSuffix.check_range(entries, f.arrival_seq, good.through)
-                end
+                # the PRODUCTION checks (range + per-writer runs against the
+                # writers the log captured at E) refuse every shape
+                {:ok, %{writers: at_end}} = LocalSQLite.open_local_suffix(target, target.log_id, f)
+
+                assert match?({:error, {:local_suffix_inconsistent, _}}, LocalSuffix.check_range(entries, f.arrival_seq, good.through)) or
+                         match?({:error, {:local_suffix_inconsistent, _}}, LocalSuffix.check_writers(entries, f.writers, at_end)),
+                       "production checks accepted #{arm}"
 
                 Map.update!(fired, arm, &(&1 + 1))
               end
@@ -272,7 +285,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
     assert other != mid
     refused = fn f -> LocalSuffix.read(log, f) end
 
-    assert {:error, {:local_frontier_refused, :entry_mismatch}} = refused.(%{f | arrival_seq: other} |> fix_writers(other))
+    assert {:error, {:local_frontier_refused, :entry_mismatch}} = refused.(%{f | arrival_seq: other})
     assert {:error, {:local_frontier_refused, :entry_mismatch}} = refused.(%{f | entry_digest: String.duplicate("0", 64)})
     assert {:error, {:local_frontier_refused, :beyond_end}} = refused.(%{f | arrival_seq: max_arrival(target) + 1})
     [w | ws] = f.writers
@@ -293,7 +306,7 @@ defmodule Commonplace.Log.LocalSuffixTest do
 
     # stale: the same log id re-created elsewhere (new incarnation), same entries merged in
     copy = new_store(Path.join(root, "recreated"), target.log_id)
-    {:ok, _} = Engine.merge(LocalSQLite, copy, target.log_id, Enum.map(rows, & &1.canonical_bytes) |> per_writer_order())
+    {:ok, _} = Engine.merge(LocalSQLite, copy, target.log_id, Enum.map(rows, & &1.canonical_bytes))
     assert {:error, {:local_frontier_refused, :incarnation_mismatch}} = LocalSuffix.read(log_of(copy), f)
   end
 
@@ -380,7 +393,8 @@ defmodule Commonplace.Log.LocalSuffixTest do
         assert r.entries == expected
       end
 
-      assert Enum.uniq(throughs) |> length() > 1, "the read never raced an append"
+      # (whether these reads actually interleaved with appends is scheduling;
+      # the deterministic interleave is the next test)
 
       # the next read from the last E returns exactly the rest
       last = List.last(reads)
@@ -388,6 +402,25 @@ defmodule Commonplace.Log.LocalSuffixTest do
       {:ok, rest} = SQLite.read_local_suffix(log_id, f2)
       assert last.entries ++ rest.entries == Enum.filter(all, &(&1.arrival_seq > 15))
       assert rest.through == List.last(all).arrival_seq
+    end
+
+    test "appends landing BETWEEN pages (deterministic) are not in the result and come next" do
+      log_id = uuid()
+      assert :ok = SQLite.create_log(log_id)
+      for n <- 1..30, do: {:ok, _} = SQLite.append(log_id, nil, %{"n" => n}, @created_at)
+      {:ok, f} = SQLite.local_frontier(log_id, 10)
+      [{server, _}] = Registry.lookup(Commonplace.LogStore.SQLite.Registry, log_id)
+      inner = %{module: Commonplace.Log.Persistence.SQLiteServer, store: server, log_id: log_id}
+      log = %{module: PageSource, store: {inner, :append_between_pages, self()}, log_id: log_id}
+
+      assert {:ok, r} = LocalSuffix.read(log, f, page_size: 4)
+      assert r.through == 30 and r.pages == 5
+      {:ok, %{entries: all, next_after_arrival: nil}} = SQLite.tail_local(log_id, after_arrival: 0, limit: 1_000_000)
+      assert length(all) == 34, "an append did not land between pages"
+      assert r.entries == Enum.filter(all, &(&1.arrival_seq in 11..30))
+      {:ok, f2} = SQLite.local_frontier(log_id, r.through)
+      {:ok, rest} = SQLite.read_local_suffix(log_id, f2)
+      assert rest.entries == Enum.filter(all, &(&1.arrival_seq > 30))
     end
 
     test "restore_log clears a sidecar left at the target path" do
@@ -443,10 +476,181 @@ defmodule Commonplace.Log.LocalSuffixTest do
     assert {:error, :local_suffix_unsupported} = LocalSuffix.local_frontier(log, 0)
   end
 
-  # helpers for the refusal test
+  # ── I1: production-path red arm (a page source that drops / repeats a row) ─
 
-  defp fix_writers(f, _other), do: f
+  test "a page source that drops, repeats or leaks a row is refused by LocalSuffix.read", %{root: root} do
+    {target, _} = generate(root, 4242)
+    rows = all_rows(target)
+    mid = Enum.at(rows, 3).arrival_seq
+    {:ok, f} = LocalSQLite.local_frontier(target, target.log_id, mid)
+    inner = log_of(target)
+    assert {:ok, good} = LocalSuffix.read(inner, f, page_size: 2)
+    assert length(good.entries) >= 4
 
-  # merge needs each writer's entries in sequence order; arrival order already is.
-  defp per_writer_order(bytes), do: bytes
+    for mode <- [:drop_one, :repeat_one, :leak_prefix] do
+      log = %{module: PageSource, store: {inner, mode, nil}, log_id: target.log_id}
+      assert {:error, {:local_suffix_inconsistent, _}} = LocalSuffix.read(log, f, page_size: 2), "#{mode}"
+    end
+
+    # control: the pass-through wrapper itself is accepted
+    assert {:ok, ^good} =
+             LocalSuffix.read(%{module: PageSource, store: {inner, :pass, nil}, log_id: target.log_id}, f, page_size: 2)
+  end
+
+  test "a mid-range skip with a clean range is still refused (F=4, E=8, pages 5,6,8)", %{root: root} do
+    store = new_store(Path.join(root, "skip"), uuid())
+    w = uuid()
+    for n <- 1..8, do: append!(store, w, n)
+    {:ok, f} = LocalSQLite.local_frontier(store, store.log_id, 4)
+    {:ok, %{through: 8, writers: at_end}} = LocalSQLite.open_local_suffix(store, store.log_id, f)
+    rows = all_rows(store) |> Enum.filter(&(&1.arrival_seq in [5, 6, 8]))
+    assert :ok == LocalSuffix.check_range(rows, 4, 8)
+    assert {:error, {:local_suffix_inconsistent, :writer_run}} = LocalSuffix.check_writers(rows, f.writers, at_end)
+  end
+
+  # ── I2: the per-writer probe is planner-proof ──────────────────────────────
+
+  # Measured: with 1 or 2 writers (a Document log is single-writer) ANALYZE
+  # flips the un-pinned query to a rowid range scan of the prefix; with 4 it
+  # does not. All three shapes are asserted.
+  test "after ANALYZE on 1-, 2- and 4-writer logs the per-writer probe still uses entries_by_writer",
+       %{root: root} do
+    for nwriters <- [1, 2, 4] do
+      store = new_store(Path.join(root, "plan-#{nwriters}"), uuid())
+      writers = for _ <- 1..nwriters, do: uuid()
+      for n <- 1..div(600, nwriters), w <- writers, do: append!(store, w, n)
+      :ok = Exqlite.Sqlite3.execute(store.conn, "ANALYZE")
+
+      for f <- [10, 300, 590] do
+        plan = explain(store.conn, LocalSQLite.writer_at_sql(), [hd(writers), f])
+        assert uses_writer_index?(plan), "#{nwriters} writers, F=#{f}: #{inspect(plan)}"
+      end
+
+      # control: the detector goes red on a prefix scan
+      refute uses_writer_index?(explain(store.conn, "SELECT entry_id FROM entries WHERE arrival_seq <= ?", [590]))
+      # and the probe still answers correctly
+      {:ok, f} = LocalSQLite.local_frontier(store, store.log_id, 590)
+      assert Enum.map(f.writers, & &1.seq) |> Enum.sum() == 590
+      LocalSQLite.close(store)
+    end
+  end
+
+  defp explain(conn, sql, params) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, "EXPLAIN QUERY PLAN " <> sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+    {:ok, rows} = Exqlite.Sqlite3.fetch_all(conn, stmt)
+    Enum.map(rows, &List.last/1)
+  end
+
+  defp uses_writer_index?(details) do
+    Enum.any?(details, &(&1 =~ ~r/SEARCH entries USING (COVERING )?INDEX entries_by_writer/)) and
+      not Enum.any?(details, &(&1 =~ ~r/^SCAN entries|INTEGER PRIMARY KEY/))
+  end
+
+  # ── I3: the sidecar binds to the database file instance ────────────────────
+
+  test "a data dir copied file-by-file (log + sidecar) is a new incarnation: the copied F is refused", %{root: root} do
+    log_id = uuid()
+    src_dir = Path.join(root, "src-copy")
+    store = new_store(src_dir, log_id)
+    for n <- 1..6, do: append!(store, uuid(), n)
+    {:ok, f} = LocalSQLite.local_frontier(store, log_id, 4)
+    {:ok, path} = LocalSQLite.sidecar_path(store, log_id)
+    :ok = LocalSidecar.write(path, LocalFrontier.encode(f))
+    :ok = LocalSQLite.close(store)
+
+    # positive control: the SAME file reopened still verifies F
+    {:ok, reopened} = LocalSQLite.open(src_dir, log_id)
+    assert {:ok, %{through: 6}} = LocalSQLite.open_local_suffix(reopened, log_id, f)
+    :ok = LocalSQLite.close(reopened)
+
+    dst_dir = Path.join(root, "dst-copy")
+    File.mkdir_p!(dst_dir)
+    for name <- [log_id <> ".sqlite3", log_id <> ".checkpoint"], do: File.cp!(Path.join(src_dir, name), Path.join(dst_dir, name))
+    {:ok, copy} = LocalSQLite.open(dst_dir, log_id)
+    {:ok, copied_path} = LocalSQLite.sidecar_path(copy, log_id)
+    {:ok, bytes} = LocalSidecar.read(copied_path, 1_000_000)
+    {:ok, copied_f} = LocalFrontier.decode(bytes)
+    assert {:error, {:local_frontier_refused, :incarnation_mismatch}} = LocalSQLite.open_local_suffix(copy, log_id, copied_f)
+    assert {:error, {:local_frontier_refused, :incarnation_mismatch}} = LocalSuffix.read(log_of(copy), copied_f)
+  end
+
+  # ── minor: coordinate_missing, symlinked sidecar ───────────────────────────
+
+  test "an F at an arrival with no stored row is :coordinate_missing", %{root: root} do
+    store = new_store(Path.join(root, "gap"), uuid())
+    w = uuid()
+    for n <- 1..3, do: append!(store, w, n)
+    :ok = Exqlite.Sqlite3.execute(store.conn, "UPDATE sqlite_sequence SET seq = seq + 5 WHERE name = 'entries'")
+    for n <- 4..5, do: append!(store, w, n)
+    assert Enum.map(all_rows(store), & &1.arrival_seq) == [1, 2, 3, 9, 10]
+    assert {:error, {:local_frontier_refused, :coordinate_missing}} = LocalSQLite.local_frontier(store, store.log_id, 6)
+    {:ok, f} = LocalSQLite.local_frontier(store, store.log_id, 3)
+    forged = %{f | arrival_seq: 6}
+    assert {:error, {:local_frontier_refused, :coordinate_missing}} = LocalSuffix.read(log_of(store), forged)
+  end
+
+  test "a symlinked sidecar is refused, even to an owner-only file", %{root: root} do
+    target = Path.join(root, "real-file")
+    File.write!(target, "bytes")
+    File.chmod!(target, 0o600)
+    path = LocalSidecar.path(root, uuid())
+    :ok = File.ln_s(target, path)
+    assert {:error, :not_regular_file} = LocalSidecar.read(path, 100)
+  end
+
+  test "sidecar temporaries live in an owner-only dir and clear/1 removes leftovers", %{root: root} do
+    path = LocalSidecar.path(root, uuid())
+    :ok = LocalSidecar.write(path, "x")
+    tmp_dir = Path.join(root, ".checkpoint-tmp")
+    assert {:ok, %File.Stat{mode: mode, type: :directory}} = File.stat(tmp_dir)
+    assert Bitwise.band(mode, 0o777) == 0o700
+    leftover = Path.join(tmp_dir, Path.basename(path) <> ".tmp-77")
+    File.write!(leftover, "torn")
+    :ok = LocalSidecar.clear(path)
+    refute File.exists?(leftover)
+    refute File.exists?(path)
+  end
+end
+
+defmodule Commonplace.Log.LocalSuffixTest.PageSource do
+  @moduledoc false
+  # A wrapper page source over a real bound log. `mode`:
+  #   :pass                 delegate unchanged (control)
+  #   :drop_one             drop the second row of the first multi-row page
+  #   :repeat_one           repeat a row of the first multi-row page (dropping its last)
+  #   :leak_prefix          prepend the row at F to the first page
+  #   :append_between_pages append one entry to the log before every page after the first
+  alias Commonplace.Log.LocalSuffix
+
+  def local_frontier({inner, _mode, _}, _log_id, arrival), do: LocalSuffix.local_frontier(inner, arrival)
+  def open_local_suffix({inner, _, _}, log_id, f), do: inner.module.open_local_suffix(inner.store, log_id, f)
+
+  def read_local_page({inner, mode, _}, log_id, after_arrival, through, limit) do
+    if mode == :append_between_pages and after_arrival > 10 do
+      {:ok, _} = Commonplace.LogStore.SQLite.append(log_id, nil, %{"between" => after_arrival}, "2026-10-04T00:00:00Z")
+    end
+
+    with {:ok, page} <- inner.module.read_local_page(inner.store, log_id, after_arrival, through, limit) do
+      first? = Process.get({__MODULE__, :done}) != true
+
+      entries =
+        case {mode, page.entries} do
+          {:drop_one, [a, _b | rest]} when first? -> mark([a | rest])
+          {:repeat_one, [a | rest]} when first? and rest != [] -> mark([a, a | Enum.drop(rest, -1)])
+          {:leak_prefix, es} when first? ->
+            {:ok, %{entries: [prev]}} = inner.module.read_local_page(inner.store, log_id, after_arrival - 1, after_arrival, 1)
+            mark([prev | es])
+          {_, es} -> es
+        end
+
+      if page.next_after_arrival == nil, do: Process.delete({__MODULE__, :done})
+      {:ok, %{page | entries: entries}}
+    end
+  end
+
+  defp mark(entries) do
+    Process.put({__MODULE__, :done}, true)
+    entries
+  end
 end

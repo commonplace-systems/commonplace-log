@@ -407,16 +407,20 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
   Verifies `frontier` against this log -- same log, same incarnation, the same
   entry stored at F, and the same per-writer prefix at F, recomputed from the
   log and never taken from the value -- and, in the SAME read transaction,
-  captures the ending coordinate E (the current maximum arrival).
+  captures the ending coordinate E (the current maximum arrival) and every
+  writer's tip at E, so the caller can check the suffix it pages, writer by
+  writer, against exactly `seq_w(F)+1 .. seq_w(E)`.
 
-  Returns `{:ok, %{through: e}}` with `e >= F`, or
+  Returns `{:ok, %{through: e, writers: writers_at_e}}` with `e >= F`
+  (`writers_at_e` in the `LocalFrontier` writer shape, sorted by writer id), or
   `{:error, {:local_frontier_refused, reason}}` where `reason` is one of
   `:malformed`, `:log_mismatch`, `:incarnation_mismatch`, `:beyond_end`,
   `:coordinate_missing`, `:entry_mismatch`, `:writer_prefix_mismatch`. A
   refused F is never answered as an empty suffix.
   """
   @spec open_local_suffix(t(), String.t(), LocalFrontier.t()) ::
-          {:ok, %{through: non_neg_integer()}} | {:error, term()}
+          {:ok, %{through: non_neg_integer(), writers: [LocalFrontier.writer()]}}
+          | {:error, term()}
   @impl true
   def open_local_suffix(%__MODULE__{} = store, log_id, frontier) do
     with :ok <- refuse_malformed(frontier),
@@ -434,8 +438,10 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
                    actual.entry_digest == frontier.entry_digest,
                  :entry_mismatch
                ),
-             :ok <- refuse(actual.writers == frontier.writers, :writer_prefix_mismatch) do
-          {:ok, %{through: through}}
+             :ok <- refuse(actual.writers == frontier.writers, :writer_prefix_mismatch),
+             {:ok, writer_rows} <- query(store.conn, "SELECT writer_id FROM writer_tips ORDER BY writer_id"),
+             {:ok, at_end} <- writers_at(store.conn, Enum.map(writer_rows, &hd/1), through) do
+          {:ok, %{through: through, writers: at_end}}
         else
           {:error, {:local_frontier_refused, _}} = refused -> refused
           {:error, :coordinate_missing} -> {:error, {:local_frontier_refused, :coordinate_missing}}
@@ -505,14 +511,23 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
     with :ok <- stored_log_matches(store, log_id),
          {:ok, [[stored_log_id, format_version, created_at]]} <-
            query(store.conn, "SELECT log_id, format_version, created_at FROM log_meta WHERE singleton = 1"),
-         {:ok, restore} <- restore_identity(store.conn) do
+         {:ok, restore} <- restore_identity(store.conn),
+         {:ok, %File.Stat{major_device: dev, inode: inode}} <- File.stat(store.path) do
       # A plain length-prefixed digest (persistence owns no canonicalization).
+      #
+      # The FILE INSTANCE is part of it: (st_dev, st_ino) of this log's
+      # database file. A file-level copy of a data dir (host migration, a
+      # manual restore) is a new file, so a sidecar copied along with it is
+      # refused. Reopening, WAL checkpoints and VACUUM keep the inode. A
+      # filesystem that changes inodes under a live file (overlay copy-up)
+      # only costs a discarded checkpoint and a full replay.
       fields =
         [
-          "commonplace.log.incarnation/v1",
+          "commonplace.log.incarnation/v2",
           stored_log_id,
           Integer.to_string(format_version),
-          created_at
+          created_at,
+          "file:#{dev}:#{inode}"
         ] ++
           case restore do
             nil ->
@@ -604,15 +619,24 @@ defmodule Commonplace.Log.Persistence.LocalSQLite do
     end
   end
 
+  @doc false
+  # PLANNER-PROOF: INDEXED BY pins the descending walk of `entries_by_writer`
+  # for one writer. Without it, after ANALYZE the planner may prefer a rowid
+  # range scan of `arrival_seq <= F` -- a read of the whole prefix.
+  def writer_at_sql,
+    do:
+      "SELECT writer_seq, entry_id, arrival_seq FROM entries INDEXED BY entries_by_writer " <>
+        "WHERE writer_id = ? AND arrival_seq <= ? ORDER BY writer_seq DESC LIMIT 1"
+
   # For each writer, its highest sequence stored at or before `arrival_seq`
-  # (one descending probe of `entries_by_writer` per writer). Writers with no
-  # entry at or before it are absent.
+  # (one descending probe of `entries_by_writer` per writer, walking back only
+  # over that writer's entries after the coordinate). Writers with no entry at
+  # or before it are absent.
   defp writers_at(conn, writer_ids, arrival_seq) do
     Enum.reduce_while(writer_ids, {:ok, []}, fn writer_id, {:ok, acc} ->
       case query(
              conn,
-             "SELECT writer_seq, entry_id, arrival_seq FROM entries " <>
-               "WHERE writer_id = ? AND arrival_seq <= ? ORDER BY writer_seq DESC LIMIT 1",
+             writer_at_sql(),
              [writer_id, arrival_seq]
            ) do
         {:ok, []} ->

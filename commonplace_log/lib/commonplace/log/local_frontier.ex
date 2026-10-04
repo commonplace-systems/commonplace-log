@@ -14,10 +14,11 @@ defmodule Commonplace.Log.LocalFrontier do
 
     * `log_id` -- the log;
     * `incarnation` -- lowercase hex SHA-256 identifying THIS local copy of the
-      log: the stored log identity, its creation stamp and format, and the
-      restore marker if the copy was restored. A log deleted and re-created,
-      or restored/imported, has a different incarnation, and every F from the
-      old one is refused;
+      log: the stored log identity, its creation stamp and format, the restore
+      marker if the copy was restored, and the database file instance (device
+      and inode). A log deleted and re-created, restored/imported, or copied
+      file-by-file to another place has a different incarnation, and every F
+      from the old one is refused;
     * `arrival_seq` -- F itself (`0` is the empty prefix);
     * `entry_id`, `entry_digest` -- the entry stored AT arrival F and the
       SHA-256 of its canonical bytes (both nil iff F is 0);
@@ -25,25 +26,38 @@ defmodule Commonplace.Log.LocalFrontier do
       writer sequence at or before F, that entry's id and its arrival
       coordinate, sorted by writer id.
 
-  ## Why `writers` makes F checkable without reading the prefix
+  ## What verifying F checks, without reading the prefix
 
-  Writer sequences are gapless and every replica accepts a writer's entries
-  only in sequence order (`writer_gap`), and stored entries are immutable. So
-  the set of entries at or before F is exactly, for each writer w,
-  `w:1..seq_w` -- and the per-writer maximum at or before F is an indexed
-  lookup per writer. Recomputing `writers` from the log and comparing it with
-  the stored value verifies the exact entry SET of the prefix in O(writers)
-  index probes. `entry_id`/`entry_digest` pin the boundary row itself.
+  `Commonplace.Log.Persistence` adapters that serve local suffixes recompute,
+  from the log, inside one read transaction:
+
+    * the incarnation (which includes the database FILE instance, so a copied
+      data dir is a different incarnation);
+    * the entry stored at arrival F, by id and by the SHA-256 of its canonical
+      bytes;
+    * for every writer, its highest sequence at or before F, that entry's id
+      and its arrival (one index probe per writer);
+
+  and refuse F unless all equal the stored value.
+
+  What that establishes, and under which assumptions: entry ids are UUIDs, not
+  content hashes, so the per-writer boundary does not by itself commit to the
+  entries below it. It is the log's own invariants that do: within one
+  incarnation entries are immutable (triggers) and arrival coordinates are
+  never reused; `(writer_id, writer_seq)` is unique; and a replica accepts a
+  writer's entries only gaplessly and in sequence order (`writer_gap`), each
+  naming its predecessor. Under those, matching boundaries mean the prefix at
+  or before F is the set `w:1..seq_w` for each writer -- the same set as when F
+  was taken -- in the same arrival order.
 
   ## What it does NOT prove
 
-  Within one incarnation, entries are immutable and arrival coordinates are
-  never reused, so the arrival ORDER of the prefix is fixed once F exists. A
-  copy of the same incarnation's file rolled back in place and then re-fed
-  the identical entry set with identical per-writer boundary arrivals but a
-  different interleaving is not distinguished by this value. That is outside
-  the local-filesystem trust boundary checkpoints already assume; the
-  consumer's background full-replay verification is the backstop.
+  It does not survive a violation of those invariants inside the same file
+  instance (a database edited by hand, or rolled back in place and re-fed the
+  identical entry set with identical per-writer boundary arrivals but a
+  different interleaving). That is outside the local-filesystem trust boundary
+  checkpoints already assume; the consumer's background full-replay
+  verification is the backstop.
 
   The wire form is canonical JCS (see `encode/1`); `decode/1` refuses any
   non-canonical or ill-shaped bytes.
