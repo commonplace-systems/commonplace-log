@@ -138,6 +138,22 @@ defmodule Commonplace.Log.DocumentProfile do
     end
   end
 
+  defmodule LaneIndex do
+    @moduledoc false
+
+    # APPEND-RESCAN-1: what exact retry needs to know about writer seqs
+    # 1..`count`, kept between prepares (see `lane_view/5`). Built only from a
+    # lane every entry of which decoded to a map with a valid entry ID, at
+    # positions equal to its writer seqs. `ops` maps
+    # `:erlang.phash2(operation_id)` to the seqs (descending) of the entries
+    # carrying that binary operation ID: a superset filter, rechecked on the
+    # fetched entry.
+    @enforce_keys [:key, :count, :last_entry_id, :ops]
+    defstruct [:key, :count, :last_entry_id, :ops]
+  end
+
+  @lane_index_key {__MODULE__, :lane_index}
+
   @opaque handle :: Handle.t()
   @opaque prepared :: Prepared.t()
   @type error :: {:error, {atom(), map()}}
@@ -348,7 +364,7 @@ defmodule Commonplace.Log.DocumentProfile do
   defp prepare_entries(handle, frontier, operation_id, bodies, created_at) do
     tip = List.first(frontier.writers)
 
-    with {:ok, existing} <- read_lane(handle, tip),
+    with {:ok, existing} <- lane_view(handle, tip, operation_id, bodies, created_at),
          {:ok, canonical_entries} <-
            find_or_build_entries(handle, existing, tip, operation_id, bodies, created_at) do
       {:ok, canonical_entries}
@@ -367,6 +383,166 @@ defmodule Commonplace.Log.DocumentProfile do
       {:ok, Enum.map(entries, & &1.canonical_bytes)}
     end
   end
+
+  # ── APPEND-RESCAN-1: exact retry without reading the whole lane ──────────
+  #
+  # `find_existing_batch/5` over the full lane decodes every entry on every
+  # prepare: O(n) per append, O(n²) over a catch-up. The lane is append-only
+  # (entries are immutable in storage), so what the scan needs -- the count,
+  # that every entry is a map with a valid entry ID, and where each operation
+  # ID occurs -- is kept per process in a `LaneIndex` and extended by the new
+  # seqs only. It is keyed by the whole handle identity (a fresh activation
+  # gets a fresh `retry_context`) and must chain onto the frontier's tip, or it
+  # is rebuilt. When the certified path of `find_existing_batch/5` applies
+  # (`last_start > 1` and `candidate_scan_certified?/6`), the result is
+  # `scan_matching_operations/7`, which only acts at seqs carrying the
+  # operation ID; those windows are fetched and the scan runs on them. Anything
+  # else -- no index, a failed read, an uncertified candidate -- reads the
+  # lane and takes the original path unchanged.
+  defp lane_view(handle, tip, operation_id, bodies, created_at) do
+    batch_size = length(bodies)
+
+    with %{seq: tip_seq} <- tip,
+         last_start = tip_seq - batch_size + 1,
+         true <- last_start > 1,
+         {:ok, index} <- lane_index(handle, tip),
+         {:ok, [predecessor]} <- read_parsed(handle, last_start - 2, last_start - 1),
+         true <-
+           index_certified?(handle, index, last_start, predecessor, operation_id, bodies, created_at),
+         {:ok, windows} <- operation_windows(handle, index, last_start, operation_id, batch_size) do
+      {:ok, {:indexed, windows}}
+    else
+      _ -> read_lane(handle, tip)
+    end
+  end
+
+  # `candidate_scan_certified?/6` with `valid_predecessors` taken from the
+  # index (it exists only for an all-valid lane).
+  defp index_certified?(handle, index, last_start, {_bytes, predecessor}, operation_id, bodies, created_at) do
+    try do
+      if index.count <= 9_007_199_254_740_991 do
+        case build_entries(
+               handle.log_id,
+               handle.writer_id,
+               last_start,
+               predecessor["entry_id"],
+               operation_id,
+               bodies,
+               created_at
+             ) do
+          {:ok, _entries} -> true
+          _ -> false
+        end
+      else
+        false
+      end
+    catch
+      _kind, _reason -> false
+    end
+  end
+
+  # `{seq, predecessor entry ID, exact bytes of seqs seq..seq+batch_size-1}`
+  # for each seq <= last_start whose entry passes `scan_matching_operations/7`'s
+  # test, ascending.
+  defp operation_windows(handle, index, last_start, operation_id, batch_size) do
+    index.ops
+    |> Map.get(:erlang.phash2(operation_id), [])
+    |> Enum.reverse()
+    |> Enum.filter(&(&1 <= last_start))
+    |> Enum.reduce_while({:ok, []}, fn seq, {:ok, windows} ->
+      from = max(seq - 2, 0)
+
+      case read_parsed(handle, from, seq + batch_size - 1) do
+        {:ok, rows} ->
+          {before, [{_bytes, entry} | _] = batch} = Enum.split(rows, seq - 1 - from)
+          predecessor = if before == [], do: nil, else: elem(hd(before), 1)["entry_id"]
+
+          if entry["version"] == 2 and entry["operation_id"] == operation_id,
+            do: {:cont, {:ok, [{seq, predecessor, Enum.map(batch, &elem(&1, 0))} | windows]}},
+            else: {:cont, {:ok, windows}}
+
+        _error ->
+          {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, windows} -> {:ok, Enum.reverse(windows)}
+      error -> error
+    end
+  end
+
+  defp lane_index(handle, %{seq: tip_seq, entry_id: tip_entry_id}) do
+    key = {handle.log_id, handle.writer_id, handle.retry_context, handle.store}
+
+    cached =
+      case Process.get(@lane_index_key) do
+        %LaneIndex{key: ^key, count: count} = index when count <= tip_seq -> index
+        _ -> %LaneIndex{key: key, count: 0, last_entry_id: nil, ops: %{}}
+      end
+
+    with {:ok, rows} <- read_parsed(handle, cached.count, tip_seq),
+         {:ok, %LaneIndex{last_entry_id: ^tip_entry_id} = index} <- extend_index(cached, rows) do
+      Process.put(@lane_index_key, index)
+      {:ok, index}
+    else
+      _ ->
+        Process.delete(@lane_index_key)
+        :error
+    end
+  end
+
+  defp extend_index(index, rows) do
+    Enum.reduce_while(rows, {:ok, index}, fn {_bytes, entry}, {:ok, index} ->
+      operation_id = entry["operation_id"]
+
+      if Entry.uuid_problem(entry["entry_id"]) == nil and
+           entry["prev_entry_id"] == index.last_entry_id do
+        ops =
+          if is_binary(operation_id),
+            do: Map.update(index.ops, :erlang.phash2(operation_id), [index.count + 1], &[index.count + 1 | &1]),
+            else: index.ops
+
+        {:cont,
+         {:ok, %{index | count: index.count + 1, last_entry_id: entry["entry_id"], ops: ops}}}
+      else
+        {:halt, :error}
+      end
+    end)
+  end
+
+  # Writer seqs `after_seq+1..through_seq` as `{canonical bytes, decoded map}`,
+  # or `:error` unless every one is present, in order, and decodes to a map.
+  defp read_parsed(_handle, seq, seq), do: {:ok, []}
+
+  defp read_parsed(handle, after_seq, through_seq) when through_seq > after_seq do
+    case handle.lane.read_writer(handle,
+           after_seq: after_seq,
+           through_seq: through_seq,
+           limit: through_seq - after_seq
+         ) do
+      {:ok, %{entries: entries, next_after_seq: nil}}
+      when length(entries) == through_seq - after_seq ->
+        entries
+        |> Enum.with_index(after_seq + 1)
+        |> Enum.reduce_while({:ok, []}, fn {row, seq}, {:ok, acc} ->
+          with %{writer_seq: ^seq, canonical_bytes: bytes} <- row,
+               {:ok, entry} when is_map(entry) <- Jason.decode(bytes) do
+            {:cont, {:ok, [{bytes, entry} | acc]}}
+          else
+            _ -> {:halt, :error}
+          end
+        end)
+        |> case do
+          {:ok, rows} -> {:ok, Enum.reverse(rows)}
+          error -> error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp read_parsed(_handle, _after_seq, _through_seq), do: :error
 
   defp find_or_build_entries(handle, existing, tip, operation_id, bodies, created_at) do
     case find_existing_batch(handle, existing, operation_id, bodies, created_at) do
@@ -387,6 +563,29 @@ defmodule Commonplace.Log.DocumentProfile do
           created_at
         )
     end
+  end
+
+  defp find_existing_batch(handle, {:indexed, windows}, operation_id, bodies, created_at) do
+    # `scan_matching_operations/7` over only the seqs whose entry carries
+    # `operation_id`; every other seq there is `{:cont, :not_found}`.
+    Enum.reduce_while(windows, :not_found, fn {seq, predecessor, batch}, :not_found ->
+      with {:ok, candidate} <-
+             build_entries(
+               handle.log_id,
+               handle.writer_id,
+               seq,
+               predecessor,
+               operation_id,
+               bodies,
+               created_at
+             ),
+           true <- batch == candidate do
+        {:halt, {:ok, candidate}}
+      else
+        false -> {:cont, :not_found}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp find_existing_batch(handle, existing, operation_id, bodies, created_at) do

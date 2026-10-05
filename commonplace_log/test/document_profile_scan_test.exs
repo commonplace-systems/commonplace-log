@@ -15,16 +15,58 @@ defmodule Commonplace.Log.ScanFixtureLane do
   def frontier(handle), do: {:ok, %{writers: handle.store.tip}}
   def writer_id(handle), do: {:ok, handle.writer_id}
 
-  def read_writer(handle, _opts),
-    do:
-      {:ok, %{entries: Enum.map(handle.store.rows, &%{canonical_bytes: &1}), next_after_seq: nil}}
+  def read_writer(handle, opts), do: {:ok, page(handle.store.rows, opts)}
+
+  def merge_with_epoch(_handle, entries, _epoch), do: {:ok, %{canonical_entries: entries}}
+
+  # A lane read honours its window, like every real lane (APPEND-RESCAN-1's
+  # index reads only new seqs); the baseline only ever asks for 1..tip.
+  def page(rows, opts) do
+    after_seq = Keyword.fetch!(opts, :after_seq)
+    through_seq = Keyword.get(opts, :through_seq) || length(rows)
+
+    {page, more} =
+      rows
+      |> Enum.with_index(1)
+      |> Enum.filter(fn {_row, seq} -> seq > after_seq and seq <= through_seq end)
+      |> Enum.map(fn {row, seq} -> %{canonical_bytes: row, writer_seq: seq} end)
+      |> Enum.split(Keyword.fetch!(opts, :limit))
+
+    %{entries: page, next_after_seq: if(more == [], do: nil, else: List.last(page).writer_seq)}
+  end
+end
+
+# A lane whose store is one live process, growing between prepares, that
+# counts the rows it serves.
+defmodule Commonplace.Log.GrowingScanLane do
+  alias Commonplace.Log.ScanFixtureLane
+
+  def frontier(handle) do
+    rows = Agent.get(handle.store, & &1.rows)
+
+    {:ok,
+     %{
+       writers: [
+         %{writer_id: handle.writer_id, seq: length(rows), entry_id: Jason.decode!(List.last(rows))["entry_id"]}
+       ]
+     }}
+  end
+
+  def writer_id(handle), do: {:ok, handle.writer_id}
+
+  def read_writer(handle, opts) do
+    Agent.get_and_update(handle.store, fn state ->
+      page = ScanFixtureLane.page(state.rows, opts)
+      {{:ok, page}, %{state | served: state.served + length(page.entries)}}
+    end)
+  end
 
   def merge_with_epoch(_handle, entries, _epoch), do: {:ok, %{canonical_entries: entries}}
 end
 
 defmodule Commonplace.Log.DocumentProfileScanTest do
   use ExUnit.Case, async: false
-  alias Commonplace.Log.{DocumentProfile, Entry, ScanFixtureLane}
+  alias Commonplace.Log.{DocumentProfile, Entry, GrowingScanLane, ScanFixtureLane}
   alias Commonplace.Log.DocumentProfileScanBaseline, as: Baseline
   @time "2026-01-01T00:00:00Z"
 
@@ -218,6 +260,78 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
       assert {:ok, %{canonical_entries: new}} = same(handle(prefix), bodies, "target")
       assert {:ok, %{canonical_entries: ^new}} = same(handle(prefix ++ new), bodies, "target")
     end
+  end
+
+  test "APPEND-RESCAN-1: a growing lane reads only its new seqs and matches the baseline" do
+    {:ok, store} = Agent.start_link(fn -> %{rows: history(40), served: 0} end)
+
+    h = %DocumentProfile.Handle{
+      log_id: uuid(1),
+      writer_id: uuid(2),
+      adapter: GrowingScanLane,
+      lane: GrowingScanLane,
+      lease: 1,
+      retry_context: :binary.copy(<<7>>, 32),
+      store: store
+    }
+
+    served = fn mod, bodies, op ->
+      Agent.update(store, &%{&1 | served: 0})
+      result = evaluate(mod, h, bodies, op)
+      {result, Agent.get(store, & &1.served)}
+    end
+
+    appended =
+      for n <- 1..60, reduce: [] do
+        appended ->
+          bodies = if rem(n, 3) == 0, do: [%{"n" => n}, %{"m" => n}], else: [%{"n" => n}]
+          {expected, baseline_rows} = served.(Baseline, bodies, "grow-#{n}")
+          {actual, rows} = served.(DocumentProfile, bodies, "grow-#{n}")
+          assert actual == expected
+          {:ok, %{canonical_entries: entries}} = actual
+          lane = Agent.get(store, &length(&1.rows))
+          assert baseline_rows == lane
+          # After the first prepare builds the index: the seqs appended since
+          # the last prepare, plus one predecessor row.
+          if n > 1, do: assert(rows <= 3, "prepare #{n} read #{rows} rows of #{lane}")
+
+          # An exact retry of an earlier operation is found, as by the baseline.
+          if rem(n, 10) == 0 do
+            {old_n, old_bodies, old_entries} = Enum.at(appended, 3)
+            {retry, retry_rows} = served.(DocumentProfile, old_bodies, "grow-#{old_n}")
+            assert retry == {:ok, %{canonical_entries: old_entries}}
+            assert retry == elem(served.(Baseline, old_bodies, "grow-#{old_n}"), 0)
+            assert retry_rows <= 1 + length(old_bodies) + 1
+          end
+
+          Agent.update(store, &%{&1 | rows: &1.rows ++ entries})
+          appended ++ [{n, bodies, entries}]
+      end
+
+    assert length(appended) == 60
+  end
+
+  test "APPEND-RESCAN-1: an index that no longer chains onto the tip is rebuilt" do
+    {:ok, store} = Agent.start_link(fn -> %{rows: history(41), served: 0} end)
+
+    h = %DocumentProfile.Handle{
+      log_id: uuid(1),
+      writer_id: uuid(2),
+      adapter: GrowingScanLane,
+      lane: GrowingScanLane,
+      lease: 1,
+      retry_context: :binary.copy(<<8>>, 32),
+      store: store
+    }
+
+    bodies = [%{"n" => "swapped"}]
+    assert {:ok, _} = evaluate(DocumentProfile, h, bodies, "swapped")
+    # Same handle, same length, a different seq 41 that IS this operation.
+    swapped = history(40) ++ batch(handle(history(40)), bodies, "swapped")
+    Agent.update(store, &%{&1 | rows: swapped})
+    expected = evaluate(Baseline, h, bodies, "swapped")
+    assert {:ok, %{canonical_entries: [hd(Enum.drop(swapped, 40))]}} == expected
+    assert evaluate(DocumentProfile, h, bodies, "swapped") == expected
   end
 
   @tag :prepare_scan_performance
