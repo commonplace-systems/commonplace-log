@@ -509,7 +509,13 @@ defmodule Commonplace.Log.DocumentProfile do
             Process.put(@lane_index_key, index)
             {:ok, index}
 
-          _ ->
+          # The rows chain, but not onto this frontier's tip: nothing says
+          # the next prepare's tip will not agree, so forget, do not mark.
+          {:ok, _index} ->
+            Process.delete(@lane_index_key)
+            :error
+
+          :error ->
             if from.count == 0, do: Process.put(@lane_index_key, %{from | ops: :unindexable})
             :error
         end

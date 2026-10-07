@@ -397,6 +397,20 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
              DocumentProfile.prepare_append(h, [%{"n" => 1}], operation_id: "a", created_at: @time, lane_index: 1)
   end
 
+  test "APPEND-RESCAN-1: a tip that disagrees with the rows is forgotten, not marked" do
+    {store, h, served} = growing(history(30), 2)
+    Agent.update(store, &Map.put(&1, :tip, [%{writer_id: uuid(2), seq: 30, entry_id: uuid(9999)}]))
+    {expected, _} = served.(Baseline, [%{"n" => 1}], "a")
+    assert elem(served.(DocumentProfile, [%{"n" => 1}], "a"), 0) == expected
+    Agent.update(store, &Map.delete(&1, :tip))
+    # The frontier agrees again: the next prepare builds the index, the one
+    # after reads only its predecessor row.
+    _ = served.(DocumentProfile, [%{"n" => 1}], "b")
+    {actual, rows} = served.(DocumentProfile, [%{"n" => 1}], "c")
+    assert actual == elem(served.(Baseline, [%{"n" => 1}], "c"), 0)
+    assert rows <= 1
+  end
+
   test "APPEND-RESCAN-1: a tip without an entry ID falls back like the baseline" do
     {store, h, _served} = growing(history(12), 3)
     Agent.update(store, &Map.put(&1, :tip, [%{writer_id: uuid(2), seq: 12}]))
