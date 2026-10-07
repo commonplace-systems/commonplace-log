@@ -42,14 +42,20 @@ defmodule Commonplace.Log.GrowingScanLane do
   alias Commonplace.Log.ScanFixtureLane
 
   def frontier(handle) do
-    rows = Agent.get(handle.store, & &1.rows)
+    case Agent.get(handle.store, & &1) do
+      %{tip: tip} -> {:ok, %{writers: tip}}
+      %{rows: []} -> {:ok, %{writers: []}}
+      %{rows: rows} -> {:ok, %{writers: [%{writer_id: handle.writer_id, seq: length(rows), entry_id: tip_id(rows)}]}}
+    end
+  end
 
-    {:ok,
-     %{
-       writers: [
-         %{writer_id: handle.writer_id, seq: length(rows), entry_id: Jason.decode!(List.last(rows))["entry_id"]}
-       ]
-     }}
+  # The tip's entry ID, read the way a store records it (a row that does not
+  # decode leaves the tip as the store last recorded it: here, its seq's id).
+  defp tip_id(rows) do
+    case Jason.decode(List.last(rows)) do
+      {:ok, %{"entry_id" => id}} -> id
+      _ -> "00000000-0000-4000-8000-" <> String.pad_leading(Integer.to_string(1000 + length(rows), 16), 12, "0")
+    end
   end
 
   def writer_id(handle), do: {:ok, handle.writer_id}
@@ -262,8 +268,8 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
     end
   end
 
-  test "APPEND-RESCAN-1: a growing lane reads only its new seqs and matches the baseline" do
-    {:ok, store} = Agent.start_link(fn -> %{rows: history(40), served: 0} end)
+  defp growing(rows, context) do
+    {:ok, store} = Agent.start_link(fn -> %{rows: rows, served: 0} end)
 
     h = %DocumentProfile.Handle{
       log_id: uuid(1),
@@ -271,7 +277,7 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
       adapter: GrowingScanLane,
       lane: GrowingScanLane,
       lease: 1,
-      retry_context: :binary.copy(<<7>>, 32),
+      retry_context: :binary.copy(<<context>>, 32),
       store: store
     }
 
@@ -280,6 +286,13 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
       result = evaluate(mod, h, bodies, op)
       {result, Agent.get(store, & &1.served)}
     end
+
+    {store, h, served}
+  end
+
+  test "APPEND-RESCAN-1: a growing lane reads only its new seqs and matches the baseline" do
+    # From an EMPTY lane, so seq 1 is a prepared (derived-id) entry a retry can match.
+    {store, _h, served} = growing([], 7)
 
     appended =
       for n <- 1..60, reduce: [] do
@@ -291,17 +304,26 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
           {:ok, %{canonical_entries: entries}} = actual
           lane = Agent.get(store, &length(&1.rows))
           assert baseline_rows == lane
-          # After the first prepare builds the index: the seqs appended since
-          # the last prepare, plus one predecessor row.
-          if n > 1, do: assert(rows <= 3, "prepare #{n} read #{rows} rows of #{lane}")
+          # Prepares whose candidate starts at seq 1 take the original path
+          # (no index); the first indexed prepare (n = 4 here) builds it. From
+          # then on: the seqs appended since the last prepare (at most 2) plus
+          # one predecessor row.
+          if n > 4, do: assert(rows <= 3, "prepare #{n} read #{rows} rows of #{lane}")
 
-          # An exact retry of an earlier operation is found, as by the baseline.
+          # Exact retries -- of seq 1, of a 2-body batch, of a recent single --
+          # are found, as by the baseline, from a window read only.
           if rem(n, 10) == 0 do
-            {old_n, old_bodies, old_entries} = Enum.at(appended, 3)
-            {retry, retry_rows} = served.(DocumentProfile, old_bodies, "grow-#{old_n}")
-            assert retry == {:ok, %{canonical_entries: old_entries}}
-            assert retry == elem(served.(Baseline, old_bodies, "grow-#{old_n}"), 0)
-            assert retry_rows <= 1 + length(old_bodies) + 1
+            for {old_n, old_bodies, old_entries} <- [hd(appended), Enum.at(appended, 2), Enum.at(appended, 3)] do
+              {retry, retry_rows} = served.(DocumentProfile, old_bodies, "grow-#{old_n}")
+              assert retry == {:ok, %{canonical_entries: old_entries}}
+              assert retry == elem(served.(Baseline, old_bodies, "grow-#{old_n}"), 0)
+              # The certifying predecessor, then a window of b+1 rows at each
+              # seq carrying the operation ID (every entry of a b-body batch).
+              b = length(old_bodies)
+              assert retry_rows <= 1 + b * (b + 1)
+            end
+
+            assert length(elem(Enum.at(appended, 2), 1)) == 2
           end
 
           Agent.update(store, &%{&1 | rows: &1.rows ++ entries})
@@ -309,6 +331,78 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
       end
 
     assert length(appended) == 60
+  end
+
+  test "APPEND-RESCAN-1: history before the tip changes while the lane grows (chain check)" do
+    {store, h, _served} = growing(history(40), 6)
+    bodies = [%{"n" => "x"}]
+    # Index seqs 1..40 (uuid(1001)..uuid(1040)).
+    assert {:ok, _} = evaluate(DocumentProfile, h, bodies, "x")
+    # Same handle: seq 40 is now operation "x" itself and the lane grows to 45.
+    # Seqs 41.. carry the same ids as before, so only seq 41's prev_entry_id
+    # (the new seq 40's id) shows that the indexed history is not this one.
+    prefix = history(39)
+    swapped = extend(prefix ++ batch(handle(prefix), bodies, "x"), 5)
+    Agent.update(store, &%{&1 | rows: swapped})
+    expected = evaluate(Baseline, h, bodies, "x")
+    assert {:ok, %{canonical_entries: [Enum.at(swapped, 39)]}} == expected
+    assert evaluate(DocumentProfile, h, bodies, "x") == expected
+  end
+
+  test "APPEND-RESCAN-1: an undecodable row: retries match the baseline, one lane read each" do
+    rows = history(20)
+    {store, h, served} = growing(List.replace_at(rows, 4, "{"), 5)
+    # The store's tip is unchanged; seq 5 no longer decodes.
+    for {op, attempt} <- Enum.with_index(["history-3", "absent", "history-3"]) do
+      {expected, baseline_rows} = served.(Baseline, [%{"n" => 3}], op)
+      {actual, rows_read} = served.(DocumentProfile, [%{"n" => 3}], op)
+      assert {:native, :error, %Jason.DecodeError{}, _} = expected
+      assert actual == expected
+      # The first prepare tries to build (one extra read); the negative entry
+      # then keeps every later prepare at the baseline's single read.
+      if attempt == 0,
+        do: assert(rows_read <= 2 * baseline_rows),
+        else: assert(rows_read == baseline_rows)
+    end
+
+    assert Agent.get(store, &length(&1.rows)) == 20
+  end
+
+  test "APPEND-RESCAN-1: lane_index: false reads the lane as before and matches the baseline" do
+    {_store, h, _served} = growing(history(30), 4)
+    {:ok, store2} = Agent.start_link(fn -> %{rows: history(30), served: 0} end)
+    h = %{h | store: store2}
+
+    for op <- ["a", "b", "history-7"] do
+      Agent.update(store2, &%{&1 | served: 0})
+      expected = evaluate(Baseline, h, [%{"n" => 1}], op)
+      baseline_rows = Agent.get(store2, & &1.served)
+      Agent.update(store2, &%{&1 | served: 0})
+      h_bypass = h
+
+      actual =
+        with {:ok, prepared} <-
+               DocumentProfile.prepare_append(h_bypass, [%{"n" => 1}],
+                 operation_id: op,
+                 created_at: @time,
+                 lane_index: false
+               ),
+             do: DocumentProfile.commit_prepared(h_bypass, prepared)
+
+      assert actual == expected
+      assert Agent.get(store2, & &1.served) == baseline_rows
+    end
+
+    assert {:error, {:invalid_prepared_append, %{reason: :lane_index_must_be_boolean}}} =
+             DocumentProfile.prepare_append(h, [%{"n" => 1}], operation_id: "a", created_at: @time, lane_index: 1)
+  end
+
+  test "APPEND-RESCAN-1: a tip without an entry ID falls back like the baseline" do
+    {store, h, _served} = growing(history(12), 3)
+    Agent.update(store, &Map.put(&1, :tip, [%{writer_id: uuid(2), seq: 12}]))
+    expected = evaluate(Baseline, h, [%{"n" => 1}], "absent")
+    assert {:native, :error, {:badkey, :entry_id, _}, _} = expected
+    assert evaluate(DocumentProfile, h, [%{"n" => 1}], "absent") == expected
   end
 
   test "APPEND-RESCAN-1: an index that no longer chains onto the tip is rebuilt" do

@@ -161,7 +161,10 @@ defmodule Commonplace.Log.RealmNode do
   defp append_document(conn, log_id, body, created_at) do
     case DocumentHandles.fetch(log_id) do
       {:ok, handle} ->
-        opts = [operation_id: UUID.uuidv7(), created_at: created_at]
+        # A fresh UUIDv7 never retries, and each request runs in its own
+        # connection process: the APPEND-RESCAN-1 lane index could only be
+        # built and dropped, so keep the original single-read prepare.
+        opts = [operation_id: UUID.uuidv7(), created_at: created_at, lane_index: false]
 
         with {:ok, prepared} <- DocumentProfile.prepare_append(handle, [body], opts),
              :ok <- maybe_delay_document_commit(conn),

@@ -1,3 +1,21 @@
+# APPEND-RESCAN-1: the real SQLite lane, counting the writer rows each read returns.
+defmodule Commonplace.Log.CountingSQLiteLane do
+  alias Commonplace.Log.DocumentProfile.Lane.SQLite, as: Real
+
+  def served, do: Process.get(__MODULE__, 0)
+  def reset, do: Process.put(__MODULE__, 0)
+
+  def read_writer(handle, opts) do
+    result = Real.read_writer(handle, opts)
+    with {:ok, %{entries: entries}} <- result, do: Process.put(__MODULE__, served() + length(entries))
+    result
+  end
+
+  defdelegate frontier(handle), to: Real
+  defdelegate writer_id(handle), to: Real
+  defdelegate merge_with_epoch(handle, entries, epoch), to: Real
+end
+
 defmodule Commonplace.Log.DocumentProfileTest do
   use ExUnit.Case, async: false
 
@@ -32,6 +50,42 @@ defmodule Commonplace.Log.DocumentProfileTest do
     end)
 
     %{data_dir: data_dir, log_id: UUID.uuidv7()}
+  end
+
+  test "APPEND-RESCAN-1: on the real SQLite lane a prepare reads only the new seqs", %{log_id: log_id} do
+    alias Commonplace.Log.CountingSQLiteLane, as: Counting
+    assert {:ok, handle} = DocumentProfile.create_log(log_id, [])
+    handle = %{handle | lane: Counting}
+
+    reads =
+      for n <- 1..40 do
+        Counting.reset()
+
+        assert {:ok, prepared} =
+                 DocumentProfile.prepare_append(handle, [%{"n" => n}], operation_id: "op-#{n}", created_at: @created_at)
+
+        read = Counting.served()
+        assert {:ok, _} = DocumentProfile.commit_prepared(handle, prepared)
+        read
+      end
+
+    # Seq 1 reads nothing; seq 2 builds the index (1 row) + 1 predecessor row;
+    # from then on the one new seq and one predecessor row, never the lane.
+    assert Enum.drop(reads, 2) |> Enum.all?(&(&1 <= 3)), inspect(reads)
+    assert Enum.sum(reads) < 40 * 3
+
+    # An exact retry of seq 7 on this lane: found, from a window read.
+    Counting.reset()
+
+    assert {:ok, retry} =
+             DocumentProfile.prepare_append(handle, [%{"n" => 7}], operation_id: "op-7", created_at: @created_at)
+
+    # seq 40 (new since the last prepare) + the certifying predecessor (seq 39)
+    # + the window at seq 7 (seqs 6..7).
+    assert Counting.served() <= 4
+    assert {:ok, _} = DocumentProfile.commit_prepared(handle, retry)
+    # The retry replayed seq 7; it appended nothing.
+    assert {:ok, %{writers: [%{seq: 40}]}} = Counting.frontier(handle)
   end
 
   test "create, append, and read back without exposing a writer id", %{log_id: log_id} do

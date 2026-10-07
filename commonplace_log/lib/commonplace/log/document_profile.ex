@@ -29,6 +29,8 @@ defmodule Commonplace.Log.DocumentProfile do
   operation ID. `append/3`, the non-prepared convenience, and
   `Commonplace.Log.Engine.append` continue to emit version-1 entries because
   neither has an operation ID.
+  `prepare_append/3` also takes `lane_index: false` (default `true`): see
+  "APPEND-RESCAN-1" below for when a caller should pass it.
   `append_batch/3` is the prepare-then-commit convenience form. The prepared
   value is opaque and binds exact canonical entries without exposing lane
   selection on this public surface.
@@ -144,10 +146,12 @@ defmodule Commonplace.Log.DocumentProfile do
     # APPEND-RESCAN-1: what exact retry needs to know about writer seqs
     # 1..`count`, kept between prepares (see `lane_view/5`). Built only from a
     # lane every entry of which decoded to a map with a valid entry ID, at
-    # positions equal to its writer seqs. `ops` maps
-    # `:erlang.phash2(operation_id)` to the seqs (descending) of the entries
-    # carrying that binary operation ID: a superset filter, rechecked on the
-    # fetched entry.
+    # positions equal to its writer seqs, each chained to the one before.
+    # `ops` maps `:erlang.phash2(operation_id)` to the seqs (descending) of the
+    # entries carrying that binary operation ID: a superset filter, rechecked
+    # on the fetched entry. `ops: :unindexable` is the negative entry: this
+    # handle's lane has a row that can never index (rows are immutable), so
+    # every prepare takes the original path with ONE lane read.
     @enforce_keys [:key, :count, :last_entry_id, :ops]
     defstruct [:key, :count, :last_entry_id, :ops]
   end
@@ -226,7 +230,8 @@ defmodule Commonplace.Log.DocumentProfile do
              frontier,
              operation_id,
              normalized_bodies,
-             created_at
+             created_at,
+             Keyword.get(opts, :lane_index, true)
            ),
          {:ok, prepared} <- seal_prepared(handle, canonical_entries) do
       {:ok, prepared}
@@ -308,7 +313,7 @@ defmodule Commonplace.Log.DocumentProfile do
   end
 
   defp validate_prepare_inputs(bodies, opts) do
-    unsupported = Keyword.keys(opts) -- [:operation_id, :created_at]
+    unsupported = Keyword.keys(opts) -- [:operation_id, :created_at, :lane_index]
 
     cond do
       unsupported != [] ->
@@ -338,6 +343,9 @@ defmodule Commonplace.Log.DocumentProfile do
       not (is_binary(opts[:created_at]) or match?(%DateTime{}, opts[:created_at])) ->
         invalid_prepared(:created_at_must_be_datetime_or_string)
 
+      not is_boolean(Keyword.get(opts, :lane_index, true)) ->
+        invalid_prepared(:lane_index_must_be_boolean)
+
       true ->
         {:ok, opts[:operation_id], encode_created_at(opts[:created_at])}
     end
@@ -361,10 +369,15 @@ defmodule Commonplace.Log.DocumentProfile do
     end
   end
 
-  defp prepare_entries(handle, frontier, operation_id, bodies, created_at) do
+  defp prepare_entries(handle, frontier, operation_id, bodies, created_at, lane_index?) do
     tip = List.first(frontier.writers)
 
-    with {:ok, existing} <- lane_view(handle, tip, operation_id, bodies, created_at),
+    view =
+      if lane_index?,
+        do: lane_view(handle, tip, operation_id, bodies, created_at),
+        else: read_lane(handle, tip)
+
+    with {:ok, existing} <- view,
          {:ok, canonical_entries} <-
            find_or_build_entries(handle, existing, tip, operation_id, bodies, created_at) do
       {:ok, canonical_entries}
@@ -399,6 +412,16 @@ defmodule Commonplace.Log.DocumentProfile do
   # operation ID; those windows are fetched and the scan runs on them. Anything
   # else -- no index, a failed read, an uncertified candidate -- reads the
   # lane and takes the original path unchanged.
+  #
+  # RETENTION AND THRASH. One index per PROCESS (`@lane_index_key`), for the
+  # last handle it prepared on: about a map entry per lane seq, held until the
+  # process exits or prepares on another handle. A process alternating between
+  # handles rebuilds on each switch -- one full lane read, the cost every
+  # prepare had before. It pays off for a long-lived process appending to one
+  # log (the DocHost). A caller whose operation IDs never retry and whose
+  # prepares run in short-lived processes (RealmNode: a fresh UUIDv7 per
+  # request, one Bandit connection process per request) passes
+  # `lane_index: false` and keeps the original single-read path.
   defp lane_view(handle, tip, operation_id, bodies, created_at) do
     batch_size = length(bodies)
 
@@ -406,38 +429,22 @@ defmodule Commonplace.Log.DocumentProfile do
          last_start = tip_seq - batch_size + 1,
          true <- last_start > 1,
          {:ok, index} <- lane_index(handle, tip),
-         {:ok, [predecessor]} <- read_parsed(handle, last_start - 2, last_start - 1),
+         {:ok, [{_bytes, predecessor}]} <- read_parsed(handle, last_start - 2, last_start - 1),
          true <-
-           index_certified?(handle, index, last_start, predecessor, operation_id, bodies, created_at),
+           certified_build?(
+             handle,
+             index.count,
+             fn -> true end,
+             fn -> predecessor["entry_id"] end,
+             last_start,
+             operation_id,
+             bodies,
+             created_at
+           ),
          {:ok, windows} <- operation_windows(handle, index, last_start, operation_id, batch_size) do
       {:ok, {:indexed, windows}}
     else
       _ -> read_lane(handle, tip)
-    end
-  end
-
-  # `candidate_scan_certified?/6` with `valid_predecessors` taken from the
-  # index (it exists only for an all-valid lane).
-  defp index_certified?(handle, index, last_start, {_bytes, predecessor}, operation_id, bodies, created_at) do
-    try do
-      if index.count <= 9_007_199_254_740_991 do
-        case build_entries(
-               handle.log_id,
-               handle.writer_id,
-               last_start,
-               predecessor["entry_id"],
-               operation_id,
-               bodies,
-               created_at
-             ) do
-          {:ok, _entries} -> true
-          _ -> false
-        end
-      else
-        false
-      end
-    catch
-      _kind, _reason -> false
     end
   end
 
@@ -471,21 +478,47 @@ defmodule Commonplace.Log.DocumentProfile do
     end
   end
 
-  defp lane_index(handle, %{seq: tip_seq, entry_id: tip_entry_id}) do
+  # The index for `handle` through the frontier's tip: the cached one extended
+  # by the new seqs, else one rebuilt from seq 1. A lane that cannot be indexed
+  # is remembered (`ops: :unindexable`) so it is not read twice per prepare.
+  defp lane_index(handle, %{seq: tip_seq, entry_id: tip_entry_id})
+       when is_integer(tip_seq) and is_binary(tip_entry_id) do
     key = {handle.log_id, handle.writer_id, handle.retry_context, handle.store}
+    empty = %LaneIndex{key: key, count: 0, last_entry_id: nil, ops: %{}}
 
-    cached =
-      case Process.get(@lane_index_key) do
-        %LaneIndex{key: ^key, count: count} = index when count <= tip_seq -> index
-        _ -> %LaneIndex{key: key, count: 0, last_entry_id: nil, ops: %{}}
-      end
+    case Process.get(@lane_index_key) do
+      %LaneIndex{key: ^key, ops: :unindexable} ->
+        :error
 
-    with {:ok, rows} <- read_parsed(handle, cached.count, tip_seq),
-         {:ok, %LaneIndex{last_entry_id: ^tip_entry_id} = index} <- extend_index(cached, rows) do
-      Process.put(@lane_index_key, index)
-      {:ok, index}
-    else
+      %LaneIndex{key: ^key, count: count} = cached when count <= tip_seq ->
+        with :error <- index_through(handle, cached, tip_seq, tip_entry_id),
+             do: if(count > 0, do: index_through(handle, empty, tip_seq, tip_entry_id), else: :error)
+
       _ ->
+        index_through(handle, empty, tip_seq, tip_entry_id)
+    end
+  end
+
+  defp lane_index(_handle, _tip), do: :error
+
+  defp index_through(handle, from, tip_seq, tip_entry_id) do
+    case read_parsed(handle, from.count, tip_seq) do
+      {:ok, rows} ->
+        case extend_index(from, rows) do
+          {:ok, %LaneIndex{last_entry_id: ^tip_entry_id} = index} ->
+            Process.put(@lane_index_key, index)
+            {:ok, index}
+
+          _ ->
+            if from.count == 0, do: Process.put(@lane_index_key, %{from | ops: :unindexable})
+            :error
+        end
+
+      {:error, :unindexable} ->
+        if from.count == 0, do: Process.put(@lane_index_key, %{from | ops: :unindexable})
+        :error
+
+      :error ->
         Process.delete(@lane_index_key)
         :error
     end
@@ -510,8 +543,9 @@ defmodule Commonplace.Log.DocumentProfile do
     end)
   end
 
-  # Writer seqs `after_seq+1..through_seq` as `{canonical bytes, decoded map}`,
-  # or `:error` unless every one is present, in order, and decodes to a map.
+  # Writer seqs `after_seq+1..through_seq` as `{canonical bytes, decoded map}`.
+  # `{:error, :unindexable}` when a row is out of place or does not decode to a
+  # map (rows are immutable: it never will); `:error` when the read itself fails.
   defp read_parsed(_handle, seq, seq), do: {:ok, []}
 
   defp read_parsed(handle, after_seq, through_seq) when through_seq > after_seq do
@@ -529,7 +563,7 @@ defmodule Commonplace.Log.DocumentProfile do
                {:ok, entry} when is_map(entry) <- Jason.decode(bytes) do
             {:cont, {:ok, [{bytes, entry} | acc]}}
           else
-            _ -> {:halt, :error}
+            _ -> {:halt, {:error, :unindexable}}
           end
         end)
         |> case do
@@ -671,24 +705,35 @@ defmodule Commonplace.Log.DocumentProfile do
   # closed fields, canonicalization and size check. It does not promise immunity
   # to resource exhaustion or other operational faults after work is skipped.
   defp candidate_scan_certified?(handle, parsed, last_start, operation_id, bodies, created_at) do
-    try do
-      count = tuple_size(parsed)
-
-      valid_predecessors =
+    certified_build?(
+      handle,
+      tuple_size(parsed),
+      fn ->
         parsed
         |> Tuple.to_list()
         |> Enum.all?(fn entry ->
           is_map(entry) and Entry.uuid_problem(Map.get(entry, "entry_id")) == nil
         end)
+      end,
+      fn -> elem(parsed, last_start - 2)["entry_id"] end,
+      last_start,
+      operation_id,
+      bodies,
+      created_at
+    )
+  end
 
-      if count <= 9_007_199_254_740_991 and valid_predecessors do
-        predecessor = elem(parsed, last_start - 2)["entry_id"]
-
+  # The certificate itself, shared with APPEND-RESCAN-1's `lane_view/5` (whose
+  # index exists only for an all-valid lane). `valid?` and `predecessor` are
+  # evaluated inside the `try`, as the original scan did.
+  defp certified_build?(handle, count, valid?, predecessor, last_start, operation_id, bodies, created_at) do
+    try do
+      if count <= 9_007_199_254_740_991 and valid?.() do
         case build_entries(
                handle.log_id,
                handle.writer_id,
                last_start,
-               predecessor,
+               predecessor.(),
                operation_id,
                bodies,
                created_at
