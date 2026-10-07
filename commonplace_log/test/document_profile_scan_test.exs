@@ -397,6 +397,22 @@ defmodule Commonplace.Log.DocumentProfileScanTest do
              DocumentProfile.prepare_append(h, [%{"n" => 1}], operation_id: "a", created_at: @time, lane_index: 1)
   end
 
+  test "APPEND-RESCAN-1: two exact replays of one operation: the FIRST is found, as by the baseline" do
+    bodies = [%{"n" => "twice"}]
+    # Seq 11 is operation "twice"; seq 15 is the same operation built at seq 15
+    # (on a prefix without seq 11, so it is a second exact batch, not a replay
+    # found at 11). Both are exact at their own position.
+    first = batch(handle(history(10)), bodies, "twice")
+    second = batch(handle(history(14)), bodies, "twice")
+    refute first == second
+    rows = extend(extend(history(10) ++ first, 3) ++ second, 2)
+    assert Enum.at(rows, 14) == hd(second)
+    {_store, h, _served} = growing(rows, 1)
+    expected = evaluate(Baseline, h, bodies, "twice")
+    assert {:ok, %{canonical_entries: ^first}} = expected
+    assert evaluate(DocumentProfile, h, bodies, "twice") == expected
+  end
+
   test "APPEND-RESCAN-1: a tip that disagrees with the rows is forgotten, not marked" do
     {store, h, served} = growing(history(30), 2)
     Agent.update(store, &Map.put(&1, :tip, [%{writer_id: uuid(2), seq: 30, entry_id: uuid(9999)}]))
